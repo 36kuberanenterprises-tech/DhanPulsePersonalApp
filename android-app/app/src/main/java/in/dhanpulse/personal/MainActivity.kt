@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.dhanpulse.personal.model.AnalysisResponse
 import `in`.dhanpulse.personal.model.AccountSummary
+import `in`.dhanpulse.personal.model.BacktestSlice
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
 import kotlin.math.abs
 
