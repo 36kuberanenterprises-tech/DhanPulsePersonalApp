@@ -10,3 +10,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20
+
+      - key: CLIENT_PUBLIC_IP
+        value: 34.70.199.153
+      - key: ANGEL_CALLBACK_URL
+        value: https://dhanpulse.pearly-grass-5521.chatgpt.site/api/angel/callback
