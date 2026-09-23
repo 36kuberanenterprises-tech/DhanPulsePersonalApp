@@ -32,6 +32,17 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var orderBusy by mutableStateOf(false)
     var orderMessage by mutableStateOf<String?>(null)
 
+    var backtestYears by mutableStateOf(3)
+        private set
+    var backtestCapital by mutableStateOf(20000.0)
+        private set
+    var backtestBusy by mutableStateOf(false)
+        private set
+    var backtestReport by mutableStateOf<BacktestReport?>(null)
+        private set
+    var backtestError by mutableStateOf<String?>(null)
+        private set
+
     var autoTradeEnabled by mutableStateOf(false)
         private set
     var autoLots by mutableStateOf(1)
@@ -117,6 +128,43 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 account = client().account(s)
             } catch (_: Exception) { }
+        }
+    }
+
+    fun updateBacktestYears(years: Int) {
+        backtestYears = if (years in setOf(1, 3, 5)) years else 3
+        backtestReport = null
+        backtestError = null
+    }
+
+    fun updateBacktestCapital(capital: Double) {
+        backtestCapital = capital.coerceIn(1000.0, 10000000.0)
+        backtestReport = null
+    }
+
+    fun runBacktest() {
+        val s = sessionId ?: return
+        if (autoTradeEnabled) {
+            backtestError = "Switch Auto Trade OFF before running a historical backtest. This avoids historical API traffic interfering with live automatic trading."
+            return
+        }
+        backtestBusy = true
+        backtestError = null
+        viewModelScope.launch {
+            try {
+                backtestReport = client().backtest(
+                    s,
+                    BacktestRequest(
+                        symbol = selectedSymbol,
+                        interval = selectedTimeframe,
+                        years = backtestYears,
+                        capital = backtestCapital
+                    )
+                )
+            } catch (e: Exception) {
+                backtestError = friendlyError(e, "Backtest failed")
+            }
+            backtestBusy = false
         }
     }
 
@@ -325,6 +373,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         account = null
         orderMessage = null
         orderBusy = false
+        backtestBusy = false
+        backtestReport = null
+        backtestError = null
         error = null
         refreshWarning = null
     }
