@@ -4,8 +4,8 @@
     <application
         android:allowBackup="false"
         android:label="DhanPulse"
-        android:icon="@drawable/dhanpulse_logo"
-        android:roundIcon="@drawable/dhanpulse_logo"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.DhanPulsePersonal"
         android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true">
