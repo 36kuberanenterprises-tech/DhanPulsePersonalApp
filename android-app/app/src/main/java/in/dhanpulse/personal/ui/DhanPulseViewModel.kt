@@ -23,6 +23,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var sessionId by mutableStateOf<String?>(null)
     var profile by mutableStateOf<UserProfile?>(null)
     var selectedSymbol by mutableStateOf("NIFTY")
+    var selectedTimeframe by mutableStateOf("FIVE_MINUTE")
     var analysis by mutableStateOf<AnalysisResponse?>(null)
     var account by mutableStateOf<AccountSummary?>(null)
     var loading by mutableStateOf(false)
@@ -85,13 +86,20 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         loading = analysis == null
         viewModelScope.launch {
             try {
-                val result = client().analysis(s, selectedSymbol, "FIVE_MINUTE")
+                val result = client().analysis(s, selectedSymbol, selectedTimeframe)
                 analysis = result
                 error = null
                 refreshWarning = null
                 if (autoTradeEnabled) evaluateAutoTrade(result)
             } catch (e: Exception) {
-                if (analysis != null) {
+                if (e is HttpException && e.code() == 401) {
+                    sessionId = null
+                    profile = null
+                    analysis = null
+                    account = null
+                    autoTradeEnabled = false
+                    error = "Session expired. Please login again."
+                } else if (analysis != null) {
                     error = null
                     refreshWarning = "Live refresh delayed. Retrying automatically."
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until live analysis refresh succeeds."
@@ -125,6 +133,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun placeOrder(side: String, contract: OptionContract, lots: Int = 1) {
         val s = sessionId ?: return
+        if (autoTradeEnabled) {
+            autoTradeEnabled = false
+            clearAutoPosition()
+            blockedSignal = null
+            pendingSignalKey = null
+            pendingSignalCount = 0
+            autoStatus = "Auto Trade stopped because you used Manual Trade."
+        }
         val token = contract.token
         val tradingSymbol = contract.tradingSymbol
         val exchange = contract.exchange
@@ -250,6 +266,25 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         autoStop = null
         autoTarget = null
         if (!keepStatus) autoStatus = if (autoTradeEnabled) "Auto Trade armed." else "Auto Trade is OFF"
+    }
+
+    fun selectTimeframe(interval: String) {
+        val allowed = setOf("ONE_MINUTE", "THREE_MINUTE", "FIVE_MINUTE", "TEN_MINUTE", "FIFTEEN_MINUTE")
+        if (interval !in allowed) return
+        selectedTimeframe = interval
+        analysis = null
+        pendingSignalKey = null
+        pendingSignalCount = 0
+        if (autoTradeEnabled) autoStatus = "Auto Trade armed on " + timeframeLabel(interval) + ". Waiting for confirmation."
+        fetchAnalysis()
+    }
+
+    private fun timeframeLabel(interval: String): String = when (interval) {
+        "ONE_MINUTE" -> "1 min"
+        "THREE_MINUTE" -> "3 min"
+        "TEN_MINUTE" -> "10 min"
+        "FIFTEEN_MINUTE" -> "15 min"
+        else -> "5 min"
     }
 
     fun selectSymbol(symbol: String) {
