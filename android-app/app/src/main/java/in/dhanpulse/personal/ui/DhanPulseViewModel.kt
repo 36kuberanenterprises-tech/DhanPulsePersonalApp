@@ -150,6 +150,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
         backtestBusy = true
         backtestError = null
+        stopAutoRefresh()
         viewModelScope.launch {
             try {
                 backtestReport = client().backtest(
@@ -165,6 +166,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 backtestError = friendlyError(e, "Backtest failed")
             }
             backtestBusy = false
+            startAutoRefresh()
         }
     }
 
@@ -321,6 +323,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         if (interval !in allowed) return
         selectedTimeframe = interval
         analysis = null
+        backtestReport = null
+        backtestError = null
         pendingSignalKey = null
         pendingSignalCount = 0
         if (autoTradeEnabled) autoStatus = "Auto Trade armed on " + timeframeLabel(interval) + ". Waiting for confirmation."
@@ -338,6 +342,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun selectSymbol(symbol: String) {
         selectedSymbol = symbol
         analysis = null
+        backtestReport = null
+        backtestError = null
         pendingSignalKey = null
         pendingSignalCount = 0
         if (autoTradeEnabled) autoStatus = "Auto Trade armed for " + symbol + ". Waiting for confirmation."
