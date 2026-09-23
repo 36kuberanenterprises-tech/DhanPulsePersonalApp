@@ -70,35 +70,69 @@ fun LoginScreen(vm: DhanPulseViewModel) {
     var pin by remember { mutableStateOf("") }
     var totp by remember { mutableStateOf("") }
 
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Spacer(Modifier.height(20.dp))
-        Text("DhanPulse Personal", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Angel One live market analysis")
-        Text("Backend connection is already configured.", style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(
-            pin,
-            { pin = it },
-            label = { Text("PIN") },
-            modifier = Modifier.fillMaxWidth(),
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
-        )
-        OutlinedTextField(
-            totp,
-            { totp = it },
-            label = { Text("Current TOTP") },
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-        )
-        vm.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(
-            onClick = { vm.login(pin, totp) { pin = ""; totp = "" } },
-            enabled = !vm.loading,
-            modifier = Modifier.fillMaxWidth()
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFF0B1424), AppBg)))
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 22.dp)
+    ) {
+        Column(
+            Modifier.fillMaxWidth().align(Alignment.Center),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            if (vm.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Connect to Angel One")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("DhanPulse", color = Ink, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold)
+                Spacer(Modifier.width(10.dp))
+                StatusPill("LIVE", Green)
+            }
+            Text("Angel One market intelligence", color = Muted, style = MaterialTheme.typography.bodyLarge)
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Panel),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, Line)
+            ) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("Secure sign in", color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Backend and SmartAPI are already configured. Enter only your current Angel One login details.", color = Muted, style = MaterialTheme.typography.bodySmall)
+
+                    OutlinedTextField(
+                        pin, { pin = it },
+                        label = { Text("Angel One PIN") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+                    )
+                    OutlinedTextField(
+                        totp, { totp = it },
+                        label = { Text("Current 6 digit TOTP") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+
+                    vm.error?.let { ErrorStrip(it) }
+
+                    Button(
+                        onClick = { vm.login(pin, totp) { pin = ""; totp = "" } },
+                        enabled = !vm.loading,
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Purple, contentColor = Color.White)
+                    ) {
+                        if (vm.loading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
+                        else Text("Connect securely", fontWeight = FontWeight.Bold)
+                    }
+
+                    Text("PIN and TOTP are used only for this login and are not saved on the phone.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                }
+            }
         }
-        Text("Only PIN and TOTP are entered here. They are not saved on the phone.", style = MaterialTheme.typography.bodySmall)
     }
 }
 
