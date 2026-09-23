@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -28,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.dhanpulse.personal.model.AnalysisResponse
 import `in`.dhanpulse.personal.model.AccountSummary
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
+import kotlin.math.abs
 
 
 private val AppBg = Color(0xFF08101C)
@@ -85,13 +89,12 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    color = Amber.copy(alpha = 0.12f),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, Amber.copy(alpha = 0.28f))
-                ) {
-                    Text("DP", color = Amber, fontSize = 22.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
-                }
+                Image(
+                    painter = painterResource(R.mipmap.ic_launcher),
+                    contentDescription = "DhanPulse logo",
+                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Fit
+                )
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -167,13 +170,12 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            color = Amber.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, Amber.copy(alpha = 0.25f))
-                        ) {
-                            Text("DP", color = Amber, fontSize = 13.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
-                        }
+                        Image(
+                            painter = painterResource(R.mipmap.ic_launcher),
+                            contentDescription = null,
+                            modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Fit
+                        )
                         Spacer(Modifier.width(10.dp))
                         Text("DhanPulse", color = Ink, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(9.dp))
@@ -200,8 +202,12 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
                 }
             }
         }
+        item { TimeframeSelector(vm) }
         vm.account?.let { account ->
             item { AccountCard(account, vm::fetchAccount) }
+        }
+        if (a != null) {
+            item { ManualTradeCard(a, vm) }
         }
         item { AutoTradeCard(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
@@ -405,6 +411,145 @@ fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
 
                 Text(levels.basis ?: "Targets are based on the underlying index.", color = Muted, style = MaterialTheme.typography.labelSmall)
                 Text("Option entry is the live contract premium. Stop and targets shown here are underlying index levels.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+fun TimeframeSelector(vm: DhanPulseViewModel) {
+    val frames = listOf(
+        "ONE_MINUTE" to "1m",
+        "THREE_MINUTE" to "3m",
+        "FIVE_MINUTE" to "5m",
+        "TEN_MINUTE" to "10m",
+        "FIFTEEN_MINUTE" to "15m"
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("TIME FRAME", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Panel).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            frames.forEach { pair ->
+                val selected = vm.selectedTimeframe == pair.first
+                Box(
+                    Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(if (selected) Blue else Color.Transparent)
+                        .clickable { vm.selectTimeframe(pair.first) }.padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(pair.second, color = if (selected) Color.White else Muted, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
+    var manualType by remember(a.symbol, a.timeframe) { mutableStateOf(if (a.signal == "PE") "PE" else "CE") }
+    var lots by remember(a.symbol, a.timeframe, manualType) { mutableStateOf(1) }
+    var pendingSide by remember { mutableStateOf<String?>(null) }
+    val atm = a.optionChain.atm ?: a.market.ltp ?: 0.0
+    val contract = a.optionChain.contracts
+        .filter { it.optionType == manualType }
+        .minByOrNull { abs((it.strike ?: atm) - atm) }
+    val currentLongQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
+    val canExit = currentLongQty > 0.0
+
+    pendingSide?.let { side ->
+        AlertDialog(
+            onDismissRequest = { if (!vm.orderBusy) pendingSide = null },
+            title = { Text(if (side == "BUY") "Confirm Manual BUY" else "Confirm Manual EXIT") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(contract?.tradingSymbol ?: "Selected option")
+                    Text("Side: $side   Lots: $lots   Qty: ${(contract?.lotSize ?: 0) * lots}")
+                    Text("MARKET • INTRADAY", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    if (vm.autoTradeEnabled) Text("Manual order will switch Auto Trade OFF to avoid duplicate orders.", color = Amber, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { contract?.let { vm.placeOrder(side, it, lots) }; pendingSide = null },
+                    enabled = !vm.orderBusy,
+                    colors = ButtonDefaults.buttonColors(containerColor = if (side == "BUY") Green else Red)
+                ) { Text(if (side == "BUY") "BUY NOW" else "EXIT NOW", color = Color.White, fontWeight = FontWeight.ExtraBold) }
+            },
+            dismissButton = { TextButton(onClick = { pendingSide = null }) { Text("Cancel") } }
+        )
+    }
+
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Purple.copy(alpha = 0.32f))) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Manual Trade", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text("Choose CE or PE and place your own order", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill(a.timeframe ?: vm.selectedTimeframe, Blue)
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("CE", "PE").forEach { type ->
+                    val selected = manualType == type
+                    Button(
+                        onClick = { manualType = type },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = if (selected) (if (type == "CE") Green else Red) else Panel2),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text(type, color = if (selected) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
+                }
+            }
+
+            if (contract == null) {
+                InfoStrip("Manual contract unavailable", "Refresh analysis to load the near ATM option contracts.")
+            } else {
+                Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("SELECTED CONTRACT", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(contract.tradingSymbol ?: "Option contract", color = Ink, fontWeight = FontWeight.ExtraBold)
+                            Text("Strike ${n(contract.strike)} • Lot ${contract.lotSize ?: 0}", color = Muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("PREMIUM", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(n(contract.ltp), color = if (manualType == "CE") Green else Red, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("LOTS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text("$lots  •  ${(contract.lotSize ?: 0) * lots} qty", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalButton(onClick = { if (lots > 1) lots-- }, enabled = !vm.orderBusy) { Text("−") }
+                        Spacer(Modifier.width(8.dp))
+                        FilledTonalButton(onClick = { if (lots < 20) lots++ }, enabled = !vm.orderBusy) { Text("+") }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { pendingSide = "BUY" },
+                        enabled = !vm.orderBusy,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Green),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("BUY $manualType", color = Color.White, fontWeight = FontWeight.ExtraBold) }
+
+                    Button(
+                        onClick = { pendingSide = "SELL" },
+                        enabled = canExit && !vm.orderBusy,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Red, disabledContainerColor = Panel2),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text(if (canExit) "SELL / EXIT" else "NO POSITION", color = if (canExit) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
+                }
+                if (currentLongQty > 0) Text("Open position: ${currentLongQty.toInt()} qty", color = Green, style = MaterialTheme.typography.bodySmall)
+                vm.orderMessage?.let { InfoStrip("Manual order status", it) }
             }
         }
     }
