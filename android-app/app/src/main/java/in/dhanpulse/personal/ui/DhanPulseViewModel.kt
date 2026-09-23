@@ -23,6 +23,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var analysis by mutableStateOf<AnalysisResponse?>(null)
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
+    var refreshWarning by mutableStateOf<String?>(null)
     private var api: DhanPulseApi? = null
     private var refreshJob: Job? = null
 
@@ -62,8 +63,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 analysis = client().analysis(s, selectedSymbol, "FIVE_MINUTE")
                 error = null
+                refreshWarning = null
             } catch (e: Exception) {
-                error = e.message ?: "Analysis failed"
+                if (analysis != null) {
+                    error = null
+                    refreshWarning = "Live refresh delayed. Retrying automatically."
+                } else {
+                    error = e.message ?: "Analysis failed"
+                }
             }
             loading = false
         }
@@ -79,7 +86,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             while (isActive && sessionId != null) {
-                delay(15_000)
+                delay(60_000)
                 fetchAnalysis()
             }
         }
@@ -96,5 +103,6 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         profile = null
         analysis = null
         error = null
+        refreshWarning = null
     }
 }
