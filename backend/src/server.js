@@ -12,7 +12,8 @@ app.use(express.json({ limit: '256kb' }));
 const sessions = new Map();
 const sessionTtl = 14 * 60 * 60 * 1000;
 
-app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', mode: 'analysis-only' }));
+app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-only' }));
+app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-only' }));
 
 app.post('/api/auth/login', async (req, res) => {
   try {
