@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
-import { login, profile } from './angel.js';
+import { login, profile, rmsLimit, positions, placeOrder, instrumentMaster } from './angel.js';
 import { analyse } from './analysis.js';
 
 const app = express();
@@ -70,6 +70,143 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
       return res.json(value);
     }
     res.status(503).json({ error: e.message || 'Live analysis temporarily unavailable. Please retry.' });
+  }
+});
+
+
+function n(value) {
+  const x = Number(value ?? 0);
+  return Number.isFinite(x) ? x : 0;
+}
+
+function summarizeAccount(rmsRaw, posRaw) {
+  const rms = rmsRaw?.data || {};
+  const rows = Array.isArray(posRaw?.data) ? posRaw.data : [];
+
+  const positionRows = rows.map(p => {
+    const buyQty = n(p.buyqty);
+    const sellQty = n(p.sellqty);
+    const netQty = n(p.netqty ?? p.netquantity ?? (buyQty - sellQty));
+    const realized = n(p.realised ?? p.realized);
+    const unrealized = n(p.unrealised ?? p.unrealized);
+    const pnl = Number.isFinite(Number(p.pnl)) ? Number(p.pnl) : realized + unrealized;
+    return {
+      exchange: p.exchange || null,
+      token: String(p.symboltoken || p.token || ''),
+      tradingSymbol: p.tradingsymbol || null,
+      productType: p.producttype || null,
+      netQty,
+      buyQty,
+      sellQty,
+      buyAvgPrice: n(p.buyavgprice),
+      sellAvgPrice: n(p.sellavgprice),
+      ltp: n(p.ltp),
+      realizedPnl: realized,
+      unrealizedPnl: unrealized,
+      pnl
+    };
+  });
+
+  const realizedPnl = positionRows.reduce((s, p) => s + p.realizedPnl, 0);
+  const unrealizedPnl = positionRows.reduce((s, p) => s + p.unrealizedPnl, 0);
+  const totalPnl = positionRows.reduce((s, p) => s + p.pnl, 0);
+
+  return {
+    availableCash: n(rms.availablecash),
+    net: n(rms.net),
+    utilizedDebits: n(rms.utiliseddebits),
+    availableLimitMargin: n(rms.availablelimitmargin),
+    realizedPnl,
+    unrealizedPnl,
+    totalPnl,
+    positions: positionRows.filter(p => p.netQty !== 0 || Math.abs(p.pnl) > 0.0001)
+  };
+}
+
+app.get('/api/account', requireSession, async (req, res) => {
+  try {
+    const [rms, pos] = await Promise.all([
+      rmsLimit(req.smartSession),
+      positions(req.smartSession)
+    ]);
+    res.json(summarizeAccount(rms, pos));
+  } catch (e) {
+    console.error('Account refresh failed:', e?.message || e);
+    res.status(503).json({ error: e.message || 'Account data temporarily unavailable' });
+  }
+});
+
+app.post('/api/order', requireSession, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const side = String(body.side || '').toUpperCase();
+    const token = String(body.token || '').trim();
+    const tradingSymbol = String(body.tradingSymbol || '').trim();
+    const exchange = String(body.exchange || '').trim().toUpperCase();
+    const lots = Math.max(1, Math.min(20, Math.floor(Number(body.lots || 1))));
+
+    if (!['BUY', 'SELL'].includes(side)) return res.status(400).json({ error: 'side must be BUY or SELL' });
+    if (!token || !tradingSymbol || !exchange) return res.status(400).json({ error: 'Option contract is incomplete' });
+
+    const rows = await instrumentMaster();
+    const contract = rows.find(r =>
+      String(r.token) === token &&
+      String(r.symbol || '').toUpperCase() === tradingSymbol.toUpperCase() &&
+      String(r.exch_seg || '').toUpperCase() === exchange &&
+      /OPT/i.test(String(r.instrumenttype || ''))
+    );
+    if (!contract) return res.status(400).json({ error: 'Selected option contract is not valid in the instrument master' });
+
+    const lotSize = Math.max(1, Math.floor(Number(contract.lotsize || 1)));
+    const quantity = lotSize * lots;
+
+    if (side === 'SELL') {
+      const pos = await positions(req.smartSession);
+      const current = (Array.isArray(pos?.data) ? pos.data : []).find(p => String(p.symboltoken || p.token) === token);
+      const buyQty = n(current?.buyqty);
+      const sellQty = n(current?.sellqty);
+      const netQty = n(current?.netqty ?? current?.netquantity ?? (buyQty - sellQty));
+      if (netQty <= 0) return res.status(400).json({ error: 'SELL is enabled only to exit an existing long option position. No long position found.' });
+      if (quantity > netQty) return res.status(400).json({ error: `Exit quantity ${quantity} is higher than current long quantity ${netQty}` });
+    }
+
+    const orderPayload = {
+      variety: 'NORMAL',
+      tradingsymbol: tradingSymbol,
+      symboltoken: token,
+      transactiontype: side,
+      exchange,
+      ordertype: 'MARKET',
+      producttype: 'INTRADAY',
+      duration: 'DAY',
+      price: '0',
+      squareoff: '0',
+      stoploss: '0',
+      quantity: String(quantity)
+    };
+
+    const order = await placeOrder(req.smartSession, orderPayload);
+    let account = null;
+    try {
+      const [rms, pos] = await Promise.all([rmsLimit(req.smartSession), positions(req.smartSession)]);
+      account = summarizeAccount(rms, pos);
+    } catch {}
+
+    res.json({
+      ok: true,
+      side,
+      lots,
+      quantity,
+      lotSize,
+      tradingSymbol,
+      orderId: order?.data?.orderid || null,
+      uniqueOrderId: order?.data?.uniqueorderid || null,
+      message: order?.message || 'Order submitted',
+      account
+    });
+  } catch (e) {
+    console.error('Order failed:', e?.message || e);
+    res.status(400).json({ error: e.message || 'Order failed' });
   }
 });
 
