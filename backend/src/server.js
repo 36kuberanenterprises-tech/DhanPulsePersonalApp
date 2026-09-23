@@ -10,6 +10,7 @@ app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 
 const sessions = new Map();
+const analysisCache = new Map();
 const sessionTtl = 14 * 60 * 60 * 1000;
 
 app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-only' }));
@@ -43,16 +44,40 @@ function requireSession(req, res, next) {
 }
 
 app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
+  const interval = String(req.query.interval || 'FIVE_MINUTE').toUpperCase();
+  const allowed = ['ONE_MINUTE','THREE_MINUTE','FIVE_MINUTE','TEN_MINUTE','FIFTEEN_MINUTE'];
+  if (!allowed.includes(interval)) return res.status(400).json({ error: 'Unsupported interval' });
+
+  const sessionId = req.header('X-Session-Id');
+  const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval;
+
   try {
-    const interval = String(req.query.interval || 'FIVE_MINUTE').toUpperCase();
-    const allowed = ['ONE_MINUTE','THREE_MINUTE','FIVE_MINUTE','TEN_MINUTE','FIFTEEN_MINUTE'];
-    if (!allowed.includes(interval)) return res.status(400).json({ error: 'Unsupported interval' });
-    res.json(await analyse(req.smartSession, req.params.symbol, interval));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const result = await analyse(req.smartSession, req.params.symbol, interval);
+    analysisCache.set(key, { at: Date.now(), value: result });
+    res.json(result);
+  } catch (e) {
+    console.error('Analysis refresh failed:', e?.message || e);
+    const cached = analysisCache.get(key);
+    if (cached && Date.now() - cached.at <= 2 * 60 * 1000) {
+      const value = {
+        ...cached.value,
+        timestamp: new Date().toISOString(),
+        notes: [
+          ...(cached.value.notes || []),
+          'Latest broker refresh was temporarily unavailable. Showing the most recent successful analysis.'
+        ]
+      };
+      return res.json(value);
+    }
+    res.status(503).json({ error: e.message || 'Live analysis temporarily unavailable. Please retry.' });
+  }
 });
 
 app.post('/api/auth/logout', requireSession, (req, res) => {
-  const id = req.header('X-Session-Id'); sessions.delete(id); res.json({ ok: true });
+  const id = req.header('X-Session-Id');
+  sessions.delete(id);
+  for (const key of analysisCache.keys()) if (key.startsWith(id + '|')) analysisCache.delete(key);
+  res.json({ ok: true });
 });
 
 setInterval(() => {
