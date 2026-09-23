@@ -61,3 +61,55 @@ data class OrderResponse(
     val message: String? = null,
     val account: AccountSummary? = null
 )
+
+
+data class BacktestRequest(
+    val symbol: String,
+    val interval: String,
+    val years: Int = 3,
+    val capital: Double = 20000.0
+)
+
+data class BacktestYear(
+    val year: String = "",
+    val netR: Double = 0.0,
+    val modelPnl: Double = 0.0
+)
+
+data class BacktestStrategy(
+    val strategy: String = "",
+    val label: String = "",
+    val totalTrades: Int = 0,
+    val wins: Int = 0,
+    val losses: Int = 0,
+    val winRate: Double = 0.0,
+    val profitFactor: Double? = null,
+    val expectancyR: Double = 0.0,
+    val netR: Double = 0.0,
+    val modelPnl: Double = 0.0,
+    val modelReturnPct: Double = 0.0,
+    val maxDrawdownR: Double = 0.0,
+    val maxDrawdownPct: Double = 0.0,
+    val maxConsecutiveLosses: Int = 0,
+    val avgWinR: Double = 0.0,
+    val avgLossR: Double = 0.0,
+    val yearly: List<BacktestYear> = emptyList()
+)
+
+data class BacktestPeriod(
+    val from: String? = null,
+    val to: String? = null
+)
+
+data class BacktestReport(
+    val symbol: String = "",
+    val interval: String = "",
+    val years: Int = 0,
+    val capital: Double = 0.0,
+    val period: BacktestPeriod = BacktestPeriod(),
+    val candles: Int = 0,
+    val higherTimeframe: String = "",
+    val strategies: List<BacktestStrategy> = emptyList(),
+    val limitations: List<String> = emptyList(),
+    val generatedAt: String? = null
+)
