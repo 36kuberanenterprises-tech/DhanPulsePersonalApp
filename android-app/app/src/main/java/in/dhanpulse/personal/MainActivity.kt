@@ -623,7 +623,7 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Backtest Lab", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Angel One historical test • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Diagnostic v1.0 • Angel One historical test • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill(if (vm.backtestBusy) "RUNNING" else "HISTORICAL", if (vm.backtestBusy) Amber else Blue)
             }
