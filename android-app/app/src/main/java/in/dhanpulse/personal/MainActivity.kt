@@ -623,7 +623,7 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Backtest Lab", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Diagnostic v1.0 • Angel One historical test • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Adaptive Research v1.1 • Angel One historical test • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill(if (vm.backtestBusy) "RUNNING" else "HISTORICAL", if (vm.backtestBusy) Amber else Blue)
             }
@@ -721,9 +721,73 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
                     }
                 }
 
-                InfoStrip("Important", "v1.0 uses a compounding equity model with 1% of current equity risk per trade. It is still a Stage 1 underlying-index test; historical option premium, full PCR, IV and true index VWAP are not yet included.")
+                val adaptive = report.adaptive
+                val gateColor = if (adaptive.gatePassed) Green else Red
+                Surface(
+                    color = gateColor.copy(alpha = 0.08f),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, gateColor.copy(alpha = 0.22f))
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Adaptive Intelligence", color = Ink, fontWeight = FontWeight.ExtraBold)
+                                Text("Learns on development, selects on validation, checks untouched out of sample", color = Muted, style = MaterialTheme.typography.labelSmall)
+                            }
+                            StatusPill(if (adaptive.gatePassed) "PAPER ELIGIBLE" else "LIVE BLOCKED", gateColor)
+                        }
+                        Text(adaptive.message, color = if (adaptive.gatePassed) Green else Muted, style = MaterialTheme.typography.bodySmall)
+                        if (!adaptive.configName.isNullOrBlank()) {
+                            Text(adaptive.configName ?: "", color = Blue, fontWeight = FontWeight.Bold)
+                        }
+                        if (!adaptive.ruleText.isNullOrBlank()) {
+                            Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
+                                Text(adaptive.ruleText ?: "", color = Ink, modifier = Modifier.fillMaxWidth().padding(10.dp), style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            BacktestMetric("CONFIGS", adaptive.searchedConfigs.toString(), Modifier.weight(1f))
+                            BacktestMetric("CANDIDATES", adaptive.candidates.toString(), Modifier.weight(1f))
+                            BacktestMetric("GATE", if (adaptive.gatePassed) "PASS" else "FAIL", Modifier.weight(1f))
+                        }
+                        adaptive.development?.let { AdaptivePhaseRow("DEVELOPMENT", it) }
+                        adaptive.validation?.let { AdaptivePhaseRow("VALIDATION", it) }
+                        adaptive.outOfSample?.let { AdaptivePhaseRow("UNSEEN 20%", it) }
+                        adaptive.combined?.let { x ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                BacktestMetric("FILTERED PF", x.profitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                                BacktestMetric("EXP", String.format("%.3fR", x.expectancyR), Modifier.weight(1f))
+                                BacktestMetric("MAX DD", String.format("%.1f%%", x.maxDrawdownPct), Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+
+                InfoStrip("Important", "v1.1 can automatically discover and validate filters, but it does not force a profitable result. Adaptive rules are kept out of Live Auto unless they pass development, validation and untouched out-of-sample gates. Historical option premium, PCR, IV and true index VWAP are still Stage 2.")
             } else {
                 Text("Compares Current Core, Trend Pro and Regime Pro with the same ATR risk framework. It never sends BUY or SELL orders.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdaptivePhaseRow(title: String, x: AdaptivePhase) {
+    val positive = x.expectancyR > 0 && (x.profitFactor ?: 0.0) > 1.0
+    val rc = if (positive) Green else Red
+    Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Ink, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                Text("${x.trades} trades • WR ${String.format("%.1f", x.winRate)}%", color = Muted, fontSize = 9.sp)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("${if (x.netR >= 0) "+" else ""}${String.format("%.2f", x.netR)}R", color = rc, fontWeight = FontWeight.ExtraBold)
+                Text("PF ${x.profitFactor?.let { String.format("%.2f", it) } ?: "NA"} • ${String.format("%.3f", x.expectancyR)}R", color = Muted, fontSize = 9.sp)
             }
         }
     }
