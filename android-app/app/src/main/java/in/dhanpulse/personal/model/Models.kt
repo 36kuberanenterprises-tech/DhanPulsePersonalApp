@@ -137,6 +137,41 @@ data class RobustnessSummary(
     val rows: List<RobustnessRow> = emptyList()
 )
 
+
+data class AdaptivePhase(
+    val label: String = "",
+    val trades: Int = 0,
+    val winRate: Double = 0.0,
+    val profitFactor: Double? = null,
+    val expectancyR: Double = 0.0,
+    val netR: Double = 0.0
+)
+
+data class AdaptiveCombined(
+    val totalTrades: Int = 0,
+    val winRate: Double = 0.0,
+    val profitFactor: Double? = null,
+    val expectancyR: Double = 0.0,
+    val netR: Double = 0.0,
+    val modelPnl: Double = 0.0,
+    val modelReturnPct: Double = 0.0,
+    val maxDrawdownPct: Double = 0.0
+)
+
+data class AdaptiveResearch(
+    val status: String = "",
+    val gatePassed: Boolean = false,
+    val message: String = "",
+    val searchedConfigs: Int = 0,
+    val candidates: Int = 0,
+    val configName: String? = null,
+    val ruleText: String? = null,
+    val development: AdaptivePhase? = null,
+    val validation: AdaptivePhase? = null,
+    val outOfSample: AdaptivePhase? = null,
+    val combined: AdaptiveCombined? = null
+)
+
 data class BacktestPeriod(
     val from: String? = null,
     val to: String? = null
@@ -153,6 +188,7 @@ data class BacktestReport(
     val higherTimeframe: String = "",
     val strategies: List<BacktestStrategy> = emptyList(),
     val robustness: RobustnessSummary = RobustnessSummary(),
+    val adaptive: AdaptiveResearch = AdaptiveResearch(),
     val limitations: List<String> = emptyList(),
     val generatedAt: String? = null
 )
