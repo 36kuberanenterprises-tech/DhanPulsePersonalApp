@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,8 +17,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -88,12 +85,13 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(
-                    painter = painterResource(R.drawable.dhanpulse_logo),
-                    contentDescription = "DhanPulse logo",
-                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(18.dp)),
-                    contentScale = ContentScale.Fit
-                )
+                Surface(
+                    color = Amber.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, Amber.copy(alpha = 0.28f))
+                ) {
+                    Text("DP", color = Amber, fontSize = 22.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                }
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -169,12 +167,13 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Image(
-                            painter = painterResource(R.drawable.dhanpulse_logo),
-                            contentDescription = null,
-                            modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)),
-                            contentScale = ContentScale.Fit
-                        )
+                        Surface(
+                            color = Amber.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Amber.copy(alpha = 0.25f))
+                        ) {
+                            Text("DP", color = Amber, fontSize = 13.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
+                        }
                         Spacer(Modifier.width(10.dp))
                         Text("DhanPulse", color = Ink, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(9.dp))
