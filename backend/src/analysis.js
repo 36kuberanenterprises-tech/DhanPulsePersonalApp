@@ -102,7 +102,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
         const z = byToken.get(String(c.token)) || {};
         const sym = String(c.symbol || '');
         const optionType = /PE$/i.test(sym) ? 'PE' : /CE$/i.test(sym) ? 'CE' : (String(c.instrumenttype).toUpperCase().includes('PE') ? 'PE' : 'CE');
-        return { token: String(c.token), tradingSymbol: c.symbol, strike: c.strikeN, optionType, ltp: round(quoteLtp(z)), oi: quoteOi(z), lotSize: Number(c.lotsize || 0) };
+        return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType, ltp: round(quoteLtp(z)), oi: quoteOi(z), lotSize: Number(c.lotsize || 0) };
       }).sort((a,b) => a.strike - b.strike || a.optionType.localeCompare(b.optionType));
     } catch {}
   }
