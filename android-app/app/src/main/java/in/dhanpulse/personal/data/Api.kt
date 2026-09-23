@@ -24,6 +24,12 @@ interface DhanPulseApi {
         @Header("X-Session-Id") sessionId: String
     ): AccountSummary
 
+    @POST("api/backtest")
+    suspend fun backtest(
+        @Header("X-Session-Id") sessionId: String,
+        @Body request: BacktestRequest
+    ): BacktestReport
+
     @POST("api/order")
     suspend fun placeOrder(
         @Header("X-Session-Id") sessionId: String,
