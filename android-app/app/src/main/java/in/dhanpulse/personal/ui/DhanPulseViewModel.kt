@@ -112,14 +112,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setAutoTradeEnabled(enabled: Boolean) {
+    fun updateAutoTradeEnabled(enabled: Boolean) {
         autoTradeEnabled = enabled
         pendingSignalKey = null
         pendingSignalCount = 0
         autoStatus = if (enabled) "Auto Trade armed. Waiting for 2 matching CE/PE confirmations." else "Auto Trade is OFF. Existing positions are not changed."
     }
 
-    fun setAutoLots(lots: Int) {
+    fun updateAutoLots(lots: Int) {
         autoLots = lots.coerceIn(1, 5)
     }
 
