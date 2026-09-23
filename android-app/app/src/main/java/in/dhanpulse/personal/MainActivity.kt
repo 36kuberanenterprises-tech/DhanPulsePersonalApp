@@ -92,6 +92,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             }
         }
         vm.error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+        vm.refreshWarning?.let { item { Text(it, color = MaterialTheme.colorScheme.tertiary) } }
         if (vm.loading && a == null) item { CircularProgressIndicator() }
         if (a != null) {
             item { SignalCard(a, vm::fetchAnalysis) }
