@@ -190,6 +190,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         }
         if (a != null) {
             item { SignalCard(a, vm::fetchAnalysis) }
+            item { TradePlanCard(a) }
             item { MarketCard(a) }
             item { OptionCard(a) }
             item {
@@ -258,6 +259,74 @@ fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
                         Text("LTP ${n(it.ltp)}", color = color, fontWeight = FontWeight.Bold)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun TradePlanCard(a: AnalysisResponse) {
+    val levels = a.levels
+    val contract = a.suggestedContract
+    val active = a.signal == "CE" || a.signal == "PE"
+    val actionColor = when (a.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, if (active) actionColor.copy(alpha = 0.35f) else Line)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Trade plan", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text("Entry, stop and targets from the current signal", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill(a.signal, actionColor)
+            }
+
+            if (!active || levels == null) {
+                Surface(color = Amber.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.25f))) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("WAIT", color = Amber, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("No fresh entry until the confirmation rules produce a CE or PE signal.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else {
+                contract?.let {
+                    Surface(color = actionColor.copy(alpha = 0.08f), shape = RoundedCornerShape(14.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("OPTION CONTRACT", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                Text(it.tradingSymbol ?: "Selected near ATM contract", color = Ink, fontWeight = FontWeight.ExtraBold)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("OPTION ENTRY", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                Text(n(it.ltp), color = actionColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LevelTile("INDEX ENTRY", n(levels.underlyingEntry), Blue, Modifier.weight(1f))
+                    LevelTile("STOP LOSS", n(levels.stop), Red, Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LevelTile("TARGET 1", n(levels.target1), Green, Modifier.weight(1f))
+                    LevelTile("TARGET 2", n(levels.target2), Green, Modifier.weight(1f))
+                }
+
+                Text(
+                    levels.basis ?: "Targets are based on the underlying index.",
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    "Option entry shows the live contract premium. Stop and targets are index levels, not option-premium targets.",
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
             }
         }
     }
