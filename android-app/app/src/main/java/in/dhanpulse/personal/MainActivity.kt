@@ -683,7 +683,44 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
                         }
                     }
                 }
-                InfoStrip("Important", "Stage 1 tests the underlying index. Model P&L is R-based at 1% starting-capital risk per trade. Historical option premium, full PCR and true index VWAP are not yet included.")
+                val trend = report.strategies.firstOrNull { it.strategy == "TREND_PRO" }
+                if (trend != null) {
+                    HorizontalDivider(color = Line)
+                    Text("Trend Pro Diagnostics", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text("Where the strategy makes and loses R", color = Muted, style = MaterialTheme.typography.bodySmall)
+
+                    DiagnosticSliceGroup("CE vs PE", trend.diagnostics.sides)
+                    DiagnosticSliceGroup("Time windows", trend.diagnostics.times)
+                    DiagnosticSliceGroup("Weekdays", trend.diagnostics.weekdays)
+                    DiagnosticSliceGroup("Market regime", trend.diagnostics.regimes)
+                    DiagnosticSliceGroup("Volatility", trend.diagnostics.volatility)
+                    DiagnosticSliceGroup("Exit outcomes", trend.diagnostics.exits)
+                    DiagnosticSliceGroup("Development / validation / unseen", trend.diagnostics.phases)
+                    DiagnosticSliceGroup("Year by year", trend.diagnostics.years)
+
+                    val rb = report.robustness
+                    Surface(color = Blue.copy(alpha = 0.08f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Blue.copy(alpha = 0.20f))) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Parameter robustness", color = Ink, fontWeight = FontWeight.ExtraBold)
+                            Text("Nearby EMA and ATR settings. We want a stable profitable area, not one lucky setting.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                BacktestMetric("TESTED", rb.combinations.toString(), Modifier.weight(1f))
+                                BacktestMetric("PROFITABLE", rb.profitableCombinations.toString(), Modifier.weight(1f))
+                                BacktestMetric("STABLE %", String.format("%.1f%%", rb.profitablePct), Modifier.weight(1f))
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                BacktestMetric("MEDIAN PF", rb.medianProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                                BacktestMetric("MIN PF", rb.minProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                                BacktestMetric("MAX PF", rb.maxProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                            }
+                            rb.best?.let { b ->
+                                Text("Strongest nearby setting: EMA ${b.ema}, Stop ${String.format("%.1f", b.stopAtr)} ATR • PF ${b.profitFactor?.let { String.format("%.2f", it) } ?: "NA"} • ${String.format("%.3f", b.expectancyR)}R/trade", color = Blue, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                InfoStrip("Important", "v1.0 uses a compounding equity model with 1% of current equity risk per trade. It is still a Stage 1 underlying-index test; historical option premium, full PCR, IV and true index VWAP are not yet included.")
             } else {
                 Text("Compares Current Core, Trend Pro and Regime Pro with the same ATR risk framework. It never sends BUY or SELL orders.", color = Muted, style = MaterialTheme.typography.labelSmall)
             }
@@ -691,6 +728,33 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
     }
 }
 
+@Composable
+private fun DiagnosticSliceGroup(title: String, rows: List<BacktestSlice>) {
+    if (rows.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(title.uppercase(), color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        rows.forEach { row ->
+            val positive = row.expectancyR > 0.0
+            val rc = if (positive) Green else Red
+            Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(row.label, color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("${row.trades} trades • WR ${String.format("%.1f", row.winRate)}%", color = Muted, fontSize = 9.sp)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("${if (row.netR >= 0) "+" else ""}${String.format("%.2f", row.netR)}R", color = rc, fontWeight = FontWeight.ExtraBold)
+                        Text("PF ${row.profitFactor?.let { String.format("%.2f", it) } ?: "NA"} • ${String.format("%.3f", row.expectancyR)}R", color = Muted, fontSize = 9.sp)
+                    }
+                }
+            }
+        }
+    }
+}
 @Composable
 private fun BacktestMetric(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier.clip(RoundedCornerShape(12.dp)).background(Panel2).padding(9.dp)) {
