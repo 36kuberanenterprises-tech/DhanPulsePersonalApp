@@ -1,5 +1,6 @@
 const ROOT = 'https://apiconnect.angelone.in';
 const MASTER_URL = 'https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json';
+const REGISTERED_PUBLIC_IP = process.env.CLIENT_PUBLIC_IP || '34.70.199.153';
 
 function baseHeaders(apiKey, jwt) {
   const h = {
@@ -9,7 +10,7 @@ function baseHeaders(apiKey, jwt) {
     'X-UserType': 'USER',
     'X-SourceID': 'WEB',
     'X-ClientLocalIP': process.env.CLIENT_LOCAL_IP || '127.0.0.1',
-    'X-ClientPublicIP': process.env.CLIENT_PUBLIC_IP || '34.70.199.153',
+    'X-ClientPublicIP': REGISTERED_PUBLIC_IP,
     'X-MACAddress': process.env.CLIENT_MAC || '00:00:00:00:00:00'
   };
   if (jwt) h.Authorization = `Bearer ${jwt.replace(/^Bearer\s+/i, '')}`;
