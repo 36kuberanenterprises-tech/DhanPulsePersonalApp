@@ -3,6 +3,7 @@ package `in`.dhanpulse.personal
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +17,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -25,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.dhanpulse.personal.model.AnalysisResponse
+import `in`.dhanpulse.personal.model.AccountSummary
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
 
 
@@ -83,9 +87,21 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("DhanPulse", color = Ink, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold)
-                Spacer(Modifier.width(10.dp))
-                StatusPill("LIVE", Green)
+                Image(
+                    painter = painterResource(R.drawable.dhanpulse_logo),
+                    contentDescription = "DhanPulse logo",
+                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(18.dp)),
+                    contentScale = ContentScale.Fit
+                )
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("DhanPulse", color = Ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+                        Spacer(Modifier.width(8.dp))
+                        StatusPill("LIVE", Green)
+                    }
+                    Text("Trading & Investment", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
             }
             Text("Angel One market intelligence", color = Muted, style = MaterialTheme.typography.bodyLarge)
 
@@ -152,7 +168,14 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("DhanPulse", color = Ink, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                        Image(
+                            painter = painterResource(R.drawable.dhanpulse_logo),
+                            contentDescription = null,
+                            modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Fit
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("DhanPulse", color = Ink, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(9.dp))
                         StatusPill("LIVE", Green)
                     }
@@ -177,6 +200,9 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
                 }
             }
         }
+        vm.account?.let { account ->
+            item { AccountCard(account, vm::fetchAccount) }
+        }
         vm.error?.let { item { ErrorStrip(it) } }
         vm.refreshWarning?.let { item { InfoStrip("Live refresh delayed", "Showing the latest successful analysis. Automatic retry is active.") } }
         if (vm.loading && a == null) item {
@@ -190,7 +216,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         }
         if (a != null) {
             item { SignalCard(a, vm::fetchAnalysis) }
-            item { TradePlanCard(a) }
+            item { TradePlanCard(a, vm) }
             item { MarketCard(a) }
             item { OptionCard(a) }
             item {
@@ -213,7 +239,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
                     }
                 }
             }
-            item { Text("AUTO REFRESH 60 SEC  •  ANALYSIS ONLY  •  NO AUTO ORDER", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp)) }
+            item { Text("AUTO REFRESH 60 SEC  •  MANUAL ORDER CONFIRMATION  •  LIVE P&L", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp)) }
         }
     }
 }
@@ -265,11 +291,38 @@ fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
 }
 
 @Composable
-fun TradePlanCard(a: AnalysisResponse) {
+fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     val levels = a.levels
     val contract = a.suggestedContract
     val active = a.signal == "CE" || a.signal == "PE"
     val actionColor = when (a.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    var lots by remember(contract?.token) { mutableStateOf(1) }
+    var pendingSide by remember { mutableStateOf<String?>(null) }
+    val currentLongQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
+    val canExit = currentLongQty > 0.0
+
+    pendingSide?.let { side ->
+        AlertDialog(
+            onDismissRequest = { if (!vm.orderBusy) pendingSide = null },
+            title = { Text(if (side == "BUY") "Confirm BUY" else "Confirm SELL / EXIT") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(contract?.tradingSymbol ?: "Selected option")
+                    Text("Lots: $lots   Quantity: ${(contract?.lotSize ?: 0) * lots}")
+                    Text("Order type: MARKET • Product: INTRADAY")
+                    if (side == "SELL") Text("SELL is restricted to your existing long quantity. Naked option selling is blocked.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { contract?.let { vm.placeOrder(side, it, lots) }; pendingSide = null },
+                    enabled = !vm.orderBusy,
+                    colors = ButtonDefaults.buttonColors(containerColor = if (side == "BUY") Green else Red)
+                ) { Text(if (side == "BUY") "Confirm BUY" else "Confirm EXIT", color = Color.White, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { pendingSide = null }, enabled = !vm.orderBusy) { Text("Cancel") } }
+        )
+    }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Panel),
@@ -280,12 +333,12 @@ fun TradePlanCard(a: AnalysisResponse) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("Trade plan", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Entry, stop and targets from the current signal", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Entry, stop, targets and manual execution", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill(a.signal, actionColor)
             }
 
-            if (!active || levels == null) {
+            if (!active || levels == null || contract == null) {
                 Surface(color = Amber.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.25f))) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
                         Text("WAIT", color = Amber, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
@@ -293,17 +346,16 @@ fun TradePlanCard(a: AnalysisResponse) {
                     }
                 }
             } else {
-                contract?.let {
-                    Surface(color = actionColor.copy(alpha = 0.08f), shape = RoundedCornerShape(14.dp)) {
-                        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("OPTION CONTRACT", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                Text(it.tradingSymbol ?: "Selected near ATM contract", color = Ink, fontWeight = FontWeight.ExtraBold)
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text("OPTION ENTRY", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                Text(n(it.ltp), color = actionColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
-                            }
+                Surface(color = actionColor.copy(alpha = 0.08f), shape = RoundedCornerShape(14.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("OPTION CONTRACT", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(contract.tradingSymbol ?: "Selected near ATM contract", color = Ink, fontWeight = FontWeight.ExtraBold)
+                            Text("Lot size ${contract.lotSize ?: 0}", color = Muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("OPTION ENTRY", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(n(contract.ltp), color = actionColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                         }
                     }
                 }
@@ -317,18 +369,85 @@ fun TradePlanCard(a: AnalysisResponse) {
                     LevelTile("TARGET 2", n(levels.target2), Green, Modifier.weight(1f))
                 }
 
-                Text(
-                    levels.basis ?: "Targets are based on the underlying index.",
-                    color = Muted,
-                    style = MaterialTheme.typography.labelSmall
-                )
-                Text(
-                    "Option entry shows the live contract premium. Stop and targets are index levels, not option-premium targets.",
-                    color = Muted,
-                    style = MaterialTheme.typography.labelSmall
-                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("ORDER SIZE", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text("${(contract.lotSize ?: 0) * lots} qty", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalButton(onClick = { if (lots > 1) lots-- }, enabled = !vm.orderBusy) { Text("−") }
+                        Text(lots.toString(), color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 12.dp))
+                        FilledTonalButton(onClick = { if (lots < 20) lots++ }, enabled = !vm.orderBusy) { Text("+") }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { pendingSide = "BUY" },
+                        enabled = !vm.orderBusy,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Green),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("BUY ${a.signal}", color = Color.White, fontWeight = FontWeight.ExtraBold) }
+
+                    Button(
+                        onClick = { pendingSide = "SELL" },
+                        enabled = canExit && !vm.orderBusy,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Red, disabledContainerColor = Panel2),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text(if (canExit) "SELL / EXIT" else "NO POSITION", color = if (canExit) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
+                }
+
+                if (currentLongQty > 0) Text("Current long position: ${currentLongQty.toInt()} qty", color = Green, style = MaterialTheme.typography.bodySmall)
+                vm.orderMessage?.let { InfoStrip("Order status", it) }
+
+                Text(levels.basis ?: "Targets are based on the underlying index.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text("Option entry is the live contract premium. Stop and targets shown here are underlying index levels.", color = Muted, style = MaterialTheme.typography.labelSmall)
             }
         }
+    }
+}
+
+@Composable
+fun AccountCard(account: AccountSummary, refresh: () -> Unit) {
+    val pnlColor = if (account.totalPnl >= 0) Green else Red
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Account", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text("Angel One funds and live P&L", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick = refresh) { Text("Refresh") }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AccountMetric("AVAILABLE CASH", money(account.availableCash), Ink, Modifier.weight(1f))
+                AccountMetric("RMS NET", money(account.net), Blue, Modifier.weight(1f))
+            }
+            Surface(color = pnlColor.copy(alpha = 0.10f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, pnlColor.copy(alpha = 0.22f))) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("TODAY P&L", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(money(account.totalPnl), color = pnlColor, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Realized ${money(account.realizedPnl)}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text("Unrealized ${money(account.unrealizedPnl)}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            Text("Open positions ${account.positions.count { it.netQty != 0.0 }}   •   Used margin ${money(account.utilizedDebits)}", color = Muted, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+private fun AccountMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(14.dp)).background(Panel2).padding(12.dp)) {
+        Text(label, color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = color, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
     }
 }
 
@@ -463,3 +582,4 @@ private fun compact(v: Number?): String {
 }
 
 private fun n(v: Number?): String = if (v == null) "NA" else String.format("%,.2f", v.toDouble())
+private fun money(v: Number?): String = if (v == null) "₹0.00" else "₹" + String.format("%,.2f", v.toDouble())
