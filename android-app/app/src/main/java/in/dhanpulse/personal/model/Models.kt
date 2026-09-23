@@ -70,10 +70,29 @@ data class BacktestRequest(
     val capital: Double = 20000.0
 )
 
-data class BacktestYear(
-    val year: String = "",
-    val netR: Double = 0.0,
-    val modelPnl: Double = 0.0
+data class BacktestSlice(
+    val label: String = "",
+    val trades: Int = 0,
+    val winRate: Double = 0.0,
+    val profitFactor: Double? = null,
+    val expectancyR: Double = 0.0,
+    val netR: Double = 0.0
+)
+
+data class BacktestDiagnostics(
+    val sides: List<BacktestSlice> = emptyList(),
+    val times: List<BacktestSlice> = emptyList(),
+    val weekdays: List<BacktestSlice> = emptyList(),
+    val regimes: List<BacktestSlice> = emptyList(),
+    val volatility: List<BacktestSlice> = emptyList(),
+    val exits: List<BacktestSlice> = emptyList(),
+    val phases: List<BacktestSlice> = emptyList(),
+    val years: List<BacktestSlice> = emptyList()
+)
+
+data class EquityPoint(
+    val date: String = "",
+    val equity: Double = 0.0
 )
 
 data class BacktestStrategy(
@@ -86,14 +105,36 @@ data class BacktestStrategy(
     val profitFactor: Double? = null,
     val expectancyR: Double = 0.0,
     val netR: Double = 0.0,
+    val startingCapital: Double = 0.0,
+    val endingCapital: Double = 0.0,
     val modelPnl: Double = 0.0,
     val modelReturnPct: Double = 0.0,
-    val maxDrawdownR: Double = 0.0,
     val maxDrawdownPct: Double = 0.0,
     val maxConsecutiveLosses: Int = 0,
     val avgWinR: Double = 0.0,
     val avgLossR: Double = 0.0,
-    val yearly: List<BacktestYear> = emptyList()
+    val diagnostics: BacktestDiagnostics = BacktestDiagnostics(),
+    val equityCurve: List<EquityPoint> = emptyList()
+)
+
+data class RobustnessRow(
+    val ema: String = "",
+    val stopAtr: Double = 0.0,
+    val profitFactor: Double? = null,
+    val expectancyR: Double = 0.0,
+    val netR: Double = 0.0,
+    val trades: Int = 0
+)
+
+data class RobustnessSummary(
+    val combinations: Int = 0,
+    val profitableCombinations: Int = 0,
+    val profitablePct: Double = 0.0,
+    val minProfitFactor: Double? = null,
+    val maxProfitFactor: Double? = null,
+    val medianProfitFactor: Double? = null,
+    val best: RobustnessRow? = null,
+    val rows: List<RobustnessRow> = emptyList()
 )
 
 data class BacktestPeriod(
@@ -102,6 +143,7 @@ data class BacktestPeriod(
 )
 
 data class BacktestReport(
+    val version: String? = null,
     val symbol: String = "",
     val interval: String = "",
     val years: Int = 0,
@@ -110,6 +152,7 @@ data class BacktestReport(
     val candles: Int = 0,
     val higherTimeframe: String = "",
     val strategies: List<BacktestStrategy> = emptyList(),
+    val robustness: RobustnessSummary = RobustnessSummary(),
     val limitations: List<String> = emptyList(),
     val generatedAt: String? = null
 )
