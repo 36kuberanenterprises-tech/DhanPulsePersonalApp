@@ -32,31 +32,38 @@ fun DhanPulseApp(vm: DhanPulseViewModel = viewModel()) {
 
 @Composable
 fun LoginScreen(vm: DhanPulseViewModel) {
-    var backend by remember { mutableStateOf(vm.backendUrl) }
-    var clientCode by remember { mutableStateOf(vm.clientCode) }
-    var apiKey by remember { mutableStateOf(vm.apiKey) }
     var pin by remember { mutableStateOf("") }
     var totp by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Spacer(Modifier.height(20.dp))
         Text("DhanPulse Personal", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Angel One connected market analysis")
-        OutlinedTextField(backend, { backend = it }, label = { Text("Private backend HTTPS URL") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(clientCode, { clientCode = it }, label = { Text("Angel One Client Code") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(apiKey, { apiKey = it }, label = { Text("SmartAPI API Key") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
-        OutlinedTextField(pin, { pin = it }, label = { Text("PIN") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword))
-        OutlinedTextField(totp, { totp = it }, label = { Text("Current TOTP") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+        Text("Angel One live market analysis")
+        Text("Backend connection is already configured.", style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(
+            pin,
+            { pin = it },
+            label = { Text("PIN") },
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
+        )
+        OutlinedTextField(
+            totp,
+            { totp = it },
+            label = { Text("Current TOTP") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
         vm.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(onClick = {
-            vm.backendUrl = backend
-            vm.clientCode = clientCode
-            vm.apiKey = apiKey
-            vm.login(pin, totp) { pin = ""; totp = "" }
-        }, enabled = !vm.loading, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = { vm.login(pin, totp) { pin = ""; totp = "" } },
+            enabled = !vm.loading,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             if (vm.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Connect to Angel One")
         }
-        Text("PIN and TOTP are not saved on the phone.", style = MaterialTheme.typography.bodySmall)
+        Text("Only PIN and TOTP are entered here. They are not saved on the phone.", style = MaterialTheme.typography.bodySmall)
     }
 }
 
