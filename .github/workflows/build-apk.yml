@@ -30,6 +30,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Check backend JavaScript syntax
+        run: |
+          node --check backend/src/angel.js
+          node --check backend/src/analysis.js
+          node --check backend/src/backtest.js
+          node --check backend/src/server.js
+
       - name: Prepare Android SDK
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
