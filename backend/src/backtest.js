@@ -247,12 +247,12 @@ function seriesFor(candles) {
   };
 }
 
-function higherContext(entryCandles, higherCandles) {
+function higherContext(entryCandles, higherCandles, entryMinutes) {
   const hs=seriesFor(higherCandles);
   const out=Array(entryCandles.length).fill(null);
   let j=-1;
   for(let i=0;i<entryCandles.length;i++){
-    const signalClose=new Date(entryCandles[i].timestamp).getTime()+5*60*1000;
+    const signalClose=new Date(entryCandles[i].timestamp).getTime()+entryMinutes*60*1000;
     while(j+1<higherCandles.length && new Date(higherCandles[j+1].timestamp).getTime()+15*60*1000<=signalClose) j++;
     if(j>=0) out[i]={
       bull:hs.ema9[j]!=null&&hs.ema15[j]!=null&&hs.ema9[j]>hs.ema15[j]&&hs.st[j]===1,
@@ -301,7 +301,7 @@ function dayKey(timestamp){ return String(timestamp).slice(0,10); }
 
 function simulate(strategy, candles, entryInterval, higherCandles, capital, riskPct=1, frictionR=0.05) {
   const s=seriesFor(candles);
-  const htf=higherContext(candles,higherCandles);
+  const htf=higherContext(candles,higherCandles,MINUTES[entryInterval] || 5);
   const trades=[];
   let lastExit=-10, dailyCount=0, activeDay='';
 
