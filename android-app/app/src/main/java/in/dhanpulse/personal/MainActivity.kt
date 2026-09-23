@@ -425,7 +425,7 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
                 }
             },
             confirmButton = {
-                Button(onClick = { vm.setAutoTradeEnabled(true); confirmEnable = false }, colors = ButtonDefaults.buttonColors(containerColor = Green)) {
+                Button(onClick = { vm.updateAutoTradeEnabled(true); confirmEnable = false }, colors = ButtonDefaults.buttonColors(containerColor = Green)) {
                     Text("Enable Auto Trade", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
@@ -443,7 +443,7 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
                 }
                 Switch(
                     checked = vm.autoTradeEnabled,
-                    onCheckedChange = { enabled -> if (enabled) confirmEnable = true else vm.setAutoTradeEnabled(false) }
+                    onCheckedChange = { enabled -> if (enabled) confirmEnable = true else vm.updateAutoTradeEnabled(false) }
                 )
             }
 
@@ -457,9 +457,9 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
                     Text(vm.autoLots.toString(), color = Ink, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    FilledTonalButton(onClick = { vm.setAutoLots(vm.autoLots - 1) }, enabled = !vm.autoTradeEnabled && vm.autoLots > 1) { Text("−") }
+                    FilledTonalButton(onClick = { vm.updateAutoLots(vm.autoLots - 1) }, enabled = !vm.autoTradeEnabled && vm.autoLots > 1) { Text("−") }
                     Spacer(Modifier.width(8.dp))
-                    FilledTonalButton(onClick = { vm.setAutoLots(vm.autoLots + 1) }, enabled = !vm.autoTradeEnabled && vm.autoLots < 5) { Text("+") }
+                    FilledTonalButton(onClick = { vm.updateAutoLots(vm.autoLots + 1) }, enabled = !vm.autoTradeEnabled && vm.autoLots < 5) { Text("+") }
                 }
             }
 
