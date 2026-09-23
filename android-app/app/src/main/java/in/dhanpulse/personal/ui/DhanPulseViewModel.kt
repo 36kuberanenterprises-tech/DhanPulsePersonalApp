@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
 import `in`.dhanpulse.personal.data.ApiFactory
 import `in`.dhanpulse.personal.data.DhanPulseApi
 import `in`.dhanpulse.personal.model.*
@@ -13,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val backendUrl = "https://dhanpulse-personal-api.onrender.com"
@@ -21,9 +23,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var profile by mutableStateOf<UserProfile?>(null)
     var selectedSymbol by mutableStateOf("NIFTY")
     var analysis by mutableStateOf<AnalysisResponse?>(null)
+    var account by mutableStateOf<AccountSummary?>(null)
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
     var refreshWarning by mutableStateOf<String?>(null)
+    var orderBusy by mutableStateOf(false)
+    var orderMessage by mutableStateOf<String?>(null)
     private var api: DhanPulseApi? = null
     private var refreshJob: Job? = null
 
@@ -48,8 +53,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 sessionId = r.sessionId
                 profile = r.profile
                 fetchAnalysis()
+                fetchAccount()
             } catch (e: Exception) {
-                error = e.message ?: "Login failed"
+                error = friendlyError(e, "Login failed")
             }
             loading = false
             onDone()
@@ -69,10 +75,60 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     error = null
                     refreshWarning = "Live refresh delayed. Retrying automatically."
                 } else {
-                    error = e.message ?: "Analysis failed"
+                    error = friendlyError(e, "Analysis failed")
                 }
             }
             loading = false
+        }
+    }
+
+    fun fetchAccount() {
+        val s = sessionId ?: return
+        viewModelScope.launch {
+            try {
+                account = client().account(s)
+            } catch (_: Exception) {
+                // Keep last successful balance and P&L snapshot.
+            }
+        }
+    }
+
+    fun placeOrder(side: String, contract: OptionContract, lots: Int = 1) {
+        val s = sessionId ?: return
+        val token = contract.token
+        val tradingSymbol = contract.tradingSymbol
+        val exchange = contract.exchange
+        if (token.isNullOrBlank() || tradingSymbol.isNullOrBlank() || exchange.isNullOrBlank()) {
+            orderMessage = "Selected option contract is incomplete. Refresh and try again."
+            return
+        }
+
+        orderBusy = true
+        orderMessage = null
+        viewModelScope.launch {
+            try {
+                val result = client().placeOrder(
+                    s,
+                    OrderRequest(
+                        side = side.uppercase(),
+                        token = token,
+                        tradingSymbol = tradingSymbol,
+                        exchange = exchange,
+                        lots = lots.coerceIn(1, 20)
+                    )
+                )
+                result.account?.let { account = it }
+                orderMessage = buildString {
+                    append(side.uppercase())
+                    append(" order submitted")
+                    result.orderId?.let { append(" • ID "); append(it) }
+                }
+                fetchAccount()
+                fetchAnalysis()
+            } catch (e: Exception) {
+                orderMessage = friendlyError(e, "Order failed")
+            }
+            orderBusy = false
         }
     }
 
@@ -88,6 +144,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             while (isActive && sessionId != null) {
                 delay(60_000)
                 fetchAnalysis()
+                fetchAccount()
             }
         }
     }
@@ -102,7 +159,22 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         sessionId = null
         profile = null
         analysis = null
+        account = null
+        orderMessage = null
+        orderBusy = false
         error = null
         refreshWarning = null
+    }
+
+    private fun friendlyError(e: Exception, fallback: String): String {
+        if (e is HttpException) {
+            val raw = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+            val parsed = raw?.let { body ->
+                runCatching { Gson().fromJson(body, ErrorResponse::class.java)?.error }.getOrNull()
+            }
+            if (!parsed.isNullOrBlank()) return parsed
+            return "HTTP " + e.code()
+        }
+        return e.message ?: fallback
     }
 }
