@@ -210,6 +210,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             item { ManualTradeCard(a, vm) }
         }
         item { AutoTradeCard(vm) }
+        item { BacktestLabCard(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
         vm.refreshWarning?.let { item { InfoStrip("Live refresh delayed", "Showing the latest successful analysis. Automatic retry is active.") } }
         if (vm.loading && a == null) item {
@@ -611,6 +612,99 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
             Text("Safety: maximum 5 lots, no naked option selling, one auto position at a time, two matching signal confirmations required.", color = Muted, style = MaterialTheme.typography.labelSmall)
         }
     }
+}
+
+@Composable
+fun BacktestLabCard(vm: DhanPulseViewModel) {
+    val report = vm.backtestReport
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Blue.copy(alpha = 0.30f))) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Backtest Lab", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text("Angel One historical test • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill(if (vm.backtestBusy) "RUNNING" else "HISTORICAL", if (vm.backtestBusy) Amber else Blue)
+            }
+            Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("TEST SETUP", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text("${vm.selectedSymbol.replace("BANKNIFTY", "BANK NIFTY")} • ${timeframeShort(vm.selectedTimeframe)} entry • 15m trend", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("Model capital ${money(vm.backtestCapital)} • Risk model 1% per trade", color = Muted, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("HISTORY PERIOD", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1 to "1Y", 3 to "3Y", 5 to "5Y").forEach { pair ->
+                        val selected = vm.backtestYears == pair.first
+                        FilledTonalButton(onClick = { vm.updateBacktestYears(pair.first) }, enabled = !vm.backtestBusy, modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = if (selected) Blue.copy(alpha = 0.25f) else Panel2, contentColor = if (selected) Blue else Muted)) {
+                            Text(pair.second, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                }
+            }
+            Button(onClick = vm::runBacktest, enabled = !vm.backtestBusy && !vm.autoTradeEnabled, modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+                if (vm.backtestBusy) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Pulling & testing history…", color = Color.White, fontWeight = FontWeight.Bold)
+                } else Text("RUN HISTORICAL BACKTEST", color = Color.White, fontWeight = FontWeight.ExtraBold)
+            }
+            if (vm.autoTradeEnabled) InfoStrip("Backtest locked", "Switch Auto Trade OFF before historical testing so broker history calls do not compete with live auto execution.")
+            vm.backtestError?.let { ErrorStrip(it) }
+            if (report != null) {
+                HorizontalDivider(color = Line)
+                Text("${report.candles} candles • ${report.years}Y • ${report.period.from?.take(10) ?: ""} to ${report.period.to?.take(10) ?: ""}", color = Muted, style = MaterialTheme.typography.labelSmall)
+                report.strategies.forEach { s ->
+                    val resultColor = if (s.netR > 0) Green else Red
+                    Surface(color = resultColor.copy(alpha = 0.07f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, resultColor.copy(alpha = 0.18f))) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(s.label, color = Ink, fontWeight = FontWeight.ExtraBold)
+                                Text((if (s.netR >= 0) "+" else "") + String.format("%.2f", s.netR) + "R", color = resultColor, fontWeight = FontWeight.ExtraBold)
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                BacktestMetric("TRADES", s.totalTrades.toString(), Modifier.weight(1f))
+                                BacktestMetric("WIN RATE", String.format("%.1f%%", s.winRate), Modifier.weight(1f))
+                                BacktestMetric("PF", s.profitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                BacktestMetric("EXPECTANCY", String.format("%.3fR", s.expectancyR), Modifier.weight(1f))
+                                BacktestMetric("MAX DD", String.format("%.1f%%", s.maxDrawdownPct), Modifier.weight(1f))
+                                BacktestMetric("LOSS STREAK", s.maxConsecutiveLosses.toString(), Modifier.weight(1f))
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Model P&L", color = Muted, style = MaterialTheme.typography.bodySmall)
+                                Text(money(s.modelPnl), color = resultColor, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                    }
+                }
+                InfoStrip("Important", "Stage 1 tests the underlying index. Model P&L is R-based at 1% starting-capital risk per trade. Historical option premium, full PCR and true index VWAP are not yet included.")
+            } else {
+                Text("Compares Current Core, Trend Pro and Regime Pro with the same ATR risk framework. It never sends BUY or SELL orders.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BacktestMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Panel2).padding(9.dp)) {
+        Text(label, color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+    }
+}
+
+private fun timeframeShort(interval: String): String = when (interval) {
+    "ONE_MINUTE" -> "1m"
+    "THREE_MINUTE" -> "3m"
+    "TEN_MINUTE" -> "10m"
+    "FIFTEEN_MINUTE" -> "15m"
+    else -> "5m"
 }
 
 @Composable
