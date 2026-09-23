@@ -46,12 +46,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Rename APK
-        run: cp android-app/app/build/outputs/apk/debug/app-debug.apk DhanPulse-Personal-v0.6.1.apk
+        run: cp android-app/app/build/outputs/apk/debug/app-debug.apk DhanPulse-Personal-v0.7.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Personal-v0.6.1-APK
-          path: DhanPulse-Personal-v0.6.1.apk
+          name: DhanPulse-Personal-v0.7-APK
+          path: DhanPulse-Personal-v0.7.apk
           if-no-files-found: error
           retention-days: 30
