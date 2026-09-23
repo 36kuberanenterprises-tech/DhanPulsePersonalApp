@@ -19,6 +19,17 @@ interface DhanPulseApi {
         @Query("interval") interval: String = "FIVE_MINUTE"
     ): AnalysisResponse
 
+    @GET("api/account")
+    suspend fun account(
+        @Header("X-Session-Id") sessionId: String
+    ): AccountSummary
+
+    @POST("api/order")
+    suspend fun placeOrder(
+        @Header("X-Session-Id") sessionId: String,
+        @Body request: OrderRequest
+    ): OrderResponse
+
     @POST("api/auth/logout")
     suspend fun logout(@Header("X-Session-Id") sessionId: String): Map<String, Any>
 }
