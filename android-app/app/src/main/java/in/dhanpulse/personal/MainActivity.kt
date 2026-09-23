@@ -3,25 +3,60 @@ package `in`.dhanpulse.personal
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.dhanpulse.personal.model.AnalysisResponse
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
 
+
+private val AppBg = Color(0xFF08101C)
+private val Panel = Color(0xFF101A29)
+private val Panel2 = Color(0xFF162235)
+private val Line = Color(0xFF25354A)
+private val Ink = Color(0xFFF5F8FC)
+private val Muted = Color(0xFF8FA3BA)
+private val Purple = Color(0xFF7A5AF8)
+private val Blue = Color(0xFF4B9BFF)
+private val Green = Color(0xFF25D39A)
+private val Red = Color(0xFFFF6474)
+private val Amber = Color(0xFFFFBD5C)
+
+private val AppColors = darkColorScheme(
+    primary = Purple,
+    secondary = Blue,
+    background = AppBg,
+    surface = Panel,
+    surfaceVariant = Panel2,
+    outline = Line,
+    onBackground = Ink,
+    onSurface = Ink,
+    onSurfaceVariant = Muted,
+    error = Red,
+    tertiary = Amber
+)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme(colorScheme = darkColorScheme()) { DhanPulseApp() } }
+        setContent { MaterialTheme(colorScheme = AppColors) { Surface(Modifier.fillMaxSize(), color = AppBg) { DhanPulseApp() } } }
     }
 }
 
