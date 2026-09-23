@@ -203,6 +203,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         vm.account?.let { account ->
             item { AccountCard(account, vm::fetchAccount) }
         }
+        item { AutoTradeCard(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
         vm.refreshWarning?.let { item { InfoStrip("Live refresh delayed", "Showing the latest successful analysis. Automatic retry is active.") } }
         if (vm.loading && a == null) item {
@@ -239,7 +240,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
                     }
                 }
             }
-            item { Text("AUTO REFRESH 60 SEC  •  MANUAL ORDER CONFIRMATION  •  LIVE P&L", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp)) }
+            item { Text("AUTO REFRESH 60 SEC  •  AUTO TRADE OPTIONAL  •  LIVE P&L", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp)) }
         }
     }
 }
@@ -405,6 +406,64 @@ fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Text(levels.basis ?: "Targets are based on the underlying index.", color = Muted, style = MaterialTheme.typography.labelSmall)
                 Text("Option entry is the live contract premium. Stop and targets shown here are underlying index levels.", color = Muted, style = MaterialTheme.typography.labelSmall)
             }
+        }
+    }
+}
+
+@Composable
+fun AutoTradeCard(vm: DhanPulseViewModel) {
+    var confirmEnable by remember { mutableStateOf(false) }
+    if (confirmEnable) {
+        AlertDialog(
+            onDismissRequest = { confirmEnable = false },
+            title = { Text("Enable Auto Trade?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("DhanPulse will place real BUY orders automatically when the same CE or PE signal is confirmed on two refreshes.")
+                    Text("It will auto EXIT only the position opened by this auto session when Target 1, stop loss or the opposite signal is reached.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Auto Trade works only while this app is open and logged in.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(onClick = { vm.setAutoTradeEnabled(true); confirmEnable = false }, colors = ButtonDefaults.buttonColors(containerColor = Green)) {
+                    Text("Enable Auto Trade", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmEnable = false }) { Text("Cancel") } }
+        )
+    }
+
+    val activeColor = if (vm.autoTradeEnabled) Green else Muted
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, if (vm.autoTradeEnabled) Green.copy(alpha = 0.30f) else Line)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Auto Trade", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text("Automatic CE / PE entry and protected exit", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(
+                    checked = vm.autoTradeEnabled,
+                    onCheckedChange = { enabled -> if (enabled) confirmEnable = true else vm.setAutoTradeEnabled(false) }
+                )
+            }
+
+            Surface(color = activeColor.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, activeColor.copy(alpha = 0.22f))) {
+                Text(vm.autoStatus, color = if (vm.autoTradeEnabled) Green else Muted, modifier = Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.bodySmall)
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("AUTO LOTS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text(vm.autoLots.toString(), color = Ink, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FilledTonalButton(onClick = { vm.setAutoLots(vm.autoLots - 1) }, enabled = !vm.autoTradeEnabled && vm.autoLots > 1) { Text("−") }
+                    Spacer(Modifier.width(8.dp))
+                    FilledTonalButton(onClick = { vm.setAutoLots(vm.autoLots + 1) }, enabled = !vm.autoTradeEnabled && vm.autoLots < 5) { Text("+") }
+                }
+            }
+
+            Text("Safety: maximum 5 lots, no naked option selling, one auto position at a time, two matching signal confirmations required.", color = Muted, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
