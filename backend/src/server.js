@@ -17,15 +17,19 @@ app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { apiKey, clientCode, pin, totp } = req.body || {};
-    if (![apiKey, clientCode, pin, totp].every(x => String(x || '').trim())) return res.status(400).json({ error: 'apiKey, clientCode, pin and totp are required' });
-    const r = await login({ apiKey: String(apiKey).trim(), clientCode: String(clientCode).trim(), pin: String(pin), totp: String(totp).trim() });
+    const resolvedApiKey = String(process.env.ANGEL_API_KEY || apiKey || '').trim();
+    const resolvedClientCode = String(process.env.ANGEL_CLIENT_CODE || clientCode || '').trim();
+    if (![resolvedApiKey, resolvedClientCode, pin, totp].every(x => String(x || '').trim())) {
+      return res.status(400).json({ error: 'SmartAPI setup missing. Configure ANGEL_API_KEY and ANGEL_CLIENT_CODE on the server, then enter PIN and TOTP.' });
+    }
+    const r = await login({ apiKey: resolvedApiKey, clientCode: resolvedClientCode, pin: String(pin), totp: String(totp).trim() });
     const data = r.data || {};
-    const session = { apiKey: String(apiKey).trim(), clientCode: String(clientCode).trim(), jwt: data.jwtToken, refreshToken: data.refreshToken, feedToken: data.feedToken, createdAt: Date.now() };
+    const session = { apiKey: resolvedApiKey, clientCode: resolvedClientCode, jwt: data.jwtToken, refreshToken: data.refreshToken, feedToken: data.feedToken, createdAt: Date.now() };
     const id = crypto.randomUUID();
     sessions.set(id, session);
     let p = null;
     try { p = await profile(session); } catch {}
-    res.json({ sessionId: id, expiresAt: new Date(Date.now() + sessionTtl).toISOString(), profile: p?.data || { clientcode: clientCode } });
+    res.json({ sessionId: id, expiresAt: new Date(Date.now() + sessionTtl).toISOString(), profile: p?.data || { clientcode: resolvedClientCode } });
   } catch (e) { res.status(401).json({ error: e.message }); }
 });
 
