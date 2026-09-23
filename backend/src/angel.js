@@ -52,6 +52,26 @@ export async function candleData(session, payload) {
   }, 'Candle data');
 }
 
+
+export async function rmsLimit(session) {
+  return jsonFetch(`${ROOT}/rest/secure/angelbroking/user/v1/getRMS`, {
+    method: 'GET', headers: baseHeaders(session.apiKey, session.jwt)
+  }, 'RMS limit');
+}
+
+export async function positions(session) {
+  return jsonFetch(`${ROOT}/rest/secure/angelbroking/order/v1/getPosition`, {
+    method: 'GET', headers: baseHeaders(session.apiKey, session.jwt)
+  }, 'Positions');
+}
+
+export async function placeOrder(session, payload) {
+  return jsonFetch(`${ROOT}/rest/secure/angelbroking/order/v1/placeOrder`, {
+    method: 'POST', headers: baseHeaders(session.apiKey, session.jwt),
+    body: JSON.stringify(payload)
+  }, 'Place order');
+}
+
 let masterCache = { at: 0, rows: [] };
 export async function instrumentMaster(force = false) {
   const age = Date.now() - masterCache.at;
