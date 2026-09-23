@@ -9,7 +9,7 @@ function baseHeaders(apiKey, jwt) {
     'X-UserType': 'USER',
     'X-SourceID': 'WEB',
     'X-ClientLocalIP': process.env.CLIENT_LOCAL_IP || '127.0.0.1',
-    'X-ClientPublicIP': process.env.CLIENT_PUBLIC_IP || '127.0.0.1',
+    'X-ClientPublicIP': process.env.CLIENT_PUBLIC_IP || '34.70.199.153',
     'X-MACAddress': process.env.CLIENT_MAC || '00:00:00:00:00:00'
   };
   if (jwt) h.Authorization = `Bearer ${jwt.replace(/^Bearer\s+/i, '')}`;
