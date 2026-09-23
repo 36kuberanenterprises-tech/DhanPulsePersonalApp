@@ -4,6 +4,7 @@ import cors from 'cors';
 import crypto from 'crypto';
 import { login, profile, rmsLimit, positions, placeOrder, instrumentMaster } from './angel.js';
 import { analyse } from './analysis.js';
+import { runBacktest } from './backtest.js';
 
 const app = express();
 app.use(cors());
@@ -13,8 +14,8 @@ const sessions = new Map();
 const analysisCache = new Map();
 const sessionTtl = 14 * 60 * 60 * 1000;
 
-app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-only' }));
-app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-only' }));
+app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
+app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
 
 app.post('/api/auth/login', async (req, res) => {
   try {
@@ -122,6 +123,27 @@ function summarizeAccount(rmsRaw, posRaw) {
     positions: positionRows.filter(p => p.netQty !== 0 || Math.abs(p.pnl) > 0.0001)
   };
 }
+
+app.post('/api/backtest', requireSession, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const allowedIntervals = ['ONE_MINUTE','THREE_MINUTE','FIVE_MINUTE','TEN_MINUTE','FIFTEEN_MINUTE'];
+    const symbol = String(body.symbol || 'NIFTY').toUpperCase();
+    const interval = String(body.interval || 'FIVE_MINUTE').toUpperCase();
+    const years = Number(body.years || 3);
+    const capital = Number(body.capital || 20000);
+
+    if (!['NIFTY','BANKNIFTY','SENSEX'].includes(symbol)) return res.status(400).json({ error: 'Unsupported symbol' });
+    if (!allowedIntervals.includes(interval)) return res.status(400).json({ error: 'Unsupported interval' });
+    if (![1,3,5].includes(years)) return res.status(400).json({ error: 'Backtest period must be 1, 3 or 5 years' });
+
+    const result = await runBacktest(req.smartSession, { symbol, interval, years, capital });
+    res.json(result);
+  } catch (e) {
+    console.error('Backtest failed:', e?.message || e);
+    res.status(503).json({ error: e.message || 'Backtest failed' });
+  }
+});
 
 app.get('/api/account', requireSession, async (req, res) => {
   try {
