@@ -171,10 +171,21 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateAutoTradeEnabled(enabled: Boolean) {
-        autoTradeEnabled = enabled
         pendingSignalKey = null
         pendingSignalCount = 0
-        autoStatus = if (enabled) "Auto Trade armed. Waiting for 2 matching CE/PE confirmations." else "Auto Trade is OFF. Existing positions are not changed."
+        if (enabled) {
+            val gate = backtestReport?.adaptive
+            if (gate?.gatePassed != true) {
+                autoTradeEnabled = false
+                autoStatus = "Live Auto blocked: run Backtest Lab for this symbol/timeframe and pass the Adaptive Intelligence gate first."
+                return
+            }
+            autoTradeEnabled = true
+            autoStatus = "Adaptive gate PASSED. Auto Trade armed. Waiting for 2 matching CE/PE confirmations."
+        } else {
+            autoTradeEnabled = false
+            autoStatus = "Auto Trade is OFF. Existing positions are not changed."
+        }
     }
 
     fun updateAutoLots(lots: Int) {
@@ -322,6 +333,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         val allowed = setOf("ONE_MINUTE", "THREE_MINUTE", "FIVE_MINUTE", "TEN_MINUTE", "FIFTEEN_MINUTE")
         if (interval !in allowed) return
         selectedTimeframe = interval
+        if (autoTradeEnabled) {
+            autoTradeEnabled = false
+            autoStatus = "Auto Trade switched OFF because timeframe changed. Run the Adaptive backtest again."
+        }
         analysis = null
         backtestReport = null
         backtestError = null
@@ -341,6 +356,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectSymbol(symbol: String) {
         selectedSymbol = symbol
+        if (autoTradeEnabled) {
+            autoTradeEnabled = false
+            autoStatus = "Auto Trade switched OFF because symbol changed. Run the Adaptive backtest again."
+        }
         analysis = null
         backtestReport = null
         backtestError = null
