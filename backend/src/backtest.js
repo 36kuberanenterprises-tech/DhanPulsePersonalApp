@@ -391,6 +391,213 @@ function robustnessSweep(candles,interval,higher,capital,baseSeries,baseHtf){
   };
 }
 
+
+function filterByRule(trades,filters){
+  return trades.filter(t=>{
+    if(filters.side?.length && !filters.side.includes(t.side))return false;
+    if(filters.timeBucket?.length && !filters.timeBucket.includes(t.timeBucket))return false;
+    if(filters.weekday?.length && !filters.weekday.includes(t.weekday))return false;
+    if(filters.regime?.length && !filters.regime.includes(t.regime))return false;
+    if(filters.volatility?.length && !filters.volatility.includes(t.volatility))return false;
+    return true;
+  });
+}
+
+function choiceSets(devTrades,key,minCategoryTrades=25){
+  const grouped=new Map();
+  for(const t of devTrades){
+    const k=t[key]||'UNKNOWN';
+    if(!grouped.has(k))grouped.set(k,[]);
+    grouped.get(k).push(t);
+  }
+  const stats=[...grouped.entries()]
+    .map(([label,rows])=>({...summarizeSlice(label,rows),value:label}))
+    .filter(x=>x.trades>=minCategoryTrades);
+
+  const positive=stats
+    .filter(x=>(x.profitFactor??0)>=1.02 && x.expectancyR>=0.01)
+    .sort((a,b)=>b.expectancyR-a.expectancyR);
+
+  const out=[{label:'ALL',values:null}];
+  for(const x of positive.slice(0,3)) out.push({label:x.value,values:[x.value]});
+  if(positive.length>=2){
+    out.push({label:'Positive group',values:positive.map(x=>x.value)});
+  }
+  return out;
+}
+
+function candidateScore(s,filterCount){
+  if(!s||s.trades<80)return -Infinity;
+  const pf=s.profitFactor??0;
+  if(s.expectancyR<=0||pf<=1)return -Infinity;
+  return s.expectancyR*Math.sqrt(s.trades)+Math.max(0,pf-1)*0.6-filterCount*0.03;
+}
+
+function filterCount(filters){
+  return Object.values(filters).filter(v=>Array.isArray(v)&&v.length>0).length;
+}
+
+function candidateRuleText(filters){
+  const parts=[];
+  if(filters.side?.length)parts.push('Side '+filters.side.join('/'));
+  if(filters.timeBucket?.length)parts.push('Time '+filters.timeBucket.join(' or '));
+  if(filters.weekday?.length)parts.push('Days '+filters.weekday.join('/'));
+  if(filters.regime?.length)parts.push('Regime '+filters.regime.join('/'));
+  if(filters.volatility?.length)parts.push('Vol '+filters.volatility.join('/'));
+  return parts.length?parts.join(' • '):'No extra filters';
+}
+
+function discoverForSimulation(trades,configName){
+  const dev=trades.filter(t=>t.phase==='DEVELOPMENT 60%');
+  if(dev.length<120)return [];
+
+  const dimensions=[
+    ['side','side'],
+    ['timeBucket','timeBucket'],
+    ['weekday','weekday'],
+    ['regime','regime'],
+    ['volatility','volatility']
+  ];
+
+  let beam=[{filters:{},dev:summarizeSlice('DEV',dev),score:0}];
+  for(const [filterKey,tradeKey] of dimensions){
+    const choices=choiceSets(dev,tradeKey);
+    const expanded=[];
+    for(const b of beam){
+      for(const ch of choices){
+        const filters={...b.filters};
+        if(ch.values)filters[filterKey]=ch.values;
+        const rows=filterByRule(dev,filters);
+        const s=summarizeSlice('DEV',rows);
+        const score=candidateScore(s,filterCount(filters));
+        if(Number.isFinite(score))expanded.push({filters,dev:s,score});
+      }
+    }
+    const dedup=new Map();
+    for(const x of expanded){
+      const key=JSON.stringify(x.filters);
+      const old=dedup.get(key);
+      if(!old||x.score>old.score)dedup.set(key,x);
+    }
+    beam=[...dedup.values()].sort((a,b)=>b.score-a.score).slice(0,30);
+    if(!beam.length)break;
+  }
+
+  return beam.slice(0,15).map(x=>({...x,configName,ruleText:candidateRuleText(x.filters)}));
+}
+
+function adaptiveResearch(candles,interval,higher,capital,baseSeries,baseHtf){
+  const configs=[
+    {name:'EMA 9/15 • SL 1.0',fastKey:'ema9',slowKey:'ema15',stopAtr:1.0,t1Atr:1.5,t2Atr:2.0},
+    {name:'EMA 9/15 • SL 1.2',fastKey:'ema9',slowKey:'ema15',stopAtr:1.2,t1Atr:1.5,t2Atr:2.0},
+    {name:'EMA 8/15 • SL 1.0',fastKey:'ema8',slowKey:'ema15',stopAtr:1.0,t1Atr:1.5,t2Atr:2.0},
+    {name:'EMA 10/15 • SL 1.0',fastKey:'ema10',slowKey:'ema15',stopAtr:1.0,t1Atr:1.5,t2Atr:2.0},
+    {name:'EMA 9/16 • SL 1.0',fastKey:'ema9',slowKey:'ema16',stopAtr:1.0,t1Atr:1.5,t2Atr:2.0},
+    {name:'EMA 9/15 • T1 1.25',fastKey:'ema9',slowKey:'ema15',stopAtr:1.0,t1Atr:1.25,t2Atr:2.0},
+    {name:'EMA 9/15 • T1 1.75',fastKey:'ema9',slowKey:'ema15',stopAtr:1.0,t1Atr:1.75,t2Atr:2.5}
+  ];
+
+  const allCandidates=[];
+  const simByConfig=new Map();
+  for(const cfg of configs){
+    const sim=simulate('TREND_PRO',candles,interval,higher,{
+      ...cfg,series:baseSeries,htf:baseHtf,frictionR:0.05
+    });
+    simByConfig.set(cfg.name,sim.trades);
+    allCandidates.push(...discoverForSimulation(sim.trades,cfg.name));
+  }
+
+  if(!allCandidates.length){
+    return {
+      status:'NO_EDGE',
+      gatePassed:false,
+      message:'No development-period filter had enough trades with positive expectancy. Live Adaptive Auto remains blocked.',
+      searchedConfigs:configs.length,
+      candidates:0
+    };
+  }
+
+  const devShortlist=allCandidates.sort((a,b)=>b.score-a.score).slice(0,40);
+  const validated=[];
+  for(const x of devShortlist){
+    const all=simByConfig.get(x.configName)||[];
+    const valRows=filterByRule(all.filter(t=>t.phase==='VALIDATION 20%'),x.filters);
+    const val=summarizeSlice('VALIDATION',valRows);
+    if(val.trades>=25 && (val.profitFactor??0)>=1.03 && val.expectancyR>=0.01 && val.netR>0){
+      validated.push({...x,validation:val});
+    }
+  }
+
+  if(!validated.length){
+    const best=devShortlist[0];
+    return {
+      status:'VALIDATION_FAILED',
+      gatePassed:false,
+      message:'The engine found development-period candidates, but none stayed positive in validation. Live Adaptive Auto remains blocked.',
+      searchedConfigs:configs.length,
+      candidates:allCandidates.length,
+      selected:{
+        configName:best.configName,
+        ruleText:best.ruleText,
+        development:best.dev,
+        validation:null,
+        outOfSample:null
+      }
+    };
+  }
+
+  validated.sort((a,b)=>{
+    const as=a.validation.expectancyR*Math.sqrt(a.validation.trades)+(a.validation.profitFactor??0)-1;
+    const bs=b.validation.expectancyR*Math.sqrt(b.validation.trades)+(b.validation.profitFactor??0)-1;
+    return bs-as;
+  });
+
+  const selected=validated[0];
+  const all=simByConfig.get(selected.configName)||[];
+  const oosRows=filterByRule(all.filter(t=>t.phase==='OUT OF SAMPLE 20%'),selected.filters);
+  const oos=summarizeSlice('OUT OF SAMPLE',oosRows);
+  const allFiltered=filterByRule(all,selected.filters);
+  const combined=buildStrategyResult('ADAPTIVE_PRO',allFiltered,capital,0.5);
+
+  const gatePassed=
+    selected.dev.trades>=80 &&
+    (selected.dev.profitFactor??0)>=1.05 &&
+    selected.dev.expectancyR>=0.015 &&
+    selected.validation.trades>=25 &&
+    (selected.validation.profitFactor??0)>=1.05 &&
+    selected.validation.expectancyR>=0.015 &&
+    oos.trades>=25 &&
+    (oos.profitFactor??0)>=1.05 &&
+    oos.expectancyR>=0.015 &&
+    oos.netR>0;
+
+  return {
+    status:gatePassed?'PASSED':'OOS_FAILED',
+    gatePassed,
+    message:gatePassed
+      ? 'A rule selected from development, chosen on validation, also stayed positive on untouched out-of-sample data. It is eligible for paper-auto testing, not guaranteed live profit.'
+      : 'A candidate survived development and validation but did not meet the untouched out-of-sample gate. Live Adaptive Auto remains blocked.',
+    searchedConfigs:configs.length,
+    candidates:allCandidates.length,
+    configName:selected.configName,
+    ruleText:selected.ruleText,
+    filters:selected.filters,
+    development:selected.dev,
+    validation:selected.validation,
+    outOfSample:oos,
+    combined:{
+      totalTrades:combined.totalTrades,
+      winRate:combined.winRate,
+      profitFactor:combined.profitFactor,
+      expectancyR:combined.expectancyR,
+      netR:combined.netR,
+      modelPnl:combined.modelPnl,
+      modelReturnPct:combined.modelReturnPct,
+      maxDrawdownPct:combined.maxDrawdownPct
+    }
+  };
+}
+
 export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE',years=3,capital=20000}={}){
   symbol=String(symbol).toUpperCase();interval=String(interval).toUpperCase();
   years=[1,3,5].includes(Number(years))?Number(years):3;
@@ -409,9 +616,10 @@ export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE'
     strategies.push(buildStrategyResult(name,sim.trades,capital,riskPct));
   }
   const robustness=robustnessSweep(entry,interval,higher,capital,sharedSeries,sharedHtf);
+  const adaptive=adaptiveResearch(entry,interval,higher,capital,sharedSeries,sharedHtf);
 
   return {
-    version:'DIAGNOSTIC_V1',
+    version:'ADAPTIVE_RESEARCH_V1_1',
     symbol,interval,years,capital,
     period:{from:entry[0].timestamp,to:entry[entry.length-1].timestamp},
     candles:entry.length,higherTimeframe:'FIFTEEN_MINUTE',
@@ -425,7 +633,7 @@ export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE'
       maxTradesPerDay:3,riskPerTradePct:riskPct,executionFrictionR:0.05,
       equityModel:'1% of current equity risked per trade (compounding)'
     },
-    strategies,robustness,
+    strategies,robustness,adaptive,
     limitations:[
       'This diagnostic test measures the underlying index signal engine, not historical option premium P&L.',
       'Angel index candles do not provide usable volume, so true historical VWAP is not reconstructed; Trend Pro uses a session typical-price mean proxy.',
