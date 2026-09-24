@@ -14,6 +14,57 @@ data class SignalRule(val name: String, val state: String, val detail: String? =
 data class AnalysisResponse(val symbol: String, val timestamp: String? = null, val timeframe: String? = null, val signal: String = "WAIT", val ruleScore: RuleScore = RuleScore(), val market: MarketMetrics = MarketMetrics(), val optionChain: OptionChainSummary = OptionChainSummary(), val suggestedContract: OptionContract? = null, val levels: Levels? = null, val rules: List<SignalRule> = emptyList(), val notes: List<String> = emptyList())
 data class ErrorResponse(val error: String? = null)
 
+data class PremiumTradePlan(
+    val signal: String = "WAIT",
+    val contract: OptionContract? = null,
+    val referencePremium: Double? = null,
+    val entry: Double? = null,
+    val stopLoss: Double? = null,
+    val target1: Double? = null,
+    val target2: Double? = null,
+    val target3: Double? = null,
+    val status: String = "WAIT",
+    val callId: String? = null
+)
+
+data class SignalCall(
+    val id: String,
+    val symbol: String,
+    val timeframe: String,
+    val side: String,
+    val token: String,
+    val tradingSymbol: String,
+    val strike: Double? = null,
+    val exchange: String? = null,
+    val generatedAt: Long,
+    val sessionDate: String,
+    val referencePremium: Double,
+    val entry: Double,
+    val stopLoss: Double,
+    val target1: Double,
+    val target2: Double,
+    val target3: Double,
+    val entryHitAt: Long? = null,
+    val t1HitAt: Long? = null,
+    val t2HitAt: Long? = null,
+    val t3HitAt: Long? = null,
+    val slHitAt: Long? = null,
+    val lastPremium: Double? = null,
+    val status: String = "WAITING_ENTRY"
+)
+
+data class SignalStats(
+    val generated: Int = 0,
+    val entered: Int = 0,
+    val target1Hits: Int = 0,
+    val target2Hits: Int = 0,
+    val target3Hits: Int = 0,
+    val stopLossHits: Int = 0,
+    val open: Int = 0,
+    val unresolved: Int = 0
+)
+
+
 data class PositionSummary(
     val exchange: String? = null,
     val token: String? = null,
