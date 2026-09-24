@@ -180,6 +180,14 @@ data class BacktestDataQuality(
     val note: String = ""
 )
 
+
+data class BacktestInterpretation(
+    val verdict: String = "",
+    val reason: String = "",
+    val focus: List<String> = emptyList(),
+    val ignoreForDecision: List<String> = emptyList()
+)
+
 data class BacktestPeriod(
     val from: String? = null,
     val to: String? = null
@@ -198,6 +206,7 @@ data class BacktestReport(
     val strategies: List<BacktestStrategy> = emptyList(),
     val robustness: RobustnessSummary = RobustnessSummary(),
     val adaptive: AdaptiveResearch = AdaptiveResearch(),
+    val interpretation: BacktestInterpretation = BacktestInterpretation(),
     val limitations: List<String> = emptyList(),
     val generatedAt: String? = null
 )
