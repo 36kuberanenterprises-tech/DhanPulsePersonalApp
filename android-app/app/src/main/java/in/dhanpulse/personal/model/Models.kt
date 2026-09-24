@@ -49,6 +49,7 @@ data class SignalCall(
     val t2HitAt: Long? = null,
     val t3HitAt: Long? = null,
     val slHitAt: Long? = null,
+    val cancelledAt: Long? = null,
     val lastPremium: Double? = null,
     val status: String = "WAITING_ENTRY"
 )
@@ -60,6 +61,7 @@ data class SignalStats(
     val target2Hits: Int = 0,
     val target3Hits: Int = 0,
     val stopLossHits: Int = 0,
+    val cancelled: Int = 0,
     val open: Int = 0,
     val unresolved: Int = 0
 )
