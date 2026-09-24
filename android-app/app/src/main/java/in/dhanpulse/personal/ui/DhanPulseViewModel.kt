@@ -61,6 +61,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     private var api: DhanPulseApi? = null
     private var refreshJob: Job? = null
+    private var analysisRefreshInFlight = false
 
     private fun client(): DhanPulseApi {
         val existing = api
@@ -94,6 +95,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun fetchAnalysis() {
         val s = sessionId ?: return
+        if (analysisRefreshInFlight) return
+        analysisRefreshInFlight = true
         loading = analysis == null
         viewModelScope.launch {
             try {
@@ -119,6 +122,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             loading = false
+            analysisRefreshInFlight = false
         }
     }
 
@@ -371,10 +375,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun startAutoRefresh() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
+            var tick = 0
             while (isActive && sessionId != null) {
-                delay(60_000)
+                delay(3_000)
                 fetchAnalysis()
-                fetchAccount()
+                tick++
+                if (tick % 5 == 0) fetchAccount()
             }
         }
     }
