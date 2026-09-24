@@ -51,6 +51,7 @@ data class OrderRequest(
 
 data class OrderResponse(
     val ok: Boolean = false,
+    val traceId: String? = null,
     val side: String? = null,
     val lots: Int = 0,
     val quantity: Int = 0,
@@ -58,8 +59,25 @@ data class OrderResponse(
     val tradingSymbol: String? = null,
     val orderId: String? = null,
     val uniqueOrderId: String? = null,
+    val orderStatus: String? = null,
+    val averagePrice: Double? = null,
+    val filledShares: Double? = null,
+    val rejectionReason: String? = null,
     val message: String? = null,
     val account: AccountSummary? = null
+)
+
+data class OrderGatewayDiagnostics(
+    val backendReached: Boolean = false,
+    val brokerSessionOk: Boolean = false,
+    val brokerMessage: String? = null,
+    val registeredPublicIp: String? = null,
+    val actualEgressIp: String? = null,
+    val relayConfigured: Boolean = false,
+    val relayHost: String? = null,
+    val executionReady: Boolean = false,
+    val status: String = "UNKNOWN",
+    val message: String = ""
 )
 
 
