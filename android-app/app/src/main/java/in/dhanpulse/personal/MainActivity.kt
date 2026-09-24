@@ -482,7 +482,20 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Index ${n(a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
-                Text(if (vm.autoTradeEnabled) "AUTO ARMED" else "MANUAL READY", color = if (vm.autoTradeEnabled) Green else Blue, fontWeight = FontWeight.ExtraBold)
+                val gatewayReady = vm.orderGateway?.executionReady == true
+                Text(
+                    when {
+                        vm.autoTradeEnabled -> "AUTO ARMED"
+                        gatewayReady -> "MANUAL READY"
+                        else -> "ORDER ROUTE BLOCKED"
+                    },
+                    color = when {
+                        vm.autoTradeEnabled -> Green
+                        gatewayReady -> Blue
+                        else -> Red
+                    },
+                    fontWeight = FontWeight.ExtraBold
+                )
             }
         }
     }
@@ -920,6 +933,7 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
                 }
                 Switch(
                     checked = vm.autoTradeEnabled,
+                    enabled = gatewayReady || vm.autoTradeEnabled,
                     onCheckedChange = { enabled -> if (enabled) confirmEnable = true else vm.updateAutoTradeEnabled(false) }
                 )
             }
@@ -929,6 +943,13 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
             }
             AccountSettingRow("Order route", if (gatewayReady) "READY" else "BLOCKED")
             AccountSettingRow("Research gate", if (researchPassed) "PASSED" else "WARNING ONLY")
+            if (!gatewayReady) {
+                Text(
+                    "Live Auto cannot be enabled until Angel order traffic actually exits from the registered static IP. This is a network route requirement, not a signal-setting issue.",
+                    color = Red,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
