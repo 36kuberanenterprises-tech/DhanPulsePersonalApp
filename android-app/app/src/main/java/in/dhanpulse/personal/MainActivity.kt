@@ -385,7 +385,8 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                     AccountSettingRow("Broker", "Angel One SmartAPI")
                     AccountSettingRow("Auto Trade", if (vm.autoTradeEnabled) "ON" else "OFF")
                     AccountSettingRow("Auto lots", vm.autoLots.toString())
-                    AccountSettingRow("Refresh", "60 seconds")
+                    AccountSettingRow("Account / P&L refresh", "Every 15 seconds")
+                    AccountSettingRow("Live analysis refresh", "Every 3 seconds")
                     HorizontalDivider(color = Line)
                     Text("Manual trading stays available even when Auto Trade is blocked by the research gate.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
@@ -429,7 +430,7 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text("Trader Desk", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                    Text("Signal, execution and risk in one place", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Signal, execution and risk • live scan every 3 sec", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill(a.signal, c)
             }
