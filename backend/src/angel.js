@@ -1,3 +1,4 @@
+import { ProxyAgent, request as undiciRequest } from 'undici';
 const ROOT = 'https://apiconnect.angelone.in';
 const MASTER_URL = 'https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json';
 const REGISTERED_PUBLIC_IP = process.env.CLIENT_PUBLIC_IP || '34.70.199.153';
@@ -66,11 +67,13 @@ export async function positions(session) {
   }, 'Positions');
 }
 
-export async function placeOrder(session, payload) {
-  return jsonFetch(`${ROOT}/rest/secure/angelbroking/order/v1/placeOrder`, {
+export async function placeOrder(session, payload, proxyUrl = null) {
+  const url = `${ROOT}/rest/secure/angelbroking/order/v1/placeOrder`;
+  const options = {
     method: 'POST', headers: baseHeaders(session.apiKey, session.jwt),
     body: JSON.stringify(payload)
-  }, 'Place order');
+  };
+  return proxyUrl ? jsonFetchViaProxy(url, options, 'Place order', proxyUrl) : jsonFetch(url, options, 'Place order');
 }
 
 export async function orderBook(session) {
