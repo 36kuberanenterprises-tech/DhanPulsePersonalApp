@@ -12,6 +12,7 @@ app.use(express.json({ limit: '256kb' }));
 
 const sessions = new Map();
 const analysisCache = new Map();
+const LIVE_ANALYSIS_MIN_MS = 2500;
 const sessionTtl = 14 * 60 * 60 * 1000;
 
 app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
@@ -51,6 +52,11 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
 
   const sessionId = req.header('X-Session-Id');
   const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval;
+
+  const recent = analysisCache.get(key);
+  if (recent && Date.now() - recent.at < LIVE_ANALYSIS_MIN_MS) {
+    return res.json(recent.value);
+  }
 
   try {
     const result = await analyse(req.smartSession, req.params.symbol, interval);
