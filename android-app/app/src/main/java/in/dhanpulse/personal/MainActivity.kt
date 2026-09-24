@@ -325,13 +325,165 @@ private fun TradeSection(vm: DhanPulseViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { TradingContextBar(vm) }
-        item { OrderGatewayCard(vm) }
         if (a != null) {
             item { TradeDeskHero(a, vm) }
-            item { ManualTradeCard(a, vm) }
-            item { AutoTradeCard(vm) }
-            item { TradePlanCard(a, vm) }
+            item { PremiumDecisionCard(vm) }
+            item { SignalPerformanceCard(vm) }
         } else item { LoadingMarketCard() }
+    }
+}
+
+@Composable
+private fun PremiumDecisionCard(vm: DhanPulseViewModel) {
+    val p = vm.premiumTradePlan
+    val contract = p.contract
+    val actionColor = when (p.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, actionColor.copy(alpha = 0.35f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Premium Trade Plan", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+                    Text("Strike-price entry, SL and 3 targets • updates every 3 sec", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill(p.signal, actionColor)
+            }
+
+            if (p.signal == "WAIT" || contract == null || p.entry == null) {
+                Surface(color = Amber.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.25f))) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("WAIT", color = Amber, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("No premium call will be recorded until the CE/PE signal is confirmed twice.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else {
+                Surface(color = Panel2, shape = RoundedCornerShape(16.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("SELECTED STRIKE", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(contract.tradingSymbol ?: "Option", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                            Text("Strike ${n(contract.strike)} • ${contract.optionType ?: p.signal}", color = Muted, fontSize = 10.sp)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("LIVE PREMIUM", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(n(contract.ltp), color = actionColor, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                        }
+                    }
+                }
+
+                val statusLabel = when (p.status) {
+                    "WAITING_ENTRY" -> "BUY ABOVE"
+                    "ENTERED" -> "ENTERED"
+                    "T1_HIT" -> "T1 HIT"
+                    "T2_HIT" -> "T2 HIT"
+                    "T3_HIT" -> "T3 HIT"
+                    "SL_HIT" -> "SL HIT"
+                    else -> "BUY ABOVE"
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PremiumLevelBox(statusLabel, p.entry, Blue, Modifier.weight(1f))
+                    PremiumLevelBox("STOP LOSS", p.stopLoss, Red, Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PremiumLevelBox("TARGET 1", p.target1, Green, Modifier.weight(1f))
+                    PremiumLevelBox("TARGET 2", p.target2, Green, Modifier.weight(1f))
+                    PremiumLevelBox("TARGET 3", p.target3, Green, Modifier.weight(1f))
+                }
+
+                Text(
+                    if (p.status == "BUY_ABOVE") "Wait for premium to cross the Entry level. The call is recorded only after the same CE/PE setup is confirmed on two live scans."
+                    else "This call is locked with fixed levels. DhanPulse is tracking T1, T2, T3 and SL against the live option premium.",
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumLevelBox(label: String, value: Double?, color: Color, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier, color = color.copy(alpha = 0.08f), shape = RoundedCornerShape(13.dp), border = BorderStroke(1.dp, color.copy(alpha = 0.20f))) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 11.dp)) {
+            Text(label, color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+            Text(n(value), color = color, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
+@Composable
+private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = false) {
+    val s = vm.signalStats
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Call Performance", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text("Recorded premium calls on this phone", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill("${s.generated} CALLS", Blue)
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatTile("GENERATED", s.generated.toString(), Blue, Modifier.weight(1f))
+                StatTile("ENTERED", s.entered.toString(), Ink, Modifier.weight(1f))
+                StatTile("OPEN", s.open.toString(), Amber, Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatTile("T1 HIT", s.target1Hits.toString(), Green, Modifier.weight(1f))
+                StatTile("T2 HIT", s.target2Hits.toString(), Green, Modifier.weight(1f))
+                StatTile("T3 HIT", s.target3Hits.toString(), Green, Modifier.weight(1f))
+                StatTile("SL HIT", s.stopLossHits.toString(), Red, Modifier.weight(1f))
+            }
+
+            if (s.entered > 0) {
+                val t1Rate = 100.0 * s.target1Hits / s.entered
+                val t2Rate = 100.0 * s.target2Hits / s.entered
+                val t3Rate = 100.0 * s.target3Hits / s.entered
+                Text("Hit rate from entered calls: T1 ${String.format("%.1f", t1Rate)}% • T2 ${String.format("%.1f", t2Rate)}% • T3 ${String.format("%.1f", t3Rate)}%", color = Muted, style = MaterialTheme.typography.labelSmall)
+            }
+
+            if (showRecent && vm.signalHistory.isNotEmpty()) {
+                HorizontalDivider(color = Line)
+                Text("RECENT CALLS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                vm.signalHistory.take(12).forEach { call -> SignalHistoryRow(call) }
+            }
+
+            Text("Tracking continues only while DhanPulse is open and receiving live option premiums. History is saved locally and survives app restarts.", color = Muted, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+private fun StatTile(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Panel2).padding(9.dp)) {
+        Text(label, color = Muted, fontSize = 7.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = color, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+    }
+}
+
+@Composable
+private fun SignalHistoryRow(call: `in`.dhanpulse.personal.model.SignalCall) {
+    val color = when (call.status) {
+        "T3_HIT", "T2_HIT", "T1_HIT" -> Green
+        "SL_HIT" -> Red
+        "UNRESOLVED" -> Muted
+        else -> Amber
+    }
+    Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(call.tradingSymbol, color = Ink, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                Text("${call.side} • Entry ${n(call.entry)} • SL ${n(call.stopLoss)}", color = Muted, fontSize = 9.sp)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(call.status.replace("_", " "), color = color, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
+                Text("LTP ${n(call.lastPremium)}", color = Muted, fontSize = 9.sp)
+            }
+        }
     }
 }
 
@@ -408,8 +560,9 @@ private fun ResearchSection(vm: DhanPulseViewModel) {
         contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { SectionTitle("Research Lab", "Backtest, adaptive validation and robustness") }
+        item { SectionTitle("Research Lab", "Live call results, backtest and robustness") }
         item { TradingContextBar(vm) }
+        item { SignalPerformanceCard(vm, showRecent = true) }
         item { BacktestLabCard(vm) }
     }
 }
@@ -482,18 +635,9 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Index ${n(a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
-                val gatewayReady = vm.orderGateway?.executionReady == true
                 Text(
-                    when {
-                        vm.autoTradeEnabled -> "AUTO ARMED"
-                        gatewayReady -> "MANUAL READY"
-                        else -> "ORDER ROUTE BLOCKED"
-                    },
-                    color = when {
-                        vm.autoTradeEnabled -> Green
-                        gatewayReady -> Blue
-                        else -> Red
-                    },
+                    if (a.signal == "WAIT") "WAIT" else "PREMIUM PLAN READY",
+                    color = if (a.signal == "WAIT") Amber else Blue,
                     fontWeight = FontWeight.ExtraBold
                 )
             }
