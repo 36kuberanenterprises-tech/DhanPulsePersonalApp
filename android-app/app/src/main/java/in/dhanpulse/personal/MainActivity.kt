@@ -31,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import `in`.dhanpulse.personal.model.AnalysisResponse
 import `in`.dhanpulse.personal.model.AccountSummary
 import `in`.dhanpulse.personal.model.BacktestSlice
+import `in`.dhanpulse.personal.model.BacktestStrategy
 import `in`.dhanpulse.personal.model.AdaptivePhase
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
 import kotlin.math.abs
@@ -619,154 +620,226 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
 @Composable
 fun BacktestLabCard(vm: DhanPulseViewModel) {
     val report = vm.backtestReport
+    var resultTab by remember(report?.generatedAt) { mutableStateOf("SUMMARY") }
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Blue.copy(alpha = 0.30f))) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Backtest Lab", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Adaptive Research v1.1 • Angel One historical test • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Clarity v1.2 • research only • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill(if (vm.backtestBusy) "RUNNING" else "HISTORICAL", if (vm.backtestBusy) Amber else Blue)
             }
+
             Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("TEST SETUP", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                     Text("${vm.selectedSymbol.replace("BANKNIFTY", "BANK NIFTY")} • ${timeframeShort(vm.selectedTimeframe)} entry • 15m trend", color = Ink, fontWeight = FontWeight.ExtraBold)
-                    Text("Model capital ${money(vm.backtestCapital)} • Risk model 1% per trade", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    Text("Model capital ${money(vm.backtestCapital)} • 1% current-equity risk model", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
+
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("HISTORY PERIOD", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(1 to "1Y", 3 to "3Y", 5 to "5Y").forEach { pair ->
                         val selected = vm.backtestYears == pair.first
-                        FilledTonalButton(onClick = { vm.updateBacktestYears(pair.first) }, enabled = !vm.backtestBusy, modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = if (selected) Blue.copy(alpha = 0.25f) else Panel2, contentColor = if (selected) Blue else Muted)) {
-                            Text(pair.second, fontWeight = FontWeight.ExtraBold)
-                        }
+                        FilledTonalButton(
+                            onClick = { vm.updateBacktestYears(pair.first) },
+                            enabled = !vm.backtestBusy,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = if (selected) Blue.copy(alpha = 0.25f) else Panel2, contentColor = if (selected) Blue else Muted)
+                        ) { Text(pair.second, fontWeight = FontWeight.ExtraBold) }
                     }
                 }
             }
-            Button(onClick = vm::runBacktest, enabled = !vm.backtestBusy && !vm.autoTradeEnabled, modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+
+            Button(
+                onClick = vm::runBacktest,
+                enabled = !vm.backtestBusy && !vm.autoTradeEnabled,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Blue)
+            ) {
                 if (vm.backtestBusy) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
                     Spacer(Modifier.width(10.dp))
                     Text("Pulling & testing history…", color = Color.White, fontWeight = FontWeight.Bold)
                 } else Text("RUN HISTORICAL BACKTEST", color = Color.White, fontWeight = FontWeight.ExtraBold)
             }
-            if (vm.autoTradeEnabled) InfoStrip("Backtest locked", "Switch Auto Trade OFF before historical testing so broker history calls do not compete with live auto execution.")
+
+            if (vm.autoTradeEnabled) InfoStrip("Backtest locked", "Switch Auto Trade OFF before historical testing.")
             vm.backtestError?.let { ErrorStrip(it) }
+
             if (report != null) {
                 HorizontalDivider(color = Line)
-                Text("${report.candles} candles • ${report.years}Y • ${report.period.from?.take(10) ?: ""} to ${report.period.to?.take(10) ?: ""}", color = Muted, style = MaterialTheme.typography.labelSmall)
-                report.strategies.forEach { s ->
-                    val resultColor = if (s.netR > 0) Green else Red
-                    Surface(color = resultColor.copy(alpha = 0.07f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, resultColor.copy(alpha = 0.18f))) {
-                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(s.label, color = Ink, fontWeight = FontWeight.ExtraBold)
-                                Text((if (s.netR >= 0) "+" else "") + String.format("%.2f", s.netR) + "R", color = resultColor, fontWeight = FontWeight.ExtraBold)
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                BacktestMetric("TRADES", s.totalTrades.toString(), Modifier.weight(1f))
-                                BacktestMetric("WIN RATE", String.format("%.1f%%", s.winRate), Modifier.weight(1f))
-                                BacktestMetric("PF", s.profitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                BacktestMetric("EXPECTANCY", String.format("%.3fR", s.expectancyR), Modifier.weight(1f))
-                                BacktestMetric("MAX DD", String.format("%.1f%%", s.maxDrawdownPct), Modifier.weight(1f))
-                                BacktestMetric("LOSS STREAK", s.maxConsecutiveLosses.toString(), Modifier.weight(1f))
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Model P&L", color = Muted, style = MaterialTheme.typography.bodySmall)
-                                Text(money(s.modelPnl), color = resultColor, fontWeight = FontWeight.ExtraBold)
-                            }
-                        }
-                    }
-                }
-                val trend = report.strategies.firstOrNull { it.strategy == "TREND_PRO" }
-                if (trend != null) {
-                    HorizontalDivider(color = Line)
-                    Text("Trend Pro Diagnostics", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Where the strategy makes and loses R", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text("${report.candles} weekday candles • ${report.years}Y • ${report.period.from?.take(10) ?: ""} to ${report.period.to?.take(10) ?: ""}", color = Muted, style = MaterialTheme.typography.labelSmall)
 
-                    DiagnosticSliceGroup("CE vs PE", trend.diagnostics.sides)
-                    DiagnosticSliceGroup("Time windows", trend.diagnostics.times)
-                    DiagnosticSliceGroup("Weekdays", trend.diagnostics.weekdays)
-                    DiagnosticSliceGroup("Market regime", trend.diagnostics.regimes)
-                    DiagnosticSliceGroup("Volatility", trend.diagnostics.volatility)
-                    DiagnosticSliceGroup("Exit outcomes", trend.diagnostics.exits)
-                    DiagnosticSliceGroup("Development / validation / unseen", trend.diagnostics.phases)
-                    DiagnosticSliceGroup("Year by year", trend.diagnostics.years)
-
-                    val rb = report.robustness
-                    Surface(color = Blue.copy(alpha = 0.08f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Blue.copy(alpha = 0.20f))) {
-                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("Parameter robustness", color = Ink, fontWeight = FontWeight.ExtraBold)
-                            Text("Nearby EMA and ATR settings. We want a stable profitable area, not one lucky setting.", color = Muted, style = MaterialTheme.typography.labelSmall)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                BacktestMetric("TESTED", rb.combinations.toString(), Modifier.weight(1f))
-                                BacktestMetric("PROFITABLE", rb.profitableCombinations.toString(), Modifier.weight(1f))
-                                BacktestMetric("STABLE %", String.format("%.1f%%", rb.profitablePct), Modifier.weight(1f))
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                BacktestMetric("MEDIAN PF", rb.medianProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
-                                BacktestMetric("MIN PF", rb.minProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
-                                BacktestMetric("MAX PF", rb.maxProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
-                            }
-                            rb.best?.let { b ->
-                                Text("Strongest nearby setting: EMA ${b.ema}, Stop ${String.format("%.1f", b.stopAtr)} ATR • PF ${b.profitFactor?.let { String.format("%.2f", it) } ?: "NA"} • ${String.format("%.3f", b.expectancyR)}R/trade", color = Blue, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
+                if (report.dataQuality.weekendOrSpecialCandlesExcluded > 0) {
+                    InfoStrip(
+                        "Data cleaned",
+                        "${report.dataQuality.weekendOrSpecialCandlesExcluded} weekend/special-session candles were excluded from normal strategy and weekday statistics. Weekday analysis now uses Monday to Friday only."
+                    )
                 }
 
                 val adaptive = report.adaptive
-                val gateColor = if (adaptive.gatePassed) Green else Red
-                Surface(
-                    color = gateColor.copy(alpha = 0.08f),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, gateColor.copy(alpha = 0.22f))
-                ) {
-                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Adaptive Intelligence", color = Ink, fontWeight = FontWeight.ExtraBold)
-                                Text("Learns on development, selects on validation, checks untouched out of sample", color = Muted, style = MaterialTheme.typography.labelSmall)
+                val decisionColor = if (adaptive.gatePassed) Green else Red
+                Surface(color = decisionColor.copy(alpha = 0.08f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, decisionColor.copy(alpha = 0.22f))) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("WHAT SHOULD I CONSIDER?", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text(if (adaptive.gatePassed) "Research gate passed — paper test this candidate next." else "No validated edge yet — do not use this setup for Live Auto.", color = decisionColor, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                        Text(if (adaptive.gatePassed) "The selected rule stayed positive in development, validation and unseen data. This is still not a profit guarantee." else "Ignore isolated green boxes from the full-period diagnostics. The Adaptive gate is the main decision because it checks unseen data.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    BacktestTab("Summary", "SUMMARY", resultTab, Modifier.weight(1f)) { resultTab = "SUMMARY" }
+                    BacktestTab("Adaptive", "ADAPTIVE", resultTab, Modifier.weight(1f)) { resultTab = "ADAPTIVE" }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    BacktestTab("Diagnostics", "DIAGNOSTICS", resultTab, Modifier.weight(1f)) { resultTab = "DIAGNOSTICS" }
+                    BacktestTab("Robustness", "ROBUSTNESS", resultTab, Modifier.weight(1f)) { resultTab = "ROBUSTNESS" }
+                }
+
+                when (resultTab) {
+                    "ADAPTIVE" -> {
+                        val gateColor = if (adaptive.gatePassed) Green else Red
+                        Surface(color = gateColor.copy(alpha = 0.08f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, gateColor.copy(alpha = 0.22f))) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Adaptive Intelligence", color = Ink, fontWeight = FontWeight.ExtraBold)
+                                        Text("Develop → validate → untouched unseen test", color = Muted, style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    StatusPill(if (adaptive.gatePassed) "PAPER ELIGIBLE" else "LIVE BLOCKED", gateColor)
+                                }
+                                Text(adaptive.message, color = if (adaptive.gatePassed) Green else Muted, style = MaterialTheme.typography.bodySmall)
+                                adaptive.configName?.takeIf { it.isNotBlank() }?.let { Text(it, color = Blue, fontWeight = FontWeight.Bold) }
+                                adaptive.ruleText?.takeIf { it.isNotBlank() }?.let { rule ->
+                                    Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) { Text(rule, color = Ink, modifier = Modifier.fillMaxWidth().padding(10.dp), style = MaterialTheme.typography.bodySmall) }
+                                }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    BacktestMetric("CONFIGS", adaptive.searchedConfigs.toString(), Modifier.weight(1f))
+                                    BacktestMetric("CANDIDATES", adaptive.candidates.toString(), Modifier.weight(1f))
+                                    BacktestMetric("GATE", if (adaptive.gatePassed) "PASS" else "FAIL", Modifier.weight(1f))
+                                }
+                                adaptive.development?.let { AdaptivePhaseRow("1. DEVELOPMENT", it) }
+                                adaptive.validation?.let { AdaptivePhaseRow("2. VALIDATION", it) }
+                                adaptive.outOfSample?.let { AdaptivePhaseRow("3. UNSEEN", it) }
+                                adaptive.combined?.let { x ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        BacktestMetric("FILTERED PF", x.profitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                                        BacktestMetric("EXP", String.format("%.3fR", x.expectancyR), Modifier.weight(1f))
+                                        BacktestMetric("MAX DD", String.format("%.1f%%", x.maxDrawdownPct), Modifier.weight(1f))
+                                    }
+                                }
                             }
-                            StatusPill(if (adaptive.gatePassed) "PAPER ELIGIBLE" else "LIVE BLOCKED", gateColor)
                         }
-                        Text(adaptive.message, color = if (adaptive.gatePassed) Green else Muted, style = MaterialTheme.typography.bodySmall)
-                        if (!adaptive.configName.isNullOrBlank()) {
-                            Text(adaptive.configName ?: "", color = Blue, fontWeight = FontWeight.Bold)
+                    }
+
+                    "DIAGNOSTICS" -> {
+                        val trend = report.strategies.firstOrNull { it.strategy == "TREND_PRO" }
+                        if (trend != null) {
+                            Text("Trend Pro diagnostics", color = Ink, fontWeight = FontWeight.ExtraBold)
+                            Text("These explain the past. Do not choose a live rule from one green box alone.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                            ExpandableDiagnostic("CE vs PE", trend.diagnostics.sides, true)
+                            ExpandableDiagnostic("Time windows", trend.diagnostics.times, true)
+                            ExpandableDiagnostic("Weekdays — Monday to Friday", trend.diagnostics.weekdays, false)
+                            ExpandableDiagnostic("Market regime", trend.diagnostics.regimes, false)
+                            ExpandableDiagnostic("Volatility", trend.diagnostics.volatility, false)
+                            ExpandableDiagnostic("Exit outcomes", trend.diagnostics.exits, false)
+                            ExpandableDiagnostic("Development / validation / unseen", trend.diagnostics.phases, false)
+                            ExpandableDiagnostic("Year by year", trend.diagnostics.years, false)
                         }
-                        if (!adaptive.ruleText.isNullOrBlank()) {
-                            Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
-                                Text(adaptive.ruleText ?: "", color = Ink, modifier = Modifier.fillMaxWidth().padding(10.dp), style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    "ROBUSTNESS" -> {
+                        val rb = report.robustness
+                        Surface(color = Blue.copy(alpha = 0.08f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Blue.copy(alpha = 0.20f))) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Parameter robustness", color = Ink, fontWeight = FontWeight.ExtraBold)
+                                Text("If nearby settings also work, the strategy is more believable. One lucky setting is not enough.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    BacktestMetric("TESTED", rb.combinations.toString(), Modifier.weight(1f))
+                                    BacktestMetric("PROFITABLE", rb.profitableCombinations.toString(), Modifier.weight(1f))
+                                    BacktestMetric("STABLE %", String.format("%.1f%%", rb.profitablePct), Modifier.weight(1f))
+                                }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    BacktestMetric("MEDIAN PF", rb.medianProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                                    BacktestMetric("MIN PF", rb.minProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                                    BacktestMetric("MAX PF", rb.maxProfitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
+                                }
+                                rb.best?.let { b -> Text("Strongest nearby setting: EMA ${b.ema}, Stop ${String.format("%.1f", b.stopAtr)} ATR • PF ${b.profitFactor?.let { String.format("%.2f", it) } ?: "NA"} • ${String.format("%.3f", b.expectancyR)}R/trade", color = Blue, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold) }
                             }
                         }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            BacktestMetric("CONFIGS", adaptive.searchedConfigs.toString(), Modifier.weight(1f))
-                            BacktestMetric("CANDIDATES", adaptive.candidates.toString(), Modifier.weight(1f))
-                            BacktestMetric("GATE", if (adaptive.gatePassed) "PASS" else "FAIL", Modifier.weight(1f))
-                        }
-                        adaptive.development?.let { AdaptivePhaseRow("DEVELOPMENT", it) }
-                        adaptive.validation?.let { AdaptivePhaseRow("VALIDATION", it) }
-                        adaptive.outOfSample?.let { AdaptivePhaseRow("UNSEEN 20%", it) }
-                        adaptive.combined?.let { x ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                BacktestMetric("FILTERED PF", x.profitFactor?.let { String.format("%.2f", it) } ?: "NA", Modifier.weight(1f))
-                                BacktestMetric("EXP", String.format("%.3fR", x.expectancyR), Modifier.weight(1f))
-                                BacktestMetric("MAX DD", String.format("%.1f%%", x.maxDrawdownPct), Modifier.weight(1f))
+                        InfoStrip("Data quality", report.dataQuality.note)
+                    }
+
+                    else -> {
+                        Text("Strategy summary", color = Ink, fontWeight = FontWeight.ExtraBold)
+                        report.strategies.forEach { CompactStrategyRow(it) }
+                        Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Text("HOW TO READ", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                Text("PF above 1.00 = gross winning R is greater than losing R.", color = Ink, style = MaterialTheme.typography.bodySmall)
+                                Text("Expectancy above 0 = average trade is positive after the model friction.", color = Ink, style = MaterialTheme.typography.bodySmall)
+                                Text("1R = the amount risked on one trade. With Rs. 20,000 and 1% risk, the first 1R is about Rs. 200.", color = Ink, style = MaterialTheme.typography.bodySmall)
+                                Text("Max DD = biggest peak-to-trough fall in the model equity.", color = Ink, style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
                 }
 
-                InfoStrip("Important", "v1.1 can automatically discover and validate filters, but it does not force a profitable result. Adaptive rules are kept out of Live Auto unless they pass development, validation and untouched out-of-sample gates. Historical option premium, PCR, IV and true index VWAP are still Stage 2.")
+                InfoStrip("Important", "Green historical numbers are not a guarantee. The main decision is the Adaptive gate; Live Auto should remain blocked until a rule passes unseen-data testing and later option-premium validation.")
             } else {
-                Text("Compares Current Core, Trend Pro and Regime Pro with the same ATR risk framework. It never sends BUY or SELL orders.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text("Run a backtest. The app will show one clear decision first, then you can open Summary, Adaptive, Diagnostics or Robustness separately.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BacktestTab(label: String, key: String, selected: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val active = key == selected
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = modifier,
+        colors = ButtonDefaults.filledTonalButtonColors(containerColor = if (active) Blue.copy(alpha = 0.25f) else Panel2, contentColor = if (active) Blue else Muted)
+    ) { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+}
+
+@Composable
+private fun CompactStrategyRow(s: BacktestStrategy) {
+    val rc = if (s.expectancyR > 0 && (s.profitFactor ?: 0.0) > 1.0) Green else Red
+    Surface(color = rc.copy(alpha = 0.06f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, rc.copy(alpha = 0.16f))) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(s.label, color = Ink, fontWeight = FontWeight.ExtraBold)
+                Text("${if (s.netR >= 0) "+" else ""}${String.format("%.2f", s.netR)}R", color = rc, fontWeight = FontWeight.ExtraBold)
+            }
+            Text("${s.totalTrades} trades • WR ${String.format("%.1f", s.winRate)}% • PF ${s.profitFactor?.let { String.format("%.2f", it) } ?: "NA"} • Exp ${String.format("%.3f", s.expectancyR)}R • DD ${String.format("%.1f", s.maxDrawdownPct)}%", color = Muted, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+private fun ExpandableDiagnostic(title: String, rows: List<BacktestSlice>, initiallyOpen: Boolean) {
+    if (rows.isEmpty()) return
+    var open by remember(title) { mutableStateOf(initiallyOpen) }
+    Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 12.dp, vertical = 11.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text(if (open) "▲" else "▼", color = Blue, fontWeight = FontWeight.Bold)
+            }
+            if (open) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    DiagnosticSliceGroup("", rows)
+                }
             }
         }
     }
