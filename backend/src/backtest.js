@@ -288,6 +288,8 @@ function simulate(strategy,candles,entryInterval,higherCandles,cfg={}){
 
   for(let i=40;i<candles.length-1;i++){
     const dk=dayKey(candles[i].timestamp);
+    const wd=istWeekday(candles[i].timestamp);
+    if(!['Mon','Tue','Wed','Thu','Fri'].includes(wd)) continue;
     if(dk!==activeDay){activeDay=dk;dailyCount=0;}
     if(i<=lastExit+2||dailyCount>=maxTrades)continue;
     const minute=istHm(candles[i].timestamp);
@@ -331,7 +333,7 @@ function simulate(strategy,candles,entryInterval,higherCandles,cfg={}){
     const netR=grossR-frictionR;
     trades.push({
       date:dk,side,entry:round(entry),exit:round(candles[exitIndex]?.close),grossR:round(grossR,3),netR:round(netR,3),reason,
-      timeBucket:timeBucket(candles[i].timestamp),weekday:istWeekday(candles[i].timestamp),
+      timeBucket:timeBucket(candles[i].timestamp),weekday:wd,
       regime:regimeBucket(s.adx[i]),volatility:volatilityBucket(s.atrPct[i],s),phase:phaseBucket(i,candles.length)
     });
     lastExit=exitIndex;dailyCount++;i=exitIndex;
@@ -606,6 +608,41 @@ function adaptiveResearch(candles,interval,higher,capital,baseSeries,baseHtf){
   };
 }
 
+
+function interpretationSummary(strategies,adaptive){
+  const trend=strategies.find(x=>x.strategy==='TREND_PRO');
+  const oos=adaptive?.outOfSample;
+  let verdict='NOT READY';
+  let reason='No validated edge yet.';
+  if(adaptive?.gatePassed){
+    verdict='PAPER TEST';
+    reason='Adaptive rule passed development, validation and untouched out-of-sample gates. Paper trading is the next step.';
+  }else if(oos && (oos.profitFactor??0)>1 && oos.expectancyR>0){
+    verdict='PROMISING, NOT READY';
+    reason='Recent unseen data is positive, but the full validation gate is not strong enough yet.';
+  }else if(trend && (trend.profitFactor??0)>=0.98){
+    verdict='NEAR BREAKEVEN';
+    reason='Trend Pro is close to breakeven overall, but still lacks a durable historical edge.';
+  }
+  return {
+    verdict,
+    reason,
+    focus:[
+      'Adaptive gate status',
+      'Untouched out-of-sample Profit Factor and expectancy',
+      'Maximum drawdown',
+      'Trade count',
+      'Robustness across nearby parameters'
+    ],
+    ignoreForDecision:[
+      'One weekday alone',
+      'One time window alone',
+      'Raw win rate without Profit Factor',
+      'Small Saturday/Sunday samples'
+    ]
+  };
+}
+
 export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE',years=3,capital=20000}={}){
   symbol=String(symbol).toUpperCase();interval=String(interval).toUpperCase();
   years=[1,3,5].includes(Number(years))?Number(years):3;
@@ -653,6 +690,7 @@ export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE'
       equityModel:'1% of current equity risked per trade (compounding)'
     },
     strategies,robustness,adaptive,
+    interpretation:interpretationSummary(strategies,adaptive),
     limitations:[
       'This diagnostic test measures the underlying index signal engine, not historical option premium P&L.',
       'Angel index candles do not provide usable volume, so true historical VWAP is not reconstructed; Trend Pro uses a session typical-price mean proxy.',
