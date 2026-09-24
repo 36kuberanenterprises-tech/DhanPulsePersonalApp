@@ -617,7 +617,8 @@ fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     var lots by remember(contract?.token) { mutableStateOf(1) }
     var pendingSide by remember { mutableStateOf<String?>(null) }
     val currentLongQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
-    val canExit = currentLongQty > 0.0
+    val gatewayReady = vm.orderGateway?.executionReady == true
+    val canExit = currentLongQty > 0.0 && gatewayReady
 
     pendingSide?.let { side ->
         AlertDialog(
@@ -702,9 +703,9 @@ fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { pendingSide = "BUY" },
-                        enabled = !vm.orderBusy,
+                        enabled = gatewayReady && !vm.orderBusy,
                         modifier = Modifier.weight(1f).height(52.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Green),
+                        colors = ButtonDefaults.buttonColors(containerColor = Green, disabledContainerColor = Panel2),
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("BUY ${a.signal}", color = Color.White, fontWeight = FontWeight.ExtraBold) }
 
@@ -859,7 +860,11 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                         shape = RoundedCornerShape(14.dp)
                     ) { Text(if (canExit) "SELL / EXIT" else "NO POSITION", color = if (canExit) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
                 }
-                if (currentLongQty > 0) Text("Open position: ${currentLongQty.toInt()} qty", color = Green, style = MaterialTheme.typography.bodySmall)
+                if (!gatewayReady) {
+                    InfoStrip("Live order route blocked", vm.orderGateway?.message ?: "Check Real Order Gateway before placing a live order.")
+                } else if (currentLongQty > 0) {
+                    Text("Open position: ${currentLongQty.toInt()} qty", color = Green, style = MaterialTheme.typography.bodySmall)
+                }
                 vm.orderMessage?.let { InfoStrip("Manual order status", it) }
             }
         }
@@ -875,13 +880,21 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
             title = { Text("Enable Auto Trade?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val gatewayReady = vm.orderGateway?.executionReady == true
+                    val researchPassed = vm.backtestReport?.adaptive?.gatePassed == true
                     Text("DhanPulse will place real BUY orders automatically when the same CE or PE signal is confirmed on two refreshes.")
+                    Text("Order route: " + if (gatewayReady) "READY" else "BLOCKED", color = if (gatewayReady) Green else Red, fontWeight = FontWeight.Bold)
+                    Text("Research validation: " + if (researchPassed) "PASSED" else "NOT PASSED — experimental live use", color = if (researchPassed) Green else Amber, style = MaterialTheme.typography.bodySmall)
                     Text("It will auto EXIT only the position opened by this auto session when Target 1, stop loss or the opposite signal is reached.", color = Muted, style = MaterialTheme.typography.bodySmall)
                     Text("Auto Trade works only while this app is open and logged in.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
-                Button(onClick = { vm.updateAutoTradeEnabled(true); confirmEnable = false }, colors = ButtonDefaults.buttonColors(containerColor = Green)) {
+                Button(
+                    onClick = { vm.updateAutoTradeEnabled(true); confirmEnable = false },
+                    enabled = vm.orderGateway?.executionReady == true,
+                    colors = ButtonDefaults.buttonColors(containerColor = Green, disabledContainerColor = Panel2)
+                ) {
                     Text("Enable Auto Trade", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
@@ -889,7 +902,14 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
         )
     }
 
-    val activeColor = if (vm.autoTradeEnabled) Green else Muted
+    val researchPassed = vm.backtestReport?.adaptive?.gatePassed == true
+    val gatewayReady = vm.orderGateway?.executionReady == true
+    val activeColor = when {
+        vm.autoTradeEnabled && researchPassed -> Green
+        vm.autoTradeEnabled -> Amber
+        !gatewayReady -> Red
+        else -> Muted
+    }
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, if (vm.autoTradeEnabled) Green.copy(alpha = 0.30f) else Line)) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -904,8 +924,10 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
             }
 
             Surface(color = activeColor.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, activeColor.copy(alpha = 0.22f))) {
-                Text(vm.autoStatus, color = if (vm.autoTradeEnabled) Green else Muted, modifier = Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.bodySmall)
+                Text(vm.autoStatus, color = activeColor, modifier = Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.bodySmall)
             }
+            AccountSettingRow("Order route", if (gatewayReady) "READY" else "BLOCKED")
+            AccountSettingRow("Research gate", if (researchPassed) "PASSED" else "WARNING ONLY")
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
