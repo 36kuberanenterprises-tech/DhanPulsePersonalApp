@@ -520,6 +520,7 @@ private fun CallRecordDetails(call: `in`.dhanpulse.personal.model.SignalCall, co
         CallMilestoneRow("Target 2", call.t2HitAt, Green)
         CallMilestoneRow("Target 3", call.t3HitAt, Green)
         CallMilestoneRow("Stop Loss", call.slHitAt, Red)
+        CallMilestoneRow("Cancelled", call.cancelledAt, Muted)
 
         Text("Call ID: ${call.id}", color = Muted, fontSize = 8.sp)
     }
@@ -541,7 +542,7 @@ private fun CallMilestoneRow(label: String, hitAt: Long?, color: Color) {
 private fun callResultColor(status: String): Color = when (status) {
     "T3_HIT", "T2_HIT", "T1_HIT" -> Green
     "SL_HIT" -> Red
-    "UNRESOLVED" -> Muted
+    "UNRESOLVED", "CANCELLED" -> Muted
     "ENTERED", "WAITING_ENTRY" -> Amber
     else -> Blue
 }
@@ -569,6 +570,10 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
                 StatTile("GENERATED", s.generated.toString(), Blue, Modifier.weight(1f))
                 StatTile("ENTERED", s.entered.toString(), Ink, Modifier.weight(1f))
                 StatTile("OPEN", s.open.toString(), Amber, Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatTile("CANCELLED", s.cancelled.toString(), Muted, Modifier.weight(1f))
+                StatTile("UNRESOLVED", s.unresolved.toString(), Muted, Modifier.weight(1f))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile("T1 HIT", s.target1Hits.toString(), Green, Modifier.weight(1f))
@@ -608,7 +613,7 @@ private fun SignalHistoryRow(call: `in`.dhanpulse.personal.model.SignalCall) {
     val color = when (call.status) {
         "T3_HIT", "T2_HIT", "T1_HIT" -> Green
         "SL_HIT" -> Red
-        "UNRESOLVED" -> Muted
+        "UNRESOLVED", "CANCELLED" -> Muted
         else -> Amber
     }
     Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
