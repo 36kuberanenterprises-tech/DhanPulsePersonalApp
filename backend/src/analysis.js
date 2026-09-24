@@ -18,6 +18,130 @@ const marketOpenFor = now => {
   return new Date(utc);
 };
 
+const INTERVAL_MINUTES = {
+  ONE_MINUTE: 1,
+  THREE_MINUTE: 3,
+  FIVE_MINUTE: 5,
+  TEN_MINUTE: 10,
+  FIFTEEN_MINUTE: 15
+};
+
+const liveCandleCache = new Map();
+const candleLoadLocks = new Map();
+const candleRetryAfter = new Map();
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function historyStartFor(now, interval) {
+  const p = istParts(now);
+  const lookbackDays = interval === 'FIFTEEN_MINUTE' ? 12 : 10;
+  const utc = Date.UTC(p.y, p.m, p.day - lookbackDays, 9, 15) - IST_OFFSET_MS;
+  return new Date(utc);
+}
+
+function bucketStartFor(now, interval) {
+  const mins = INTERVAL_MINUTES[interval] || 5;
+  const open = marketOpenFor(now);
+  const close = new Date(open.getTime() + 375 * 60 * 1000);
+  if (now < open) return open;
+  if (now > close) return new Date(close.getTime() - mins * 60 * 1000);
+  const elapsed = now.getTime() - open.getTime();
+  const bucket = Math.floor(elapsed / (mins * 60 * 1000));
+  return new Date(open.getTime() + bucket * mins * 60 * 1000);
+}
+
+async function loadHistoricalBase(session, exchange, token, interval, now, key) {
+  const retryAt = candleRetryAfter.get(key) || 0;
+  if (Date.now() < retryAt) throw new Error('Market history is cooling down after a broker rate-limit response. Retrying automatically.');
+
+  const payload = {
+    exchange,
+    symboltoken: String(token),
+    interval,
+    fromdate: fmtDate(historyStartFor(now, interval)),
+    todate: fmtDate(now)
+  };
+
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const raw = await candleData(session, payload);
+      const rows = parseCandles(raw)
+        .filter(x => [x.open,x.high,x.low,x.close].every(Number.isFinite))
+        .sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+      liveCandleCache.set(key, {
+        candles: rows.slice(-1200),
+        loadedAt: Date.now(),
+        lastLiveAt: Date.now()
+      });
+      candleRetryAfter.delete(key);
+      return liveCandleCache.get(key);
+    } catch (e) {
+      lastError = e;
+      const msg = String(e?.message || '');
+      if (/403|rate/i.test(msg) && attempt === 0) {
+        await sleep(6500);
+        continue;
+      }
+      if (/403|rate/i.test(msg)) candleRetryAfter.set(key, Date.now() + 45_000);
+      throw e;
+    }
+  }
+  throw lastError || new Error('Unable to load market history');
+}
+
+async function liveCandles(session, exchange, token, interval, livePrice, now) {
+  const key = [exchange, token, interval].join('|');
+  const mins = INTERVAL_MINUTES[interval] || 5;
+  let state = liveCandleCache.get(key);
+
+  const staleGap = state?.lastLiveAt ? Date.now() - state.lastLiveAt : Number.MAX_SAFE_INTEGER;
+  const mustReload = !state || state.candles.length < 35 || staleGap > Math.max(120_000, mins * 2 * 60_000);
+
+  if (mustReload) {
+    let lock = candleLoadLocks.get(key);
+    if (!lock) {
+      lock = loadHistoricalBase(session, exchange, token, interval, now, key)
+        .finally(() => candleLoadLocks.delete(key));
+      candleLoadLocks.set(key, lock);
+    }
+    state = await lock;
+  }
+
+  const candles = state.candles.slice();
+  const price = Number(livePrice || candles[candles.length - 1]?.close || 0);
+  const bucketStart = bucketStartFor(now, interval);
+  const bucketMs = bucketStart.getTime();
+  const last = candles[candles.length - 1];
+  const lastMs = last ? new Date(last.timestamp).getTime() : 0;
+
+  if (price > 0) {
+    if (last && Math.abs(lastMs - bucketMs) < 60_000) {
+      last.high = Math.max(Number(last.high), price);
+      last.low = Math.min(Number(last.low), price);
+      last.close = price;
+    } else if (!last || lastMs < bucketMs) {
+      candles.push({
+        timestamp: bucketStart.toISOString(),
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        volume: 0
+      });
+    }
+  }
+
+  state.candles = candles.slice(-1200);
+  state.lastLiveAt = Date.now();
+  liveCandleCache.set(key, state);
+
+  if (state.candles.length < 35) {
+    throw new Error('Market history is still preparing. Waiting for enough prior-session candles.');
+  }
+  return state.candles;
+}
+
 function exchangeOf(row) { return row.exch_seg || row.exchange || 'NSE'; }
 
 function signalEngine({ spot, ema9, ema15, vwapValue, rsiValue, macdValue, st, pcr }) {
@@ -63,27 +187,33 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const rows = await instrumentMaster();
   const underlying = resolveUnderlying(rows, symbol);
   const uExchange = exchangeOf(underlying);
-  const q = await marketData(session, { [uExchange]: [String(underlying.token)] }, 'FULL');
-  const uq = parseFetched(q)[0] || {};
+  const future = resolveNearestFuture(rows, symbol);
+
+  const quoteTokens = { [uExchange]: [String(underlying.token)] };
+  if (future) {
+    const fx = exchangeOf(future);
+    (quoteTokens[fx] ||= []).push(String(future.token));
+  }
+
+  const q = await marketData(session, quoteTokens, 'FULL');
+  const fetchedQuotes = parseFetched(q);
+  const byTokenQuote = new Map(fetchedQuotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
+  const uq = byTokenQuote.get(String(underlying.token)) || fetchedQuotes[0] || {};
   let spot = quoteLtp(uq);
 
   const now = new Date();
-  let from = marketOpenFor(now);
-  if (now.getTime() < from.getTime()) from = new Date(from.getTime() - 24 * 60 * 60 * 1000);
-  const cRaw = await candleData(session, { exchange: uExchange, symboltoken: String(underlying.token), interval, fromdate: fmtDate(from), todate: fmtDate(now) });
-  const candles = parseCandles(cRaw);
-  if (candles.length < 35) throw new Error(`Only ${candles.length} candles available. Need at least 35 for analysis.`);
+  const candles = await liveCandles(session, uExchange, String(underlying.token), interval, spot, now);
   if (!spot) spot = candles[candles.length - 1].close;
   const closes = candles.map(c => c.close);
 
   const e9 = ema(closes, 9), e15 = ema(closes, 15), rv = rsi(closes, 14), mv = macd(closes), st = supertrend(candles, 10, 3), a = atr(candles, 14);
 
   let vw = null, vwapSource = 'Unavailable';
-  const future = resolveNearestFuture(rows, symbol);
   if (future) {
     try {
-      const fRaw = await candleData(session, { exchange: exchangeOf(future), symboltoken: String(future.token), interval, fromdate: fmtDate(from), todate: fmtDate(now) });
-      const fc = parseCandles(fRaw);
+      const fq = byTokenQuote.get(String(future.token)) || {};
+      const futureLtp = quoteLtp(fq);
+      const fc = await liveCandles(session, exchangeOf(future), String(future.token), interval, futureLtp, now);
       vw = vwap(fc);
       if (vw != null) vwapSource = `Nearest futures ${future.symbol || future.name}`;
     } catch {}
@@ -135,6 +265,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     rules: engine.rules,
     notes: [
       'Signal is a rule based market view, not a probability or guarantee.',
+      'Live quotes refresh frequently while historical candles are cached and rolled forward locally to avoid broker historical-API rate limits.',
       'VWAP uses the nearest futures contract because index historical candles do not provide usable volume.',
       'PCR shown here is calculated from the selected near ATM option window, not the full exchange chain.',
       'This build does not place orders.'
