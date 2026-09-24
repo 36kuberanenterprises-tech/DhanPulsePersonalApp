@@ -325,7 +325,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             status = "WAITING_ENTRY"
         )
 
-        signalHistory = (listOf(call) + signalHistory).take(500)
+        signalHistory = (listOf(call) + signalHistory).take(5000)
         blockedCallBias = biasKey
         callPendingKey = null
         callPendingCount = 0
@@ -354,7 +354,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun persistSignalHistory() {
-        signalPrefs.edit().putString("history_json", Gson().toJson(signalHistory.take(500))).apply()
+        signalPrefs.edit().putString("history_json", Gson().toJson(signalHistory.take(5000))).apply()
     }
 
     private fun refreshSignalStats() {
