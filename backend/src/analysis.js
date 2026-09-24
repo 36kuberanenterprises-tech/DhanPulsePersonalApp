@@ -29,6 +29,7 @@ const INTERVAL_MINUTES = {
 const liveCandleCache = new Map();
 const candleLoadLocks = new Map();
 const candleRetryAfter = new Map();
+const optionWindowCache = new Map();
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -188,16 +189,20 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const underlying = resolveUnderlying(rows, symbol);
   const uExchange = exchangeOf(underlying);
   const future = resolveNearestFuture(rows, symbol);
+  const cachedWindow = optionWindowCache.get(symbol) || null;
 
   const quoteTokens = { [uExchange]: [String(underlying.token)] };
   if (future) {
     const fx = exchangeOf(future);
     (quoteTokens[fx] ||= []).push(String(future.token));
   }
+  if (cachedWindow?.contracts?.length) {
+    for (const c of cachedWindow.contracts) (quoteTokens[c.exch_seg] ||= []).push(String(c.token));
+  }
 
   const q = await marketData(session, quoteTokens, 'FULL');
-  const fetchedQuotes = parseFetched(q);
-  const byTokenQuote = new Map(fetchedQuotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
+  let fetchedQuotes = parseFetched(q);
+  let byTokenQuote = new Map(fetchedQuotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
   const uq = byTokenQuote.get(String(underlying.token)) || fetchedQuotes[0] || {};
   let spot = quoteLtp(uq);
 
@@ -210,31 +215,44 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
 
   let vw = null, vwapSource = 'Unavailable';
   if (future) {
-    try {
-      const fq = byTokenQuote.get(String(future.token)) || {};
-      const futureLtp = quoteLtp(fq);
-      const fc = await liveCandles(session, exchangeOf(future), String(future.token), interval, futureLtp, now);
-      vw = vwap(fc);
-      if (vw != null) vwapSource = `Nearest futures ${future.symbol || future.name}`;
-    } catch {}
+    const fq = byTokenQuote.get(String(future.token)) || {};
+    const avgPrice = Number(fq.avgPrice ?? fq.averagePrice ?? 0);
+    if (Number.isFinite(avgPrice) && avgPrice > 0) {
+      vw = avgPrice;
+      vwapSource = `Live futures average price ${future.symbol || future.name}`;
+    }
   }
 
-  const window = resolveOptionWindow(rows, symbol, spot, 5);
-  const byEx = {};
-  for (const c of window.contracts) (byEx[c.exch_seg] ||= []).push(String(c.token));
+  let window = cachedWindow;
+  const freshWindow = resolveOptionWindow(rows, symbol, spot, 5);
+
+  if (!window) {
+    window = freshWindow;
+    optionWindowCache.set(symbol, freshWindow);
+
+    const optionTokens = {};
+    for (const c of freshWindow.contracts) (optionTokens[c.exch_seg] ||= []).push(String(c.token));
+    if (Object.keys(optionTokens).length) {
+      await sleep(1100);
+      try {
+        const optionQuote = await marketData(session, optionTokens, 'FULL');
+        const optionFetched = parseFetched(optionQuote);
+        fetchedQuotes = fetchedQuotes.concat(optionFetched);
+        byTokenQuote = new Map(fetchedQuotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
+      } catch {}
+    }
+  } else if (freshWindow?.atm != null && freshWindow.atm !== window.atm) {
+    optionWindowCache.set(symbol, freshWindow);
+  }
+
   let chain = [];
-  if (Object.keys(byEx).length) {
-    try {
-      const m = await marketData(session, byEx, 'FULL');
-      const fetched = parseFetched(m);
-      const byToken = new Map(fetched.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
-      chain = window.contracts.map(c => {
-        const z = byToken.get(String(c.token)) || {};
-        const sym = String(c.symbol || '');
-        const optionType = /PE$/i.test(sym) ? 'PE' : /CE$/i.test(sym) ? 'CE' : (String(c.instrumenttype).toUpperCase().includes('PE') ? 'PE' : 'CE');
-        return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType, ltp: round(quoteLtp(z)), oi: quoteOi(z), lotSize: Number(c.lotsize || 0) };
-      }).sort((a,b) => a.strike - b.strike || a.optionType.localeCompare(b.optionType));
-    } catch {}
+  if (window?.contracts?.length) {
+    chain = window.contracts.map(c => {
+      const z = byTokenQuote.get(String(c.token)) || {};
+      const sym = String(c.symbol || '');
+      const optionType = /PE$/i.test(sym) ? 'PE' : /CE$/i.test(sym) ? 'CE' : (String(c.instrumenttype).toUpperCase().includes('PE') ? 'PE' : 'CE');
+      return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType, ltp: round(quoteLtp(z)), oi: quoteOi(z), lotSize: Number(c.lotsize || 0) };
+    }).sort((a,b) => a.strike - b.strike || a.optionType.localeCompare(b.optionType));
   }
   const ceOi = chain.filter(x => x.optionType === 'CE').reduce((s,x)=>s+x.oi,0);
   const peOi = chain.filter(x => x.optionType === 'PE').reduce((s,x)=>s+x.oi,0);
@@ -265,8 +283,8 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     rules: engine.rules,
     notes: [
       'Signal is a rule based market view, not a probability or guarantee.',
-      'Live quotes refresh frequently while historical candles are cached and rolled forward locally to avoid broker historical-API rate limits.',
-      'VWAP uses the nearest futures contract because index historical candles do not provide usable volume.',
+      'Live quotes refresh frequently while historical candles are fetched once, cached, and rolled forward locally to avoid broker historical-API rate limits.',
+      'VWAP reference uses the live nearest-futures average traded price, avoiding repeated historical futures requests.',
       'PCR shown here is calculated from the selected near ATM option window, not the full exchange chain.',
       'This build does not place orders.'
     ]
