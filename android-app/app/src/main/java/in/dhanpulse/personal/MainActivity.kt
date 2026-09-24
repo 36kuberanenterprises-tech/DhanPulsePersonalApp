@@ -328,6 +328,9 @@ private fun TradeSection(vm: DhanPulseViewModel) {
         if (a != null) {
             item { TradeDeskHero(a, vm) }
             item { PremiumDecisionCard(vm) }
+            vm.signalHistory.firstOrNull()?.let { latest ->
+                item { LatestCallRecordCard(latest) }
+            }
             item { SignalPerformanceCard(vm) }
         } else item { LoadingMarketCard() }
     }
@@ -415,6 +418,140 @@ private fun PremiumLevelBox(label: String, value: Double?, color: Color, modifie
 }
 
 @Composable
+private fun LatestCallRecordCard(call: `in`.dhanpulse.personal.model.SignalCall) {
+    var open by remember(call.id) { mutableStateOf(false) }
+    val resultColor = callResultColor(call.status)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, resultColor.copy(alpha = 0.25f))
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().clickable { open = !open }.padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Latest Recorded Call", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                    Text(call.tradingSymbol, color = Ink, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text(
+                        "${call.side} • ${timeframeShort(call.timeframe)} • Generated ${formatCallTime(call.generatedAt)}",
+                        color = Muted,
+                        fontSize = 9.sp
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    StatusPill(call.status.replace("_", " "), resultColor)
+                    Spacer(Modifier.height(5.dp))
+                    Text(if (open) "Hide details" else "View details", color = Blue, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            if (open) {
+                HorizontalDivider(color = Line)
+                CallRecordDetails(call, compact = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FullCallRecordCard(call: `in`.dhanpulse.personal.model.SignalCall) {
+    val resultColor = callResultColor(call.status)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, resultColor.copy(alpha = 0.25f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Text(call.tradingSymbol, color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                    Text(
+                        "Strike ${n(call.strike)} • ${call.side} • ${timeframeShort(call.timeframe)}",
+                        color = Muted,
+                        fontSize = 10.sp
+                    )
+                    Text("Generated ${formatCallDateTime(call.generatedAt)}", color = Muted, fontSize = 9.sp)
+                }
+                StatusPill(call.status.replace("_", " "), resultColor)
+            }
+            CallRecordDetails(call, compact = false)
+        }
+    }
+}
+
+@Composable
+private fun CallRecordDetails(call: `in`.dhanpulse.personal.model.SignalCall, compact: Boolean) {
+    Column(
+        Modifier.fillMaxWidth().padding(if (compact) 14.dp else 0.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text("PREMIUM WHEN CALL GENERATED", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    Text(n(call.referencePremium), color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("LAST TRACKED PREMIUM", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    Text(n(call.lastPremium), color = callResultColor(call.status), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PremiumLevelBox("BUY ABOVE", call.entry, Blue, Modifier.weight(1f))
+            PremiumLevelBox("STOP LOSS", call.stopLoss, Red, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PremiumLevelBox("TARGET 1", call.target1, Green, Modifier.weight(1f))
+            PremiumLevelBox("TARGET 2", call.target2, Green, Modifier.weight(1f))
+            PremiumLevelBox("TARGET 3", call.target3, Green, Modifier.weight(1f))
+        }
+
+        HorizontalDivider(color = Line)
+        CallMilestoneRow("Entry", call.entryHitAt, Blue)
+        CallMilestoneRow("Target 1", call.t1HitAt, Green)
+        CallMilestoneRow("Target 2", call.t2HitAt, Green)
+        CallMilestoneRow("Target 3", call.t3HitAt, Green)
+        CallMilestoneRow("Stop Loss", call.slHitAt, Red)
+
+        Text("Call ID: ${call.id}", color = Muted, fontSize = 8.sp)
+    }
+}
+
+@Composable
+private fun CallMilestoneRow(label: String, hitAt: Long?, color: Color) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = Muted, fontSize = 10.sp)
+        Text(
+            if (hitAt != null) "HIT • ${formatCallTime(hitAt)}" else "Not hit",
+            color = if (hitAt != null) color else Muted,
+            fontSize = 10.sp,
+            fontWeight = if (hitAt != null) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
+private fun callResultColor(status: String): Color = when (status) {
+    "T3_HIT", "T2_HIT", "T1_HIT" -> Green
+    "SL_HIT" -> Red
+    "UNRESOLVED" -> Muted
+    "ENTERED", "WAITING_ENTRY" -> Amber
+    else -> Blue
+}
+
+private fun formatCallTime(ms: Long): String =
+    java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(ms))
+
+private fun formatCallDateTime(ms: Long): String =
+    java.text.SimpleDateFormat("dd MMM yyyy • HH:mm:ss", java.util.Locale.US).format(java.util.Date(ms))
+
+@Composable
 private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = false) {
     val s = vm.signalStats
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Line)) {
@@ -422,7 +559,7 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("Call Performance", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                    Text("Recorded premium calls on this phone", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("All generated premium calls stored on this phone", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill("${s.generated} CALLS", Blue)
             }
@@ -452,7 +589,7 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
                 vm.signalHistory.take(12).forEach { call -> SignalHistoryRow(call) }
             }
 
-            Text("Tracking continues only while DhanPulse is open and receiving live option premiums. History is saved locally and survives app restarts.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            Text("Every generated call is stored with strike, premium, entry, SL, T1, T2, T3 and final status. Open Research → Call Book to see the full record.", color = Muted, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -555,15 +692,60 @@ private fun PositionsSection(vm: DhanPulseViewModel) {
 
 @Composable
 private fun ResearchSection(vm: DhanPulseViewModel) {
-    LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item { SectionTitle("Research Lab", "Live call results, backtest and robustness") }
-        item { TradingContextBar(vm) }
-        item { SignalPerformanceCard(vm, showRecent = true) }
-        item { BacktestLabCard(vm) }
+    var researchTab by remember { mutableStateOf("CALLS") }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            listOf("CALLS" to "Call Book", "BACKTEST" to "Backtest").forEach { (key, label) ->
+                val selected = researchTab == key
+                Surface(
+                    onClick = { researchTab = key },
+                    modifier = Modifier.weight(1f),
+                    color = if (selected) Purple.copy(alpha = 0.18f) else Panel,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, if (selected) Purple.copy(alpha = 0.45f) else Line)
+                ) {
+                    Text(
+                        label,
+                        color = if (selected) Ink else Muted,
+                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+
+        if (researchTab == "CALLS") {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item { SectionTitle("Call Book", "Every generated premium call with strike, entry, SL, targets and result") }
+                item { SignalPerformanceCard(vm) }
+                if (vm.signalHistory.isEmpty()) {
+                    item { EmptyStateCard("No calls recorded yet", "A call will be added after the same CE/PE setup is confirmed on two live scans.") }
+                } else {
+                    items(vm.signalHistory, key = { it.id }) { call ->
+                        FullCallRecordCard(call)
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item { SectionTitle("Backtest Lab", "Historical strategy validation and robustness") }
+                item { TradingContextBar(vm) }
+                item { BacktestLabCard(vm) }
+            }
+        }
     }
 }
 
