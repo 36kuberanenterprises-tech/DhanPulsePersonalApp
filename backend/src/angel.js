@@ -73,6 +73,12 @@ export async function placeOrder(session, payload) {
   }, 'Place order');
 }
 
+export async function orderBook(session) {
+  return jsonFetch(`${ROOT}/rest/secure/angelbroking/order/v1/getOrderBook`, {
+    method: 'GET', headers: baseHeaders(session.apiKey, session.jwt)
+  }, 'Order book');
+}
+
 let masterCache = { at: 0, rows: [] };
 export async function instrumentMaster(force = false) {
   const age = Date.now() - masterCache.at;
