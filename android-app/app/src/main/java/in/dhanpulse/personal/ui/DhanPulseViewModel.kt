@@ -237,10 +237,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 return@map call.copy(status = "UNRESOLVED")
             }
 
-            val currentPremium =
+            val currentPremium: Double = (
                 a.optionChain.contracts.firstOrNull { it.token == call.token }?.ltp
                     ?: if (a.suggestedContract?.token == call.token) a.suggestedContract?.ltp else null
-                    ?: return@map call
+                ) ?: return@map call
 
             var x = call.copy(lastPremium = tick(currentPremium))
             if (x.entryHitAt == null && currentPremium >= x.entry) {
