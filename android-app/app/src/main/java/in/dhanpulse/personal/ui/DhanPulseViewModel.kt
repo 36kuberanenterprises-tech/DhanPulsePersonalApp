@@ -174,14 +174,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         pendingSignalKey = null
         pendingSignalCount = 0
         if (enabled) {
+            autoTradeEnabled = false
             val gate = backtestReport?.adaptive
-            if (gate?.gatePassed != true) {
-                autoTradeEnabled = false
-                autoStatus = "Live Auto blocked: run Backtest Lab for this symbol/timeframe and pass the Adaptive Intelligence gate first."
-                return
+            autoStatus = if (gate?.gatePassed == true) {
+                "Adaptive research passed, but Live Auto is still locked until Stage 2 option-premium validation is completed. Manual Trade remains available."
+            } else {
+                "Live Auto blocked: no validated adaptive edge for this symbol/timeframe yet. Run Backtest Lab first."
             }
-            autoTradeEnabled = true
-            autoStatus = "Adaptive gate PASSED. Auto Trade armed. Waiting for 2 matching CE/PE confirmations."
         } else {
             autoTradeEnabled = false
             autoStatus = "Auto Trade is OFF. Existing positions are not changed."
