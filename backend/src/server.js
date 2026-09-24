@@ -36,53 +36,88 @@ async function getEgressIp() {
 
 async function orderGatewayState() {
   const registeredPublicIp = String(process.env.CLIENT_PUBLIC_IP || '34.70.199.153').trim();
+  const registeredSecondaryIp = String(process.env.CLIENT_SECONDARY_PUBLIC_IP || '').trim() || null;
   const relayUrl = String(process.env.ORDER_RELAY_URL || '').trim();
+  const proxyUrl = String(process.env.ORDER_PROXY_URL || '').trim();
+  const proxyIps = String(process.env.ORDER_PROXY_IPS || '')
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean);
+
   const relayConfigured = !!relayUrl;
-  const actualEgressIp = relayConfigured ? null : await getEgressIp();
-  const sourceIpReady = relayConfigured || (actualEgressIp != null && actualEgressIp === registeredPublicIp);
+  const proxyConfigured = !!proxyUrl;
+  const actualEgressIp = (relayConfigured || proxyConfigured) ? null : await getEgressIp();
+
+  const registered = [registeredPublicIp, registeredSecondaryIp].filter(Boolean);
+  const proxyAllowed = proxyConfigured && proxyIps.length > 0 && proxyIps.every(ip => registered.includes(ip));
+  const sourceIpReady = relayConfigured || proxyAllowed || (actualEgressIp != null && registered.includes(actualEgressIp));
+
+  let status = 'IP_CHECK_UNAVAILABLE';
+  if (sourceIpReady) status = 'READY';
+  else if (proxyConfigured && !proxyIps.length) status = 'PROXY_IPS_MISSING';
+  else if (proxyConfigured && !proxyAllowed) status = 'PROXY_IP_NOT_REGISTERED';
+  else if (actualEgressIp) status = 'STATIC_IP_MISMATCH';
+
+  let message;
+  if (sourceIpReady) {
+    if (relayConfigured) message = 'Orders will be routed through the configured static-IP relay.';
+    else if (proxyConfigured) message = 'Orders will be routed through the configured static outbound proxy.';
+    else message = 'Backend outbound IP matches an Angel One registered static IP.';
+  } else if (status === 'PROXY_IPS_MISSING') {
+    message = 'Static proxy is configured, but its two outbound IPs are not configured on the backend yet.';
+  } else if (status === 'PROXY_IP_NOT_REGISTERED') {
+    message = `Static proxy is configured, but its outbound IPs are not the Angel One registered Primary/Secondary IPs.`;
+  } else if (actualEgressIp) {
+    message = `Order execution is blocked because backend egress IP ${actualEgressIp} does not match Angel One registered IP ${registered.join(' / ')}.`;
+  } else {
+    message = 'Unable to verify the real order source IP. Live order execution is not marked ready.';
+  }
+
   return {
     registeredPublicIp,
+    registeredSecondaryIp,
     actualEgressIp,
     relayConfigured,
     relayHost: relayConfigured ? new URL(relayUrl).host : null,
+    proxyConfigured,
+    proxyIps,
     executionReady: sourceIpReady,
-    status: sourceIpReady ? 'READY' : (actualEgressIp ? 'STATIC_IP_MISMATCH' : 'IP_CHECK_UNAVAILABLE'),
-    message: sourceIpReady
-      ? (relayConfigured ? 'Orders will be routed through the configured static-IP relay.' : 'Backend outbound IP matches the Angel One registered static IP.')
-      : (actualEgressIp
-          ? `Order execution is blocked because backend egress IP ${actualEgressIp} does not match Angel One registered IP ${registeredPublicIp}.`
-          : 'Unable to verify backend outbound IP. Real order execution is not marked ready.')
+    status,
+    message
   };
 }
 
 async function routedPlaceOrder(session, payload) {
   const relayUrl = String(process.env.ORDER_RELAY_URL || '').trim();
-  if (!relayUrl) return placeOrder(session, payload);
+  if (relayUrl) {
+    const secret = String(process.env.ORDER_RELAY_SECRET || '').trim();
+    if (!secret) throw new Error('Order relay is configured but ORDER_RELAY_SECRET is missing');
 
-  const secret = String(process.env.ORDER_RELAY_SECRET || '').trim();
-  if (!secret) throw new Error('Order relay is configured but ORDER_RELAY_SECRET is missing');
+    const url = relayUrl.replace(/\/$/, '') + '/api/angel/order';
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-Relay-Secret': secret
+      },
+      body: JSON.stringify({
+        apiKey: session.apiKey,
+        jwt: session.jwt,
+        clientCode: session.clientCode,
+        registeredPublicIp: String(process.env.CLIENT_PUBLIC_IP || '34.70.199.153'),
+        order: payload
+      })
+    });
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error(`Order relay returned non-JSON response (${r.status})`); }
+    if (!r.ok || data?.status === false || data?.ok === false) throw new Error(data?.error || data?.message || `Order relay failed (${r.status})`);
+    return data?.angel || data;
+  }
 
-  const url = relayUrl.replace(/\/$/, '') + '/api/angel/order';
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'X-Relay-Secret': secret
-    },
-    body: JSON.stringify({
-      apiKey: session.apiKey,
-      jwt: session.jwt,
-      clientCode: session.clientCode,
-      registeredPublicIp: String(process.env.CLIENT_PUBLIC_IP || '34.70.199.153'),
-      order: payload
-    })
-  });
-  const text = await r.text();
-  let data;
-  try { data = JSON.parse(text); } catch { throw new Error(`Order relay returned non-JSON response (${r.status})`); }
-  if (!r.ok || data?.status === false || data?.ok === false) throw new Error(data?.error || data?.message || `Order relay failed (${r.status})`);
-  return data?.angel || data;
+  const proxyUrl = String(process.env.ORDER_PROXY_URL || '').trim();
+  return placeOrder(session, payload, proxyUrl || null);
 }
 
 app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
