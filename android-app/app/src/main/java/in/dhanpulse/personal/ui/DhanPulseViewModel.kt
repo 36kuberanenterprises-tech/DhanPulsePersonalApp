@@ -31,6 +31,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var refreshWarning by mutableStateOf<String?>(null)
     var orderBusy by mutableStateOf(false)
     var orderMessage by mutableStateOf<String?>(null)
+    var orderGateway by mutableStateOf<OrderGatewayDiagnostics?>(null)
+        private set
+    var orderGatewayBusy by mutableStateOf(false)
+        private set
 
     var backtestYears by mutableStateOf(3)
         private set
@@ -85,6 +89,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 profile = r.profile
                 fetchAnalysis()
                 fetchAccount()
+                fetchOrderDiagnostics()
             } catch (e: Exception) {
                 error = friendlyError(e, "Login failed")
             }
@@ -146,6 +151,26 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun fetchOrderDiagnostics() {
+        val s = sessionId ?: return
+        if (orderGatewayBusy) return
+        orderGatewayBusy = true
+        viewModelScope.launch {
+            try {
+                orderGateway = client().orderDiagnostics(s)
+            } catch (e: Exception) {
+                orderGateway = OrderGatewayDiagnostics(
+                    backendReached = false,
+                    brokerSessionOk = false,
+                    executionReady = false,
+                    status = "DIAGNOSTIC_FAILED",
+                    message = friendlyError(e, "Unable to verify order gateway")
+                )
+            }
+            orderGatewayBusy = false
+        }
+    }
+
     fun updateBacktestYears(years: Int) {
         backtestYears = if (years in setOf(1, 3, 5)) years else 3
         backtestReport = null
@@ -188,18 +213,29 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun updateAutoTradeEnabled(enabled: Boolean) {
         pendingSignalKey = null
         pendingSignalCount = 0
-        if (enabled) {
-            autoTradeEnabled = false
-            val gate = backtestReport?.adaptive
-            autoStatus = if (gate?.gatePassed == true) {
-                "Adaptive research passed, but Live Auto is still locked until Stage 2 option-premium validation is completed. Manual Trade remains available."
-            } else {
-                "Live Auto blocked: no validated adaptive edge for this symbol/timeframe yet. Run Backtest Lab first."
-            }
-        } else {
+        if (!enabled) {
             autoTradeEnabled = false
             autoStatus = "Auto Trade is OFF. Existing positions are not changed."
+            return
         }
+
+        val gate = backtestReport?.adaptive
+        if (gate?.gatePassed != true) {
+            autoTradeEnabled = false
+            autoStatus = "Live Auto blocked: Adaptive research has not passed for this symbol/timeframe."
+            return
+        }
+
+        val gateway = orderGateway
+        if (gateway?.executionReady != true) {
+            autoTradeEnabled = false
+            autoStatus = gateway?.message ?: "Live Auto blocked: real-order gateway is not ready."
+            fetchOrderDiagnostics()
+            return
+        }
+
+        autoTradeEnabled = true
+        autoStatus = "Adaptive gate and order gateway READY. Auto Trade armed for 2 matching CE/PE confirmations."
     }
 
     fun updateAutoLots(lots: Int) {
@@ -230,11 +266,17 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val result = client().placeOrder(s, OrderRequest(side.uppercase(), token, tradingSymbol, exchange, lots.coerceIn(1, 20)))
                 result.account?.let { account = it }
-                orderMessage = side.uppercase() + " order submitted" + (result.orderId?.let { " • ID " + it } ?: "")
+                val statusText = result.orderStatus?.let { " • " + it.uppercase() } ?: ""
+                val fillText = result.filledShares?.takeIf { it > 0 }?.let { " • filled " + it.toInt() } ?: ""
+                val traceText = result.traceId?.let { " • trace " + it } ?: ""
+                orderMessage = side.uppercase() + " order accepted" +
+                    (result.orderId?.let { " • ID " + it } ?: "") + statusText + fillText + traceText
                 fetchAccount()
                 fetchAnalysis()
+                fetchOrderDiagnostics()
             } catch (e: Exception) {
                 orderMessage = friendlyError(e, "Order failed")
+                fetchOrderDiagnostics()
             }
             orderBusy = false
         }
@@ -392,6 +434,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 fetchAnalysis()
                 tick++
                 if (tick % 5 == 0) fetchAccount()
+                if (tick % 20 == 0) fetchOrderDiagnostics()
             }
         }
     }
@@ -414,6 +457,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         account = null
         orderMessage = null
         orderBusy = false
+        orderGateway = null
+        orderGatewayBusy = false
         backtestBusy = false
         backtestReport = null
         backtestError = null
