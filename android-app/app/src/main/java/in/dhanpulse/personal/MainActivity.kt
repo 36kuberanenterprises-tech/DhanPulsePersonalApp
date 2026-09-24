@@ -163,7 +163,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         vm.startAutoRefresh()
         onDispose { vm.stopAutoRefresh() }
     }
-    var section by rememberSaveable { mutableStateOf("MARKET") }
+    var section by remember { mutableStateOf("MARKET") }
 
     Scaffold(
         containerColor = AppBg,
