@@ -163,187 +163,132 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         vm.startAutoRefresh()
         onDispose { vm.stopAutoRefresh() }
     }
-
-    var mainTab by remember { mutableStateOf("TRADE") }
-    var tradeMode by remember { mutableStateOf("MANUAL") }
-    var researchTab by remember { mutableStateOf("MARKET") }
-    val a = vm.analysis
+    var section by rememberSaveable { mutableStateOf("MARKET") }
 
     Scaffold(
         containerColor = AppBg,
-        topBar = {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(AppBg)
-                    .statusBarsPadding()
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                DhanPulseHeader(vm)
-                TraderControlBar(vm)
+        bottomBar = { TraderBottomNav(section) { section = it } }
+    ) { inner ->
+        Column(
+            Modifier.fillMaxSize().background(AppBg).padding(inner).statusBarsPadding()
+        ) {
+            TraderHeader(vm)
+            when (section) {
+                "TRADE" -> TradeSection(vm)
+                "POSITIONS" -> PositionsSection(vm)
+                "RESEARCH" -> ResearchSection(vm)
+                "ACCOUNT" -> AccountSection(vm)
+                else -> MarketSection(vm)
             }
-        },
-        bottomBar = {
-            NavigationBar(
-                containerColor = Panel,
-                tonalElevation = 0.dp,
-                modifier = Modifier.navigationBarsPadding()
+        }
+    }
+}
+
+@Composable
+private fun TraderHeader(vm: DhanPulseViewModel) {
+    Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(R.mipmap.ic_launcher),
+                    contentDescription = null,
+                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
+                    contentScale = ContentScale.Fit
+                )
+                Spacer(Modifier.width(9.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                        Spacer(Modifier.width(7.dp))
+                        StatusPill("LIVE", Green)
+                    }
+                    Text(vm.profile?.name ?: "Angel One connected", color = Muted, fontSize = 10.sp)
+                }
+            }
+            Surface(onClick = { vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
+                Text("Refresh", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
+    val tabs = listOf(
+        "MARKET" to "Market",
+        "TRADE" to "Trade",
+        "POSITIONS" to "Positions",
+        "RESEARCH" to "Research",
+        "ACCOUNT" to "Account"
+    )
+    NavigationBar(containerColor = Panel, tonalElevation = 8.dp) {
+        tabs.forEach { (key, label) ->
+            NavigationBarItem(
+                selected = selected == key,
+                onClick = { onSelect(key) },
+                icon = {
+                    Box(
+                        Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (selected == key) Purple else Color.Transparent)
+                    )
+                },
+                label = { Text(label, fontSize = 10.sp, fontWeight = if (selected == key) FontWeight.ExtraBold else FontWeight.Medium) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedTextColor = Ink,
+                    unselectedTextColor = Muted,
+                    indicatorColor = Purple.copy(alpha = 0.12f)
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun TradingContextBar(vm: DhanPulseViewModel) {
+    var symbolOpen by remember { mutableStateOf(false) }
+    var tfOpen by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.weight(1f)) {
+            Surface(
+                onClick = { symbolOpen = true },
+                color = Panel,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, Line)
             ) {
-                listOf(
-                    Triple("TRADE", "Trade", "T"),
-                    Triple("POSITIONS", "Positions", "P"),
-                    Triple("RESEARCH", "Research", "R"),
-                    Triple("BACKTEST", "Backtest", "B"),
-                    Triple("MORE", "More", "M")
-                ).forEach { item ->
-                    val selected = mainTab == item.first
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { mainTab = item.first },
-                        icon = {
-                            Surface(
-                                color = if (selected) Purple.copy(alpha = 0.18f) else Color.Transparent,
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text(
-                                    item.third,
-                                    color = if (selected) Purple else Muted,
-                                    fontWeight = FontWeight.Black,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        },
-                        label = {
-                            Text(
-                                item.second,
-                                color = if (selected) Ink else Muted,
-                                fontSize = 10.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                            )
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            indicatorColor = Color.Transparent,
-                            selectedIconColor = Purple,
-                            unselectedIconColor = Muted
-                        )
+                Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
+                    Text("SYMBOL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    Text(vm.selectedSymbol.replace("BANKNIFTY", "BANK NIFTY"), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+            DropdownMenu(expanded = symbolOpen, onDismissRequest = { symbolOpen = false }) {
+                listOf("NIFTY" to "NIFTY", "BANKNIFTY" to "BANK NIFTY", "SENSEX" to "SENSEX").forEach { (key, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = { vm.selectSymbol(key); symbolOpen = false }
                     )
                 }
             }
         }
-    ) { inner ->
-        LazyColumn(
-            Modifier
-                .fillMaxSize()
-                .padding(inner)
-                .background(AppBg)
-                .padding(horizontal = 14.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            vm.error?.let { item { ErrorStrip(it) } }
-            vm.refreshWarning?.let {
-                item { InfoStrip("Live refresh delayed", "Showing the latest successful analysis. Automatic retry is active.") }
-            }
-
-            if (vm.loading && a == null) {
-                item {
-                    Box(
-                        Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(22.dp)).background(Panel),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = Purple)
-                            Spacer(Modifier.height(12.dp))
-                            Text("Reading live market data...", color = Muted)
-                        }
-                    }
+        Box(Modifier.weight(1f)) {
+            Surface(
+                onClick = { tfOpen = true },
+                color = Panel,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, Line)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
+                    Text("TIMEFRAME", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    Text(timeframeShort(vm.selectedTimeframe), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
-
-            when (mainTab) {
-                "TRADE" -> {
-                    vm.account?.let { account -> item { CompactAccountStrip(account) } }
-                    if (a != null) {
-                        item { TraderSignalPanel(a, vm::fetchAnalysis) }
-                        item { CompactPlanCard(a) }
-                        item {
-                            WorkspaceSegment(
-                                options = listOf("MANUAL" to "Manual", "AUTO" to "Auto"),
-                                selected = tradeMode,
-                                onSelected = { tradeMode = it }
-                            )
-                        }
-                        if (tradeMode == "MANUAL") item { ManualTradeCard(a, vm) }
-                        else item { AutoTradeCard(vm) }
-                    } else if (!vm.loading) {
-                        item { InfoStrip("Waiting for market data", "Refresh after login to load the live trading workspace.") }
-                    }
-                }
-
-                "POSITIONS" -> item { PositionsWorkspace(vm) { mainTab = "TRADE" } }
-
-                "RESEARCH" -> {
-                    if (a != null) {
-                        item {
-                            WorkspaceSegment(
-                                options = listOf("MARKET" to "Market", "OPTIONS" to "Options", "RULES" to "Rules"),
-                                selected = researchTab,
-                                onSelected = { researchTab = it }
-                            )
-                        }
-                        when (researchTab) {
-                            "OPTIONS" -> item { OptionCard(a) }
-                            "RULES" -> {
-                                item { ResearchScoreHeader(a) }
-                                items(a.rules) { rule ->
-                                    val stateColor = when (rule.state.uppercase()) {
-                                        "BULLISH" -> Green
-                                        "BEARISH" -> Red
-                                        "NEUTRAL" -> Amber
-                                        else -> Muted
-                                    }
-                                    Card(
-                                        colors = CardDefaults.cardColors(containerColor = Panel),
-                                        shape = RoundedCornerShape(16.dp),
-                                        border = BorderStroke(1.dp, Line)
-                                    ) {
-                                        Row(
-                                            Modifier.fillMaxWidth().padding(13.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Box(
-                                                Modifier.width(4.dp).height(40.dp)
-                                                    .clip(RoundedCornerShape(4.dp))
-                                                    .background(stateColor)
-                                            )
-                                            Spacer(Modifier.width(10.dp))
-                                            Column(Modifier.weight(1f)) {
-                                                Text(rule.name, color = Ink, fontWeight = FontWeight.Bold)
-                                                rule.detail?.let {
-                                                    Text(it, color = Muted, style = MaterialTheme.typography.bodySmall)
-                                                }
-                                            }
-                                            StatusPill(rule.state.uppercase(), stateColor)
-                                        }
-                                    }
-                                }
-                            }
-                            else -> {
-                                item { MarketCard(a) }
-                                item { ResearchScoreHeader(a) }
-                            }
-                        }
-                    } else {
-                        item { InfoStrip("Research unavailable", "Live analysis must load before research sections can be shown.") }
-                    }
-                }
-
-                "BACKTEST" -> item { BacktestLabCard(vm) }
-
-                else -> {
-                    vm.account?.let { account -> item { AccountCard(account, vm::fetchAccount) } }
-                    item { SystemWorkspaceCard(vm) }
+            DropdownMenu(expanded = tfOpen, onDismissRequest = { tfOpen = false }) {
+                listOf(
+                    "ONE_MINUTE" to "1 minute",
+                    "THREE_MINUTE" to "3 minutes",
+                    "FIVE_MINUTE" to "5 minutes",
+                    "TEN_MINUTE" to "10 minutes",
+                    "FIFTEEN_MINUTE" to "15 minutes"
+                ).forEach { (key, label) ->
+                    DropdownMenuItem(text = { Text(label) }, onClick = { vm.selectTimeframe(key); tfOpen = false })
                 }
             }
         }
@@ -351,168 +296,179 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
 }
 
 @Composable
-private fun DhanPulseHeader(vm: DhanPulseViewModel) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+private fun MarketSection(vm: DhanPulseViewModel) {
+    val a = vm.analysis
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = painterResource(R.mipmap.ic_launcher),
-                contentDescription = null,
-                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)),
-                contentScale = ContentScale.Fit
-            )
-            Spacer(Modifier.width(9.dp))
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("DhanPulse", color = Ink, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
-                    Spacer(Modifier.width(7.dp))
-                    StatusPill("LIVE", Green)
-                }
-                Text(
-                    vm.profile?.name ?: vm.profile?.clientcode ?: "Angel One connected",
-                    color = Muted,
-                    fontSize = 10.sp
-                )
-            }
-        }
-        Box {
-            TextButton(onClick = { menuOpen = true }) {
-                Text("•••", color = Muted, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(text = { Text("Refresh account") }, onClick = { menuOpen = false; vm.fetchAccount() })
-                DropdownMenuItem(text = { Text("Refresh market") }, onClick = { menuOpen = false; vm.fetchAnalysis() })
-                DropdownMenuItem(text = { Text("Logout", color = Red) }, onClick = { menuOpen = false; vm.logout() })
-            }
+        item { TradingContextBar(vm) }
+        vm.error?.let { item { ErrorStrip(it) } }
+        vm.refreshWarning?.let { item { InfoStrip("Live refresh delayed", "Showing the latest successful analysis. Automatic retry is active.") } }
+        if (vm.loading && a == null) item { LoadingMarketCard() }
+        if (a != null) {
+            item { SignalCard(a, vm::fetchAnalysis) }
+            item { MarketCard(a) }
+            item { OptionCard(a) }
+            item { SignalRulesPanel(a) }
         }
     }
 }
 
 @Composable
-private fun TraderControlBar(vm: DhanPulseViewModel) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(Panel)
-            .border(1.dp, Line, RoundedCornerShape(16.dp))
-            .padding(6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
+private fun TradeSection(vm: DhanPulseViewModel) {
+    val a = vm.analysis
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SelectorDropdown(
-            value = when (vm.selectedSymbol) {
-                "BANKNIFTY" -> "BANK NIFTY"
-                else -> vm.selectedSymbol
-            },
-            options = listOf("NIFTY" to "NIFTY", "BANKNIFTY" to "BANK NIFTY", "SENSEX" to "SENSEX"),
-            modifier = Modifier.weight(1.25f)
-        ) { vm.selectSymbol(it) }
+        item { TradingContextBar(vm) }
+        if (a != null) {
+            item { TradeDeskHero(a, vm) }
+            item { ManualTradeCard(a, vm) }
+            item { AutoTradeCard(vm) }
+            item { TradePlanCard(a, vm) }
+        } else item { LoadingMarketCard() }
+    }
+}
 
-        SelectorDropdown(
-            value = timeframeShort(vm.selectedTimeframe),
-            options = listOf(
-                "ONE_MINUTE" to "1m",
-                "THREE_MINUTE" to "3m",
-                "FIVE_MINUTE" to "5m",
-                "TEN_MINUTE" to "10m",
-                "FIFTEEN_MINUTE" to "15m"
-            ),
-            modifier = Modifier.weight(0.75f)
-        ) { vm.selectTimeframe(it) }
-
-        Surface(
-            onClick = vm::fetchAnalysis,
-            color = Blue.copy(alpha = 0.12f),
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, Blue.copy(alpha = 0.22f))
-        ) {
-            Text("↻", color = Blue, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp))
+@Composable
+private fun PositionsSection(vm: DhanPulseViewModel) {
+    val account = vm.account
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            SectionTitle("Positions", "Live Angel One positions and P&L")
+        }
+        if (account == null) {
+            item { InfoStrip("Position data", "Account data is loading. Tap Refresh at the top if needed.") }
+        } else {
+            item { AccountCard(account, vm::fetchAccount) }
+            val open = account.positions.filter { it.netQty != 0.0 }
+            if (open.isEmpty()) item { EmptyStateCard("No open positions", "Your open F&O positions will appear here with live P&L.") }
+            items(open) { pos -> PositionCard(pos) }
         }
     }
 }
 
 @Composable
-private fun SelectorDropdown(
-    value: String,
-    options: List<Pair<String, String>>,
-    modifier: Modifier = Modifier,
-    onSelect: (String) -> Unit
-) {
-    var open by remember { mutableStateOf(false) }
-    Box(modifier) {
-        Surface(onClick = { open = true }, color = Panel2, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+private fun ResearchSection(vm: DhanPulseViewModel) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { SectionTitle("Research Lab", "Backtest, adaptive validation and robustness") }
+        item { TradingContextBar(vm) }
+        item { BacktestLabCard(vm) }
+    }
+}
+
+@Composable
+private fun AccountSection(vm: DhanPulseViewModel) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { SectionTitle("Account", "Connection, funds and safety controls") }
+        vm.account?.let { item { AccountCard(it, vm::fetchAccount) } }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Trading controls", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    AccountSettingRow("Broker", "Angel One SmartAPI")
+                    AccountSettingRow("Auto Trade", if (vm.autoTradeEnabled) "ON" else "OFF")
+                    AccountSettingRow("Auto lots", vm.autoLots.toString())
+                    AccountSettingRow("Refresh", "60 seconds")
+                    HorizontalDivider(color = Line)
+                    Text("Manual trading stays available even when Auto Trade is blocked by the research gate.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        item {
+            Button(
+                onClick = vm::logout,
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Red.copy(alpha = 0.16f), contentColor = Red),
+                shape = RoundedCornerShape(14.dp)
+            ) { Text("Logout", fontWeight = FontWeight.ExtraBold) }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String, subtitle: String) {
+    Column {
+        Text(title, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        Text(subtitle, color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun LoadingMarketCard() {
+    Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(20.dp)).background(Panel), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(color = Purple)
+            Spacer(Modifier.height(10.dp))
+            Text("Reading live market data...", color = Muted)
+        }
+    }
+}
+
+@Composable
+private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
+    val c = when (a.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, c.copy(alpha = 0.30f))) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text("Trader Desk", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text("Signal, execution and risk in one place", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill(a.signal, c)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Index ${n(a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
+                Text(if (vm.autoTradeEnabled) "AUTO ARMED" else "MANUAL READY", color = if (vm.autoTradeEnabled) Green else Blue, fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SignalRulesPanel(a: AnalysisResponse) {
+    var open by remember(a.symbol, a.timeframe) { mutableStateOf(false) }
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.fillMaxWidth()) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 10.dp),
+                Modifier.fillMaxWidth().clickable { open = !open }.padding(14.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(value, color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Text("▾", color = Muted, fontSize = 11.sp)
-            }
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            options.forEach { pair ->
-                DropdownMenuItem(text = { Text(pair.second) }, onClick = { open = false; onSelect(pair.first) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompactAccountStrip(account: AccountSummary) {
-    val pnlColor = if (account.totalPnl >= 0) Green else Red
-    Surface(color = Panel, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            CompactAccountMetric("CASH", money(account.availableCash), Ink, Modifier.weight(1f))
-            CompactAccountMetric("TODAY", money(account.totalPnl), pnlColor, Modifier.weight(1f))
-            CompactAccountMetric("OPEN", account.positions.count { it.netQty != 0.0 }.toString(), Blue, Modifier.weight(0.65f))
-        }
-    }
-}
-
-@Composable
-private fun CompactAccountMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        Text(label, color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-        Text(value, color = color, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
-    }
-}
-
-@Composable
-private fun TraderSignalPanel(a: AnalysisResponse, refresh: () -> Unit) {
-    val signalColor = when (a.signal.uppercase()) { "CE" -> Green; "PE" -> Red; else -> Amber }
-    Surface(color = Panel, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, signalColor.copy(alpha = 0.28f))) {
-        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
-                    Text("TRADER DECISION", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    Text(if (a.signal == "WAIT") "WAIT" else "BUY ${a.signal}", color = signalColor, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                    Text("Signal checks", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("${a.rules.size} engine conditions", color = Muted, fontSize = 10.sp)
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("INDEX LTP", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                    Text(n(a.market.ltp), color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-                }
+                Text(if (open) "Hide" else "View", color = Blue, fontWeight = FontWeight.Bold)
             }
-
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                TinyMetric("BULL", a.ruleScore.bullish.toString(), Green, Modifier.weight(1f))
-                TinyMetric("BEAR", a.ruleScore.bearish.toString(), Red, Modifier.weight(1f))
-                TinyMetric("CHECKS", a.ruleScore.considered.toString(), Blue, Modifier.weight(1f))
-            }
-
-            a.suggestedContract?.let {
-                Surface(color = signalColor.copy(alpha = 0.08f), shape = RoundedCornerShape(12.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(it.tradingSymbol ?: "Suggested contract", color = Ink, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                        Text(n(it.ltp), color = signalColor, fontWeight = FontWeight.ExtraBold)
+            if (open) {
+                HorizontalDivider(color = Line)
+                a.rules.forEach { rule ->
+                    val stateColor = when (rule.state.uppercase()) { "BULLISH" -> Green; "BEARISH" -> Red; "NEUTRAL" -> Amber; else -> Muted }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.width(4.dp).height(34.dp).clip(RoundedCornerShape(4.dp)).background(stateColor))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(rule.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            rule.detail?.let { Text(it, color = Muted, fontSize = 9.sp) }
+                        }
+                        StatusPill(rule.state.uppercase(), stateColor)
                     }
                 }
             }
@@ -521,164 +477,41 @@ private fun TraderSignalPanel(a: AnalysisResponse, refresh: () -> Unit) {
 }
 
 @Composable
-private fun TinyMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Column(modifier.clip(RoundedCornerShape(11.dp)).background(Panel2).padding(horizontal = 9.dp, vertical = 8.dp)) {
-        Text(label, color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-        Text(value, color = color, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
-    }
-}
-
-@Composable
-private fun CompactPlanCard(a: AnalysisResponse) {
-    val l = a.levels
-    val c = a.suggestedContract
-    val active = a.signal == "CE" || a.signal == "PE"
-    val rc = when (a.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
-
-    Surface(color = Panel, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+private fun PositionCard(pos: `in`.dhanpulse.personal.model.PositionSummary) {
+    val pnlColor = if (pos.pnl >= 0) Green else Red
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("SUGGESTED PLAN", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                    Text(c?.tradingSymbol ?: "No confirmed option", color = Ink, fontWeight = FontWeight.Bold)
+                Column(Modifier.weight(1f)) {
+                    Text(pos.tradingSymbol ?: "Position", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("${pos.exchange ?: ""} • ${pos.netQty.toInt()} qty • ${pos.productType ?: ""}", color = Muted, fontSize = 10.sp)
                 }
-                StatusPill(a.signal, rc)
+                Text(money(pos.pnl), color = pnlColor, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             }
-            if (active && l != null) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    MiniLevel("ENTRY", n(l.underlyingEntry), Blue, Modifier.weight(1f))
-                    MiniLevel("SL", n(l.stop), Red, Modifier.weight(1f))
-                    MiniLevel("T1", n(l.target1), Green, Modifier.weight(1f))
-                    MiniLevel("T2", n(l.target2), Green, Modifier.weight(1f))
-                }
-            } else {
-                Text("No fresh entry until the engine confirms CE or PE.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Avg ${n(if (pos.netQty >= 0) pos.buyAvgPrice else pos.sellAvgPrice)}", color = Muted, fontSize = 10.sp)
+                Text("LTP ${n(pos.ltp)}", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
 @Composable
-private fun MiniLevel(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Column(modifier.clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = 0.08f)).padding(horizontal = 7.dp, vertical = 7.dp)) {
-        Text(label, color = Muted, fontSize = 7.sp, fontWeight = FontWeight.Bold)
-        Text(value, color = color, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
-    }
-}
-
-@Composable
-private fun WorkspaceSegment(options: List<Pair<String, String>>, selected: String, onSelected: (String) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Panel).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        options.forEach { pair ->
-            val active = selected == pair.first
-            Box(
-                Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(if (active) Purple else Color.Transparent)
-                    .clickable { onSelected(pair.first) }.padding(vertical = 9.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(pair.second, color = if (active) Color.White else Muted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-            }
+private fun EmptyStateCard(title: String, body: String) {
+    Surface(color = Panel, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(title, color = Ink, fontWeight = FontWeight.ExtraBold)
+            Spacer(Modifier.height(5.dp))
+            Text(body, color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
-private fun PositionsWorkspace(vm: DhanPulseViewModel, onGoTrade: () -> Unit) {
-    val account = vm.account
-    val positions = account?.positions?.filter { it.netQty != 0.0 }.orEmpty()
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        account?.let { CompactAccountStrip(it) }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("Positions", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
-                Text("Open F&O positions and live P&L", color = Muted, style = MaterialTheme.typography.bodySmall)
-            }
-            TextButton(onClick = vm::fetchAccount) { Text("Refresh") }
-        }
-
-        if (positions.isEmpty()) {
-            Surface(color = Panel, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
-                Column(
-                    Modifier.fillMaxWidth().padding(18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text("No open positions", color = Ink, fontWeight = FontWeight.ExtraBold)
-                    Text("Your active trades will appear here.", color = Muted, style = MaterialTheme.typography.bodySmall)
-                    FilledTonalButton(onClick = onGoTrade) { Text("Go to Trade") }
-                }
-            }
-        } else {
-            positions.forEach { p ->
-                val pc = if (p.pnl >= 0) Green else Red
-                Surface(color = Panel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, pc.copy(alpha = 0.20f))) {
-                    Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column(Modifier.weight(1f)) {
-                                Text(p.tradingSymbol ?: "Position", color = Ink, fontWeight = FontWeight.ExtraBold)
-                                Text("${p.exchange ?: ""} • ${p.productType ?: ""} • Qty ${p.netQty.toInt()}", color = Muted, fontSize = 9.sp)
-                            }
-                            Text(money(p.pnl), color = pc, fontWeight = FontWeight.ExtraBold)
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TinyPositionMetric("AVG", n(p.buyAvgPrice), Modifier.weight(1f))
-                            TinyPositionMetric("LTP", n(p.ltp), Modifier.weight(1f))
-                            TinyPositionMetric("REAL", money(p.realizedPnl), Modifier.weight(1f))
-                        }
-                    }
-                }
-            }
-            FilledTonalButton(onClick = onGoTrade, modifier = Modifier.fillMaxWidth()) { Text("Open Trade Workspace") }
-        }
-    }
-}
-
-@Composable
-private fun TinyPositionMetric(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier.clip(RoundedCornerShape(10.dp)).background(Panel2).padding(8.dp)) {
-        Text(label, color = Muted, fontSize = 7.sp, fontWeight = FontWeight.Bold)
-        Text(value, color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-    }
-}
-
-@Composable
-private fun ResearchScoreHeader(a: AnalysisResponse) {
-    Surface(color = Panel, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Line)) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TinyMetric("BULL", a.ruleScore.bullish.toString(), Green, Modifier.weight(1f))
-            TinyMetric("BEAR", a.ruleScore.bearish.toString(), Red, Modifier.weight(1f))
-            TinyMetric("CHECKS", a.ruleScore.considered.toString(), Blue, Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun SystemWorkspaceCard(vm: DhanPulseViewModel) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Surface(color = Panel, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("DhanPulse Trader", color = Ink, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
-                Text("Trader-first workspace connected to Angel One SmartAPI.", color = Muted, style = MaterialTheme.typography.bodySmall)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Auto refresh", color = Muted)
-                    Text("60 sec", color = Ink, fontWeight = FontWeight.Bold)
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Auto Trade", color = Muted)
-                    Text(if (vm.autoTradeEnabled) "ON" else "OFF", color = if (vm.autoTradeEnabled) Green else Muted, fontWeight = FontWeight.Bold)
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Risk controls", color = Muted)
-                    Text("Active", color = Green, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-        OutlinedButton(onClick = vm::logout, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(contentColor = Red)) {
-            Text("Logout")
-        }
+private fun AccountSettingRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = Muted, style = MaterialTheme.typography.bodySmall)
+        Text(value, color = Ink, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
     }
 }
 
