@@ -389,7 +389,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         selectedTimeframe = interval
         if (autoTradeEnabled) {
             autoTradeEnabled = false
-            autoStatus = "Auto Trade switched OFF because timeframe changed. Run the Adaptive backtest again."
+            autoStatus = "Auto Trade switched OFF because timeframe changed. Re-arm Auto Trade after checking the new setup."
         }
         analysis = null
         backtestReport = null
@@ -412,7 +412,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         selectedSymbol = symbol
         if (autoTradeEnabled) {
             autoTradeEnabled = false
-            autoStatus = "Auto Trade switched OFF because symbol changed. Run the Adaptive backtest again."
+            autoStatus = "Auto Trade switched OFF because symbol changed. Re-arm Auto Trade after checking the new setup."
         }
         analysis = null
         backtestReport = null
