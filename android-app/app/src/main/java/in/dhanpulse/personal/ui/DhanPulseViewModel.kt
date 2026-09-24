@@ -79,6 +79,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private var callPendingKey: String? = null
     private var callPendingCount = 0
     private var blockedCallBias: String? = null
+    private val pendingCancelCounts = mutableMapOf<String, Int>()
 
     init {
         loadSignalHistory()
@@ -187,7 +188,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         signalHistory.firstOrNull {
             it.symbol == a.symbol &&
             it.timeframe == (a.timeframe ?: selectedTimeframe) &&
-            it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED")
+            it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED")
         }
 
     private fun updatePremiumDecision(a: AnalysisResponse) {
@@ -231,10 +232,27 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
         var changed = false
         val updated = signalHistory.map { call ->
-            if (call.status in setOf("T3_HIT", "SL_HIT", "UNRESOLVED")) return@map call
+            if (call.status in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED")) return@map call
             if (call.sessionDate != currentDate) {
+                pendingCancelCounts.remove(call.id)
                 changed = true
                 return@map call.copy(status = "UNRESOLVED")
+            }
+
+            if (call.entryHitAt == null) {
+                val sameSetup = a.signal == call.side &&
+                    a.suggestedContract?.token == call.token
+                if (!sameSetup) {
+                    val misses = (pendingCancelCounts[call.id] ?: 0) + 1
+                    pendingCancelCounts[call.id] = misses
+                    if (misses >= 3) {
+                        pendingCancelCounts.remove(call.id)
+                        changed = true
+                        return@map call.copy(cancelledAt = now, status = "CANCELLED")
+                    }
+                } else {
+                    pendingCancelCounts.remove(call.id)
+                }
             }
 
             val currentPremium: Double = (
@@ -366,7 +384,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             target2Hits = h.count { it.t2HitAt != null },
             target3Hits = h.count { it.t3HitAt != null },
             stopLossHits = h.count { it.slHitAt != null },
-            open = h.count { it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED") },
+            cancelled = h.count { it.status == "CANCELLED" },
+            open = h.count { it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED") },
             unresolved = h.count { it.status == "UNRESOLVED" }
         )
     }
