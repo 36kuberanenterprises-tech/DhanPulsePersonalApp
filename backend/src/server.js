@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
-import { login, profile, rmsLimit, positions, placeOrder, instrumentMaster } from './angel.js';
+import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster } from './angel.js';
 import { analyse } from './analysis.js';
 import { runBacktest } from './backtest.js';
 
@@ -14,6 +14,76 @@ const sessions = new Map();
 const analysisCache = new Map();
 const LIVE_ANALYSIS_MIN_MS = 2500;
 const sessionTtl = 14 * 60 * 60 * 1000;
+let egressIpCache = { at: 0, ip: null };
+
+async function getEgressIp() {
+  if (egressIpCache.ip && Date.now() - egressIpCache.at < 10 * 60 * 1000) return egressIpCache.ip;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3000);
+  try {
+    const r = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const ip = String(data?.ip || '').trim() || null;
+    if (ip) egressIpCache = { at: Date.now(), ip };
+    return ip;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function orderGatewayState() {
+  const registeredPublicIp = String(process.env.CLIENT_PUBLIC_IP || '34.70.199.153').trim();
+  const relayUrl = String(process.env.ORDER_RELAY_URL || '').trim();
+  const relayConfigured = !!relayUrl;
+  const actualEgressIp = relayConfigured ? null : await getEgressIp();
+  const sourceIpReady = relayConfigured || (actualEgressIp != null && actualEgressIp === registeredPublicIp);
+  return {
+    registeredPublicIp,
+    actualEgressIp,
+    relayConfigured,
+    relayHost: relayConfigured ? new URL(relayUrl).host : null,
+    executionReady: sourceIpReady,
+    status: sourceIpReady ? 'READY' : (actualEgressIp ? 'STATIC_IP_MISMATCH' : 'IP_CHECK_UNAVAILABLE'),
+    message: sourceIpReady
+      ? (relayConfigured ? 'Orders will be routed through the configured static-IP relay.' : 'Backend outbound IP matches the Angel One registered static IP.')
+      : (actualEgressIp
+          ? `Order execution is blocked because backend egress IP ${actualEgressIp} does not match Angel One registered IP ${registeredPublicIp}.`
+          : 'Unable to verify backend outbound IP. Real order execution is not marked ready.')
+  };
+}
+
+async function routedPlaceOrder(session, payload) {
+  const relayUrl = String(process.env.ORDER_RELAY_URL || '').trim();
+  if (!relayUrl) return placeOrder(session, payload);
+
+  const secret = String(process.env.ORDER_RELAY_SECRET || '').trim();
+  if (!secret) throw new Error('Order relay is configured but ORDER_RELAY_SECRET is missing');
+
+  const url = relayUrl.replace(/\/$/, '') + '/api/angel/order';
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-Relay-Secret': secret
+    },
+    body: JSON.stringify({
+      apiKey: session.apiKey,
+      jwt: session.jwt,
+      clientCode: session.clientCode,
+      registeredPublicIp: String(process.env.CLIENT_PUBLIC_IP || '34.70.199.153'),
+      order: payload
+    })
+  });
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { throw new Error(`Order relay returned non-JSON response (${r.status})`); }
+  if (!r.ok || data?.status === false || data?.ok === false) throw new Error(data?.error || data?.message || `Order relay failed (${r.status})`);
+  return data?.angel || data;
+}
 
 app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
 app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
@@ -151,6 +221,28 @@ app.post('/api/backtest', requireSession, async (req, res) => {
   }
 });
 
+app.get('/api/order/diagnostics', requireSession, async (req, res) => {
+  try {
+    const gateway = await orderGatewayState();
+    let brokerSessionOk = true;
+    let brokerMessage = 'SmartAPI session active';
+    try {
+      await profile(req.smartSession);
+    } catch (e) {
+      brokerSessionOk = false;
+      brokerMessage = e.message || 'SmartAPI session check failed';
+    }
+    res.json({
+      backendReached: true,
+      brokerSessionOk,
+      brokerMessage,
+      ...gateway
+    });
+  } catch (e) {
+    res.status(503).json({ error: e.message || 'Order diagnostics failed' });
+  }
+});
+
 app.get('/api/account', requireSession, async (req, res) => {
   try {
     const [rms, pos] = await Promise.all([
@@ -165,6 +257,8 @@ app.get('/api/account', requireSession, async (req, res) => {
 });
 
 app.post('/api/order', requireSession, async (req, res) => {
+  const traceId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
   try {
     const body = req.body || {};
     const side = String(body.side || '').toUpperCase();
@@ -173,8 +267,21 @@ app.post('/api/order', requireSession, async (req, res) => {
     const exchange = String(body.exchange || '').trim().toUpperCase();
     const lots = Math.max(1, Math.min(20, Math.floor(Number(body.lots || 1))));
 
-    if (!['BUY', 'SELL'].includes(side)) return res.status(400).json({ error: 'side must be BUY or SELL' });
-    if (!token || !tradingSymbol || !exchange) return res.status(400).json({ error: 'Option contract is incomplete' });
+    console.log(`ORDER_IN ${traceId} ${side} ${tradingSymbol} ${exchange} lots=${lots}`);
+
+    if (!['BUY', 'SELL'].includes(side)) return res.status(400).json({ error: 'side must be BUY or SELL', traceId });
+    if (!token || !tradingSymbol || !exchange) return res.status(400).json({ error: 'Option contract is incomplete', traceId });
+
+    const gateway = await orderGatewayState();
+    if (!gateway.executionReady) {
+      console.warn(`ORDER_BLOCKED ${traceId} ${gateway.status} registered=${gateway.registeredPublicIp} actual=${gateway.actualEgressIp || 'unknown'}`);
+      return res.status(503).json({
+        error: gateway.message,
+        code: gateway.status,
+        traceId,
+        gateway
+      });
+    }
 
     const rows = await instrumentMaster();
     const contract = rows.find(r =>
@@ -183,7 +290,7 @@ app.post('/api/order', requireSession, async (req, res) => {
       String(r.exch_seg || '').toUpperCase() === exchange &&
       /OPT/i.test(String(r.instrumenttype || ''))
     );
-    if (!contract) return res.status(400).json({ error: 'Selected option contract is not valid in the instrument master' });
+    if (!contract) return res.status(400).json({ error: 'Selected option contract is not valid in the instrument master', traceId });
 
     const lotSize = Math.max(1, Math.floor(Number(contract.lotsize || 1)));
     const quantity = lotSize * lots;
@@ -194,8 +301,8 @@ app.post('/api/order', requireSession, async (req, res) => {
       const buyQty = n(current?.buyqty);
       const sellQty = n(current?.sellqty);
       const netQty = n(current?.netqty ?? current?.netquantity ?? (buyQty - sellQty));
-      if (netQty <= 0) return res.status(400).json({ error: 'SELL is enabled only to exit an existing long option position. No long position found.' });
-      if (quantity > netQty) return res.status(400).json({ error: `Exit quantity ${quantity} is higher than current long quantity ${netQty}` });
+      if (netQty <= 0) return res.status(400).json({ error: 'SELL is enabled only to exit an existing long option position. No long position found.', traceId });
+      if (quantity > netQty) return res.status(400).json({ error: `Exit quantity ${quantity} is higher than current long quantity ${netQty}`, traceId });
     }
 
     const orderPayload = {
@@ -213,28 +320,58 @@ app.post('/api/order', requireSession, async (req, res) => {
       quantity: String(quantity)
     };
 
-    const order = await placeOrder(req.smartSession, orderPayload);
+    const order = await routedPlaceOrder(req.smartSession, orderPayload);
+    const orderId = order?.data?.orderid || order?.orderId || order?.orderid || null;
+    const uniqueOrderId = order?.data?.uniqueorderid || order?.uniqueOrderId || order?.uniqueorderid || null;
+
+    let orderStatus = null;
+    let averagePrice = null;
+    let filledShares = null;
+    let rejectionReason = null;
+    if (orderId) {
+      try {
+        await new Promise(r => setTimeout(r, 700));
+        const book = await orderBook(req.smartSession);
+        const rows = Array.isArray(book?.data) ? book.data : [];
+        const item = rows.find(x => String(x.orderid || x.orderId || '') === String(orderId));
+        if (item) {
+          orderStatus = item.status || item.orderstatus || null;
+          averagePrice = n(item.averageprice || item.avgprice);
+          filledShares = n(item.filledshares || item.filledqty);
+          rejectionReason = item.text || item.rejectionreason || null;
+        }
+      } catch {}
+    }
+
     let account = null;
     try {
       const [rms, pos] = await Promise.all([rmsLimit(req.smartSession), positions(req.smartSession)]);
       account = summarizeAccount(rms, pos);
     } catch {}
 
+    console.log(`ORDER_OK ${traceId} id=${orderId || 'none'} status=${orderStatus || 'submitted'} ms=${Date.now()-startedAt}`);
+
     res.json({
       ok: true,
+      traceId,
       side,
       lots,
       quantity,
       lotSize,
       tradingSymbol,
-      orderId: order?.data?.orderid || null,
-      uniqueOrderId: order?.data?.uniqueorderid || null,
+      orderId,
+      uniqueOrderId,
+      orderStatus,
+      averagePrice,
+      filledShares,
+      rejectionReason,
+      gateway,
       message: order?.message || 'Order submitted',
       account
     });
   } catch (e) {
-    console.error('Order failed:', e?.message || e);
-    res.status(400).json({ error: e.message || 'Order failed' });
+    console.error(`ORDER_FAIL ${traceId} ${e?.message || e}`);
+    res.status(400).json({ error: e.message || 'Order failed', traceId });
   }
 });
 
