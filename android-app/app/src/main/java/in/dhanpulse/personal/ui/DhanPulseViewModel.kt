@@ -118,7 +118,18 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     refreshWarning = "Live refresh delayed. Retrying automatically."
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until live analysis refresh succeeds."
                 } else {
-                    error = friendlyError(e, "Analysis failed")
+                    val msg = friendlyError(e, "Analysis failed")
+                    if (
+                        msg.contains("Market history", ignoreCase = true) ||
+                        msg.contains("rate-limit", ignoreCase = true) ||
+                        msg.contains("rate limit", ignoreCase = true) ||
+                        msg.contains("403")
+                    ) {
+                        error = null
+                        refreshWarning = "Preparing prior-session candles. Live quotes will continue automatically."
+                    } else {
+                        error = msg
+                    }
                 }
             }
             loading = false
