@@ -219,13 +219,6 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        val gate = backtestReport?.adaptive
-        if (gate?.gatePassed != true) {
-            autoTradeEnabled = false
-            autoStatus = "Live Auto blocked: Adaptive research has not passed for this symbol/timeframe."
-            return
-        }
-
         val gateway = orderGateway
         if (gateway?.executionReady != true) {
             autoTradeEnabled = false
@@ -234,8 +227,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        val researchPassed = backtestReport?.adaptive?.gatePassed == true
         autoTradeEnabled = true
-        autoStatus = "Adaptive gate and order gateway READY. Auto Trade armed for 2 matching CE/PE confirmations."
+        autoStatus = if (researchPassed) {
+            "Order gateway READY and research gate PASSED. Auto Trade armed for 2 matching CE/PE confirmations."
+        } else {
+            "Order gateway READY. Auto Trade armed with RESEARCH WARNING: this symbol/timeframe has not passed Adaptive validation."
+        }
     }
 
     fun updateAutoLots(lots: Int) {
