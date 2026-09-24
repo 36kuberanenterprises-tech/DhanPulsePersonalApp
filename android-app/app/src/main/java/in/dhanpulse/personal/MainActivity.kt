@@ -767,7 +767,8 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
         .filter { it.optionType == manualType }
         .minByOrNull { abs((it.strike ?: atm) - atm) }
     val currentLongQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
-    val canExit = currentLongQty > 0.0
+    val gatewayReady = vm.orderGateway?.executionReady == true
+    val canExit = currentLongQty > 0.0 && gatewayReady
 
     pendingSide?.let { side ->
         AlertDialog(
@@ -846,11 +847,11 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { pendingSide = "BUY" },
-                        enabled = !vm.orderBusy,
+                        enabled = gatewayReady && !vm.orderBusy,
                         modifier = Modifier.weight(1f).height(52.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Green),
+                        colors = ButtonDefaults.buttonColors(containerColor = Green, disabledContainerColor = Panel2),
                         shape = RoundedCornerShape(14.dp)
-                    ) { Text("BUY $manualType", color = Color.White, fontWeight = FontWeight.ExtraBold) }
+                    ) { Text(if (gatewayReady) "BUY $manualType" else "ORDER BLOCKED", color = if (gatewayReady) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
 
                     Button(
                         onClick = { pendingSide = "SELL" },
