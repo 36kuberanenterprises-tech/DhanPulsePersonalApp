@@ -172,6 +172,14 @@ data class AdaptiveResearch(
     val combined: AdaptiveCombined? = null
 )
 
+data class BacktestDataQuality(
+    val rawCandles: Int = 0,
+    val usedCandles: Int = 0,
+    val weekendOrSpecialCandlesExcluded: Int = 0,
+    val higherTimeframeExcluded: Int = 0,
+    val note: String = ""
+)
+
 data class BacktestPeriod(
     val from: String? = null,
     val to: String? = null
@@ -186,6 +194,7 @@ data class BacktestReport(
     val period: BacktestPeriod = BacktestPeriod(),
     val candles: Int = 0,
     val higherTimeframe: String = "",
+    val dataQuality: BacktestDataQuality = BacktestDataQuality(),
     val strategies: List<BacktestStrategy> = emptyList(),
     val robustness: RobustnessSummary = RobustnessSummary(),
     val adaptive: AdaptiveResearch = AdaptiveResearch(),
