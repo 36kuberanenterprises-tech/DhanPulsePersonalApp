@@ -687,8 +687,11 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
                 Surface(color = decisionColor.copy(alpha = 0.08f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, decisionColor.copy(alpha = 0.22f))) {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("WHAT SHOULD I CONSIDER?", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                        Text(if (adaptive.gatePassed) "Research gate passed — paper test this candidate next." else "No validated edge yet — do not use this setup for Live Auto.", color = decisionColor, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
-                        Text(if (adaptive.gatePassed) "The selected rule stayed positive in development, validation and unseen data. This is still not a profit guarantee." else "Ignore isolated green boxes from the full-period diagnostics. The Adaptive gate is the main decision because it checks unseen data.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text(report.interpretation.verdict.ifBlank { if (adaptive.gatePassed) "PAPER TEST" else "NOT READY" }, color = decisionColor, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                        Text(report.interpretation.reason.ifBlank { adaptive.message }, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (report.interpretation.focus.isNotEmpty()) {
+                            Text("Main things to check: " + report.interpretation.focus.take(3).joinToString(" • "), color = Ink, style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
 
@@ -742,8 +745,8 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
                         if (trend != null) {
                             Text("Trend Pro diagnostics", color = Ink, fontWeight = FontWeight.ExtraBold)
                             Text("These explain the past. Do not choose a live rule from one green box alone.", color = Muted, style = MaterialTheme.typography.bodySmall)
-                            ExpandableDiagnostic("CE vs PE", trend.diagnostics.sides, true)
-                            ExpandableDiagnostic("Time windows", trend.diagnostics.times, true)
+                            ExpandableDiagnostic("CE vs PE", trend.diagnostics.sides, false)
+                            ExpandableDiagnostic("Time windows", trend.diagnostics.times, false)
                             ExpandableDiagnostic("Weekdays — Monday to Friday", trend.diagnostics.weekdays, false)
                             ExpandableDiagnostic("Market regime", trend.diagnostics.regimes, false)
                             ExpandableDiagnostic("Volatility", trend.diagnostics.volatility, false)
