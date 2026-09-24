@@ -871,7 +871,7 @@ private fun AdaptivePhaseRow(title: String, x: AdaptivePhase) {
 private fun DiagnosticSliceGroup(title: String, rows: List<BacktestSlice>) {
     if (rows.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(title.uppercase(), color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        if (title.isNotBlank()) Text(title.uppercase(), color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
         rows.forEach { row ->
             val positive = row.expectancyR > 0.0
             val rc = if (positive) Green else Red
