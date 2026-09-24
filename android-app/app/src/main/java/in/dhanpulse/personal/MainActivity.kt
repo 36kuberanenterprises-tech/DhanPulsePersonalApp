@@ -325,12 +325,57 @@ private fun TradeSection(vm: DhanPulseViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { TradingContextBar(vm) }
+        item { OrderGatewayCard(vm) }
         if (a != null) {
             item { TradeDeskHero(a, vm) }
             item { ManualTradeCard(a, vm) }
             item { AutoTradeCard(vm) }
             item { TradePlanCard(a, vm) }
         } else item { LoadingMarketCard() }
+    }
+}
+
+@Composable
+private fun OrderGatewayCard(vm: DhanPulseViewModel) {
+    val g = vm.orderGateway
+    val ready = g?.executionReady == true
+    val color = if (ready) Green else if (vm.orderGatewayBusy) Amber else Red
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.28f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Real Order Gateway", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("Android → Backend → Angel One", color = Muted, style = MaterialTheme.typography.labelSmall)
+                }
+                StatusPill(if (vm.orderGatewayBusy) "CHECKING" else if (ready) "READY" else "BLOCKED", color)
+            }
+            if (g == null) {
+                Text("Checking broker session and static-IP order route.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text(g.message, color = if (ready) Green else Red, style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Registered IP", color = Muted, fontSize = 10.sp)
+                    Text(g.registeredPublicIp ?: "NA", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(if (g.relayConfigured) "Relay" else "Backend egress", color = Muted, fontSize = 10.sp)
+                    Text(g.relayHost ?: g.actualEgressIp ?: "Unknown", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("SmartAPI session", color = Muted, fontSize = 10.sp)
+                    Text(if (g.brokerSessionOk) "ACTIVE" else "CHECK LOGIN", color = if (g.brokerSessionOk) Green else Red, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            FilledTonalButton(
+                onClick = vm::fetchOrderDiagnostics,
+                enabled = !vm.orderGatewayBusy,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("CHECK ORDER ROUTE", fontWeight = FontWeight.Bold) }
+        }
     }
 }
 
@@ -387,6 +432,7 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                     AccountSettingRow("Auto lots", vm.autoLots.toString())
                     AccountSettingRow("Account / P&L refresh", "Every 15 seconds")
                     AccountSettingRow("Live analysis refresh", "Every 3 seconds")
+                    AccountSettingRow("Order gateway", if (vm.orderGateway?.executionReady == true) "READY" else "BLOCKED")
                     HorizontalDivider(color = Line)
                     Text("Manual trading stays available even when Auto Trade is blocked by the research gate.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
