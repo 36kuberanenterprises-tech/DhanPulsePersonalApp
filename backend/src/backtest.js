@@ -242,7 +242,15 @@ function signalAt(strategy,candles,s,htf,i,cfg={}){
   return 'WAIT';
 }
 function istHm(ts){const x=new Date(new Date(ts).getTime()+IST_MS);return x.getUTCHours()*60+x.getUTCMinutes();}
-function istWeekday(ts){const x=new Date(new Date(ts).getTime()+IST_MS);return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][x.getUTCDay()];}
+function istWeekday(ts){
+  const d=String(ts).slice(0,10).split('-').map(Number);
+  if(d.length!==3||d.some(x=>!Number.isFinite(x)))return 'UNKNOWN';
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(Date.UTC(d[0],d[1]-1,d[2],12,0,0)).getUTCDay()];
+}
+function isStandardTradingDay(ts){
+  const w=istWeekday(ts);
+  return w==='Mon'||w==='Tue'||w==='Wed'||w==='Thu'||w==='Fri';
+}
 const dayKey=ts=>String(ts).slice(0,10);
 function timeBucket(ts){const m=istHm(ts);if(m<630)return '09:25-10:30';if(m<720)return '10:30-12:00';if(m<810)return '12:00-13:30';return '13:30-15:00';}
 function regimeBucket(adx){if(adx==null)return 'UNKNOWN';if(adx>=25)return 'TRENDING';if(adx<18)return 'RANGE';return 'TRANSITION';}
@@ -605,9 +613,13 @@ export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE'
   if(!['NIFTY','BANKNIFTY','SENSEX'].includes(symbol))throw new Error('Supported symbols: NIFTY, BANKNIFTY, SENSEX');
   if(!MAX_DAYS[interval])throw new Error('Unsupported interval');
 
-  const entry=await historicalCandles(session,symbol,interval,years);
-  const higher=interval==='FIFTEEN_MINUTE'?entry:await historicalCandles(session,symbol,'FIFTEEN_MINUTE',years);
-  if(entry.length<300||higher.length<100)throw new Error('Not enough historical candles returned for '+symbol+' '+interval);
+  const rawEntry=await historicalCandles(session,symbol,interval,years);
+  const rawHigher=interval==='FIFTEEN_MINUTE'?rawEntry:await historicalCandles(session,symbol,'FIFTEEN_MINUTE',years);
+  const weekendCandlesExcluded=rawEntry.filter(x=>!isStandardTradingDay(x.timestamp)).length;
+  const weekendHigherExcluded=rawHigher.filter(x=>!isStandardTradingDay(x.timestamp)).length;
+  const entry=rawEntry.filter(x=>isStandardTradingDay(x.timestamp));
+  const higher=rawHigher.filter(x=>isStandardTradingDay(x.timestamp));
+  if(entry.length<300||higher.length<100)throw new Error('Not enough weekday historical candles returned for '+symbol+' '+interval);
 
   const sharedSeries=seriesFor(entry),sharedHtf=higherContext(entry,higher,MINUTES[interval]||5),riskPct=1;
   const strategies=[];
@@ -619,10 +631,17 @@ export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE'
   const adaptive=adaptiveResearch(entry,interval,higher,capital,sharedSeries,sharedHtf);
 
   return {
-    version:'ADAPTIVE_RESEARCH_V1_1',
+    version:'CLARITY_V1_2',
     symbol,interval,years,capital,
     period:{from:entry[0].timestamp,to:entry[entry.length-1].timestamp},
     candles:entry.length,higherTimeframe:'FIFTEEN_MINUTE',
+    dataQuality:{
+      rawCandles:rawEntry.length,
+      usedCandles:entry.length,
+      weekendOrSpecialCandlesExcluded:weekendCandlesExcluded,
+      higherTimeframeExcluded:weekendHigherExcluded,
+      note:'Standard backtest uses Monday-Friday sessions only. Weekend/special-session candles are excluded from strategy statistics and weekday diagnostics.'
+    },
     assumptions:{
       entry:'Signal on candle close; entry at next candle open',
       stop:'1 ATR baseline',
