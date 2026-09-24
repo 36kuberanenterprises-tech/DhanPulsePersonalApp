@@ -16,6 +16,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import kotlin.math.floor
+import kotlin.math.round
 
 class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val backendUrl = "https://dhanpulse-personal-api.onrender.com"
@@ -34,6 +35,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var orderGateway by mutableStateOf<OrderGatewayDiagnostics?>(null)
         private set
     var orderGatewayBusy by mutableStateOf(false)
+        private set
+
+    var premiumTradePlan by mutableStateOf(PremiumTradePlan())
+        private set
+    var signalHistory by mutableStateOf<List<SignalCall>>(emptyList())
+        private set
+    var signalStats by mutableStateOf(SignalStats())
         private set
 
     var backtestYears by mutableStateOf(3)
@@ -66,6 +74,15 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private var api: DhanPulseApi? = null
     private var refreshJob: Job? = null
     private var analysisRefreshInFlight = false
+
+    private val signalPrefs = app.getSharedPreferences("dhanpulse_signal_tracker", 0)
+    private var callPendingKey: String? = null
+    private var callPendingCount = 0
+    private var blockedCallBias: String? = null
+
+    init {
+        loadSignalHistory()
+    }
 
     private fun client(): DhanPulseApi {
         val existing = api
@@ -109,6 +126,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 analysis = result
                 error = null
                 refreshWarning = null
+                updatePremiumDecision(result)
+                updateSignalTracker(result)
                 if (autoTradeEnabled) evaluateAutoTrade(result)
             } catch (e: Exception) {
                 if (e is HttpException && e.code() == 401) {
@@ -140,6 +159,216 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             loading = false
             analysisRefreshInFlight = false
         }
+    }
+
+
+    private fun tick(value: Double): Double = round(value / 0.05) * 0.05
+
+    private fun premiumLevels(reference: Double, timeframe: String): PremiumTradePlan {
+        val cfg = when (timeframe) {
+            "ONE_MINUTE" -> doubleArrayOf(1.01, 0.94, 1.08, 1.12, 1.18)
+            "THREE_MINUTE" -> doubleArrayOf(1.015, 0.93, 1.10, 1.16, 1.23)
+            "TEN_MINUTE" -> doubleArrayOf(1.025, 0.90, 1.15, 1.25, 1.35)
+            "FIFTEEN_MINUTE" -> doubleArrayOf(1.03, 0.88, 1.18, 1.30, 1.45)
+            else -> doubleArrayOf(1.02, 0.92, 1.12, 1.20, 1.30)
+        }
+        val entry = tick(reference * cfg[0])
+        return PremiumTradePlan(
+            referencePremium = tick(reference),
+            entry = entry,
+            stopLoss = tick(entry * cfg[1]),
+            target1 = tick(entry * cfg[2]),
+            target2 = tick(entry * cfg[3]),
+            target3 = tick(entry * cfg[4])
+        )
+    }
+
+    private fun activeTrackedCall(a: AnalysisResponse): SignalCall? =
+        signalHistory.firstOrNull {
+            it.symbol == a.symbol &&
+            it.timeframe == (a.timeframe ?: selectedTimeframe) &&
+            it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED")
+        }
+
+    private fun updatePremiumDecision(a: AnalysisResponse) {
+        val tracked = activeTrackedCall(a)
+        if (tracked != null) {
+            premiumTradePlan = PremiumTradePlan(
+                signal = tracked.side,
+                contract = a.optionChain.contracts.firstOrNull { it.token == tracked.token } ?: a.suggestedContract,
+                referencePremium = tracked.referencePremium,
+                entry = tracked.entry,
+                stopLoss = tracked.stopLoss,
+                target1 = tracked.target1,
+                target2 = tracked.target2,
+                target3 = tracked.target3,
+                status = tracked.status,
+                callId = tracked.id
+            )
+            return
+        }
+
+        val contract = a.suggestedContract
+        val premium = contract?.ltp
+        if (a.signal !in setOf("CE", "PE") || contract == null || premium == null || premium <= 0) {
+            premiumTradePlan = PremiumTradePlan(signal = "WAIT", contract = contract, status = "WAIT")
+            return
+        }
+
+        val lv = premiumLevels(premium, a.timeframe ?: selectedTimeframe)
+        premiumTradePlan = lv.copy(
+            signal = a.signal,
+            contract = contract,
+            status = "BUY_ABOVE"
+        )
+    }
+
+    private fun updateSignalTracker(a: AnalysisResponse) {
+        val now = System.currentTimeMillis()
+        val currentDate = (a.timestamp ?: "").take(10).ifBlank {
+            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(now))
+        }
+
+        var changed = false
+        val updated = signalHistory.map { call ->
+            if (call.status in setOf("T3_HIT", "SL_HIT", "UNRESOLVED")) return@map call
+            if (call.sessionDate != currentDate) {
+                changed = true
+                return@map call.copy(status = "UNRESOLVED")
+            }
+
+            val currentPremium =
+                a.optionChain.contracts.firstOrNull { it.token == call.token }?.ltp
+                    ?: if (a.suggestedContract?.token == call.token) a.suggestedContract?.ltp else null
+                    ?: return@map call
+
+            var x = call.copy(lastPremium = tick(currentPremium))
+            if (x.entryHitAt == null && currentPremium >= x.entry) {
+                x = x.copy(entryHitAt = now, status = "ENTERED")
+                changed = true
+            }
+            if (x.entryHitAt != null) {
+                if (x.t1HitAt == null && currentPremium >= x.target1) {
+                    x = x.copy(t1HitAt = now, status = "T1_HIT")
+                    changed = true
+                }
+                if (x.t2HitAt == null && currentPremium >= x.target2) {
+                    x = x.copy(t2HitAt = now, status = "T2_HIT")
+                    changed = true
+                }
+                if (x.t3HitAt == null && currentPremium >= x.target3) {
+                    x = x.copy(t3HitAt = now, status = "T3_HIT")
+                    changed = true
+                } else if (x.t3HitAt == null && x.slHitAt == null && currentPremium <= x.stopLoss) {
+                    x = x.copy(slHitAt = now, status = "SL_HIT")
+                    changed = true
+                }
+            }
+            x
+        }.sortedByDescending { it.generatedAt }
+
+        if (changed) {
+            signalHistory = updated
+            persistSignalHistory()
+            refreshSignalStats()
+        }
+
+        if (a.signal == "WAIT") {
+            blockedCallBias = null
+            callPendingKey = null
+            callPendingCount = 0
+            return
+        }
+
+        val contract = a.suggestedContract ?: return
+        val premium = contract.ltp ?: return
+        if (a.signal !in setOf("CE", "PE") || premium <= 0) return
+        if (activeTrackedCall(a) != null) return
+
+        val biasKey = a.symbol + "|" + (a.timeframe ?: selectedTimeframe) + "|" + a.signal
+        if (blockedCallBias == biasKey) return
+
+        val confirmKey = biasKey + "|" + (contract.token ?: contract.tradingSymbol ?: "")
+        if (callPendingKey == confirmKey) callPendingCount++ else {
+            callPendingKey = confirmKey
+            callPendingCount = 1
+        }
+        if (callPendingCount < 2) return
+
+        val lv = premiumLevels(premium, a.timeframe ?: selectedTimeframe)
+        val entry = lv.entry ?: return
+        val sl = lv.stopLoss ?: return
+        val t1 = lv.target1 ?: return
+        val t2 = lv.target2 ?: return
+        val t3 = lv.target3 ?: return
+        val token = contract.token ?: return
+        val symbol = contract.tradingSymbol ?: return
+
+        val call = SignalCall(
+            id = "CALL-" + now.toString(),
+            symbol = a.symbol,
+            timeframe = a.timeframe ?: selectedTimeframe,
+            side = a.signal,
+            token = token,
+            tradingSymbol = symbol,
+            strike = contract.strike,
+            exchange = contract.exchange,
+            generatedAt = now,
+            sessionDate = currentDate,
+            referencePremium = tick(premium),
+            entry = entry,
+            stopLoss = sl,
+            target1 = t1,
+            target2 = t2,
+            target3 = t3,
+            lastPremium = tick(premium),
+            status = "WAITING_ENTRY"
+        )
+
+        signalHistory = (listOf(call) + signalHistory).take(500)
+        blockedCallBias = biasKey
+        callPendingKey = null
+        callPendingCount = 0
+        persistSignalHistory()
+        refreshSignalStats()
+        premiumTradePlan = PremiumTradePlan(
+            signal = call.side,
+            contract = contract,
+            referencePremium = call.referencePremium,
+            entry = call.entry,
+            stopLoss = call.stopLoss,
+            target1 = call.target1,
+            target2 = call.target2,
+            target3 = call.target3,
+            status = call.status,
+            callId = call.id
+        )
+    }
+
+    private fun loadSignalHistory() {
+        val raw = signalPrefs.getString("history_json", null) ?: return refreshSignalStats()
+        signalHistory = runCatching {
+            Gson().fromJson(raw, Array<SignalCall>::class.java)?.toList() ?: emptyList()
+        }.getOrDefault(emptyList())
+        refreshSignalStats()
+    }
+
+    private fun persistSignalHistory() {
+        signalPrefs.edit().putString("history_json", Gson().toJson(signalHistory.take(500))).apply()
+    }
+
+    private fun refreshSignalStats() {
+        val h = signalHistory
+        signalStats = SignalStats(
+            generated = h.size,
+            entered = h.count { it.entryHitAt != null },
+            target1Hits = h.count { it.t1HitAt != null },
+            target2Hits = h.count { it.t2HitAt != null },
+            target3Hits = h.count { it.t3HitAt != null },
+            stopLossHits = h.count { it.slHitAt != null },
+            open = h.count { it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED") },
+            unresolved = h.count { it.status == "UNRESOLVED" }
+        )
     }
 
     fun fetchAccount() {
