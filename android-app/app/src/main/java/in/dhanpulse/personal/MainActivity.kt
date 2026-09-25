@@ -196,13 +196,18 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             }
         },
         containerColor = AppBg,
-        bottomBar = { TraderBottomNav(section) { section = it } }
+        bottomBar = { TraderBottomNav(section) {
+            if (it == "MCX") vm.showMarket("MCX")
+            if (it == "MARKET") vm.showMarket("EQUITY")
+            section = it
+        } }
     ) { inner ->
         Column(
             Modifier.fillMaxSize().background(AppBg).padding(inner).statusBarsPadding()
         ) {
             TraderHeader(vm)
             when (section) {
+                "MCX" -> McxSection(vm) { section = "TRADE" }
                 "TRADE" -> TradeSection(vm)
                 "POSITIONS" -> PositionsSection(vm)
                 "RESEARCH" -> ResearchSection(vm)
@@ -231,11 +236,11 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                         Spacer(Modifier.width(7.dp))
                         val status = vm.analysis?.tradeDecision?.status
                         StatusPill(
-                            if (status == "MARKET_CLOSED") "CLOSED" else if (vm.refreshWarning != null || vm.analysis == null) "DELAYED" else "LIVE",
-                            if (vm.refreshWarning != null || vm.analysis == null) Amber else Green
+                            if (status == "MARKET_CLOSED") "CLOSED" else if (status == "NO_OPTIONS") "INDEX ONLY" else if (vm.refreshWarning != null || vm.analysis == null) "DELAYED" else "LIVE",
+                            if (status == "NO_OPTIONS" || vm.refreshWarning != null || vm.analysis == null) Amber else Green
                         )
                     }
-                    Text(vm.profile?.name ?: "Angel One connected", color = Muted, fontSize = 10.sp)
+                    Text((vm.profile?.name ?: "Angel One connected") + if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
                     Text("v${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 9.sp)
                 }
             }
@@ -250,6 +255,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
 private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
     val tabs = listOf(
         "MARKET" to "Market",
+        "MCX" to "MCX",
         "TRADE" to "Trade",
         "POSITIONS" to "Positions",
         "RESEARCH" to "Research",
@@ -289,16 +295,26 @@ private fun TradingContextBar(vm: DhanPulseViewModel) {
                 border = BorderStroke(1.dp, Line)
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
-                    Text("SYMBOL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    Text(if (vm.selectedMarket == "MCX") "MCX INDEX" else "SYMBOL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                     Text(vm.selectedSymbol.replace("BANKNIFTY", "BANK NIFTY"), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
             DropdownMenu(expanded = symbolOpen, onDismissRequest = { symbolOpen = false }) {
-                listOf("NIFTY" to "NIFTY", "BANKNIFTY" to "BANK NIFTY", "SENSEX" to "SENSEX").forEach { (key, label) ->
-                    DropdownMenuItem(
-                        text = { Text(label) },
-                        onClick = { vm.selectSymbol(key); symbolOpen = false }
+                if (vm.selectedMarket == "MCX") {
+                    vm.mcxIndices.forEach { index ->
+                        DropdownMenuItem(
+                            text = { Text("${index.symbol} • ${if (index.hasOptions) "Options available" else "Index only"}") },
+                            onClick = { vm.selectSymbol(index.symbol); symbolOpen = false }
+                        )
+                    }
+                    if (vm.mcxIndices.isEmpty()) DropdownMenuItem(
+                        text = { Text("MCXBULLDEX • loading index list") },
+                        onClick = { symbolOpen = false }
                     )
+                } else {
+                    listOf("NIFTY" to "NIFTY", "BANKNIFTY" to "BANK NIFTY", "SENSEX" to "SENSEX").forEach { (key, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { vm.selectSymbol(key); symbolOpen = false })
+                    }
                 }
             }
         }
@@ -351,6 +367,43 @@ private fun MarketSection(vm: DhanPulseViewModel) {
 }
 
 @Composable
+private fun McxSection(vm: DhanPulseViewModel, onTrade: () -> Unit) {
+    val a = vm.analysis?.takeIf { it.symbol == vm.selectedSymbol && it.segment == "MCX" }
+    val index = vm.mcxIndices.firstOrNull { it.symbol == vm.selectedSymbol }
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { SectionTitle("MCX indices", "Angel One index list • option buying where a current index option exists") }
+        item { TradingContextBar(vm) }
+        if (vm.mcxIndices.isNotEmpty()) item {
+            InfoStrip("Connected MCX list", "${vm.mcxIndices.size} indices • ${vm.mcxIndices.count { it.hasOptions }} with current index options. Select an index above to see its availability.")
+        }
+        vm.mcxCatalogError?.let { item { InfoStrip("MCX list", it) } }
+        vm.error?.let { item { ErrorStrip(it) } }
+        vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
+        if (vm.loading && a == null) item { LoadingMarketCard() }
+        if (index?.hasOptions == false || a?.tradeDecision?.status == "NO_OPTIONS") item {
+            InfoStrip("Index only", "${vm.selectedSymbol} has no current index option contract in Angel One. Market information is shown where available. No option call or buy is offered.")
+        }
+        if (a != null) {
+            if (index?.hasOptions != false) item { SignalCard(a, vm::fetchAnalysis) }
+            item { MarketCard(a) }
+            if (index?.hasOptions != false && a.tradeDecision.status != "NO_OPTIONS") {
+                item { OptionCard(a) }
+                item { SignalRulesPanel(a) }
+                item {
+                    Button(onClick = onTrade, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+                        Text("OPEN MCX OPTION TRADE", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TradeSection(vm: DhanPulseViewModel) {
     val a = vm.analysis
     LazyColumn(
@@ -361,11 +414,15 @@ private fun TradeSection(vm: DhanPulseViewModel) {
         item { TradingContextBar(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
         vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
+        if (vm.selectedMarket == "MCX") item {
+            InfoStrip("MCX option buying", "Only index options shown in Angel One can be bought. Entry needs fresh index and option quotes. MCX Auto Trade remains off while this strategy is untested with live orders.")
+        }
         if (a != null) {
             item { TradeDeskHero(a, vm) }
             item { DecisionPipelineCard(a, vm) }
             item { PremiumDecisionCard(vm) }
-            vm.signalHistory.firstOrNull()?.let { latest ->
+            if (vm.selectedMarket == "MCX" && a.optionChain.contracts.isNotEmpty()) item { ManualTradeCard(a, vm) }
+            vm.visibleCalls.firstOrNull()?.let { latest ->
                 item { LatestCallRecordCard(latest) }
             }
             item { SignalPerformanceCard(vm) }
@@ -384,6 +441,7 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
         p.callId != null && p.stage.startsWith("TARGET_") -> p.stage.replace("_", " ")
         p.callId != null && p.stage == "STOP_LOSS_HIT" -> "STOP LOSS HIT"
         d.status == "MARKET_CLOSED" -> "MARKET CLOSED"
+        d.status == "NO_OPTIONS" -> "INDEX ONLY"
         d.status == "DATA_STALE" -> "DATA DELAYED"
         d.direction == "WAIT" -> "WATCHING"
         !d.setupAllowed && d.status == "REJECTED_CONFLICT" -> "REJECTED • CONFLICT"
@@ -723,7 +781,7 @@ private fun formatCallDateTime(ms: Long): String =
 
 @Composable
 private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = false) {
-    val s = vm.signalStats
+    val s = vm.visibleStats
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Line)) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -757,10 +815,10 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
                 Text("Hit rate from entered calls: T1 ${String.format("%.1f", t1Rate)}% • T2 ${String.format("%.1f", t2Rate)}% • T3 ${String.format("%.1f", t3Rate)}%", color = Muted, style = MaterialTheme.typography.labelSmall)
             }
 
-            if (showRecent && vm.signalHistory.isNotEmpty()) {
+            if (showRecent && vm.visibleCalls.isNotEmpty()) {
                 HorizontalDivider(color = Line)
                 Text("RECENT CALLS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                vm.signalHistory.take(12).forEach { call -> SignalHistoryRow(call) }
+                vm.visibleCalls.take(12).forEach { call -> SignalHistoryRow(call) }
             }
 
             Text("Every generated call is stored with strike, premium, entry, SL, T1, T2, T3 and final status. Open Research → Call Book to see the full record.", color = Muted, style = MaterialTheme.typography.labelSmall)
@@ -901,10 +959,10 @@ private fun ResearchSection(vm: DhanPulseViewModel) {
             ) {
                 item { SectionTitle("Call Book", "Every generated premium call with strike, entry, SL, targets and result") }
                 item { SignalPerformanceCard(vm) }
-                if (vm.signalHistory.isEmpty()) {
+                if (vm.visibleCalls.isEmpty()) {
                     item { EmptyStateCard("No calls recorded yet", "A call will be added after the same CE/PE setup is confirmed on two live scans.") }
                 } else {
-                    items(vm.signalHistory, key = { it.id }) { call ->
+                    items(vm.visibleCalls, key = { it.id }) { call ->
                         FullCallRecordCard(call)
                     }
                 }
@@ -1291,9 +1349,10 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     var lots by remember(a.symbol, a.timeframe, manualType) { mutableStateOf(1) }
     var pendingSide by remember { mutableStateOf<String?>(null) }
     val atm = a.optionChain.atm ?: a.market.ltp ?: 0.0
-    val contract = a.optionChain.contracts
-        .filter { it.optionType == manualType }
+    val matchingContracts = a.optionChain.contracts.filter { it.optionType == manualType }
+    val contract = matchingContracts.filter { (it.ltp ?: 0.0) > 0.0 }
         .minByOrNull { abs((it.strike ?: atm) - atm) }
+        ?: matchingContracts.minByOrNull { abs((it.strike ?: atm) - atm) }
     val currentLongQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
     val gatewayReady = vm.orderGateway?.executionReady == true
     val canExit = currentLongQty > 0.0 && gatewayReady
@@ -1306,14 +1365,14 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(contract?.tradingSymbol ?: "Selected option")
                     Text("Side: $side   Lots: $lots   Qty: ${(contract?.lotSize ?: 0) * lots}")
-                    Text("MARKET • INTRADAY", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(if (a.segment == "MCX") "MARKET • CARRYFORWARD" else "MARKET • INTRADAY", color = Muted, style = MaterialTheme.typography.bodySmall)
                     if (vm.autoTradeEnabled) Text("Manual order will switch Auto Trade OFF to avoid duplicate orders.", color = Amber, style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
                 Button(
                     onClick = { contract?.let { vm.placeOrder(side, it, lots) }; pendingSide = null },
-                    enabled = !vm.orderBusy && (side == "SELL" || vm.canBuyContract(contract)),
+                    enabled = !vm.orderBusy && (side == "SELL" || vm.canBuyContract(contract, lots)),
                     colors = ButtonDefaults.buttonColors(containerColor = if (side == "BUY") Green else Red)
                 ) { Text(if (side == "BUY") "BUY NOW" else "EXIT NOW", color = Color.White, fontWeight = FontWeight.ExtraBold) }
             },
@@ -1375,11 +1434,11 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { pendingSide = "BUY" },
-                        enabled = gatewayReady && !vm.orderBusy && vm.canBuyContract(contract),
+                        enabled = gatewayReady && !vm.orderBusy && vm.canBuyContract(contract, lots),
                         modifier = Modifier.weight(1f).height(52.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Green, disabledContainerColor = Panel2),
                         shape = RoundedCornerShape(14.dp)
-                    ) { Text(if (!gatewayReady) "ORDER BLOCKED" else if (!vm.canBuyContract(contract)) "WAIT FOR QUOTE" else "BUY $manualType", color = if (gatewayReady && vm.canBuyContract(contract)) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
+                    ) { Text(if (!gatewayReady) "ORDER BLOCKED" else if (!vm.canBuyContract(contract, lots)) "WAIT FOR QUOTE" else "BUY $manualType", color = if (gatewayReady && vm.canBuyContract(contract, lots)) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
 
                     Button(
                         onClick = { pendingSide = "SELL" },
@@ -1522,7 +1581,7 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
 
             Button(
                 onClick = vm::runBacktest,
-                enabled = !vm.backtestBusy && !vm.autoTradeEnabled,
+                enabled = !vm.backtestBusy && !vm.autoTradeEnabled && vm.selectedMarket != "MCX",
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Blue)
@@ -1531,9 +1590,10 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
                     Spacer(Modifier.width(10.dp))
                     Text("Pulling & testing history…", color = Color.White, fontWeight = FontWeight.Bold)
-                } else Text("RUN HISTORICAL BACKTEST", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                } else Text(if (vm.selectedMarket == "MCX") "MCX RESEARCH PENDING" else "RUN HISTORICAL BACKTEST", color = Color.White, fontWeight = FontWeight.ExtraBold)
             }
 
+            if (vm.selectedMarket == "MCX") InfoStrip("MCX strategy research", "The MCX option buying rules are being introduced without a historical validation result. Auto Trade stays off for MCX.")
             if (vm.autoTradeEnabled) InfoStrip("Backtest locked", "Switch Auto Trade OFF before historical testing.")
             vm.backtestError?.let { ErrorStrip(it) }
 
