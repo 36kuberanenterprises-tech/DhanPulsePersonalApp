@@ -1153,7 +1153,7 @@ fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             confirmButton = {
                 Button(
                     onClick = { contract?.let { vm.placeOrder(side, it, lots) }; pendingSide = null },
-                    enabled = !vm.orderBusy,
+                    enabled = !vm.orderBusy && (side == "SELL" || vm.canBuyContract(contract)),
                     colors = ButtonDefaults.buttonColors(containerColor = if (side == "BUY") Green else Red)
                 ) { Text(if (side == "BUY") "Confirm BUY" else "Confirm EXIT", color = Color.White, fontWeight = FontWeight.Bold) }
             },
@@ -1221,7 +1221,7 @@ fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { pendingSide = "BUY" },
-                        enabled = gatewayReady && !vm.orderBusy && active,
+                        enabled = gatewayReady && !vm.orderBusy && active && vm.canBuyContract(contract),
                         modifier = Modifier.weight(1f).height(52.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Green, disabledContainerColor = Panel2),
                         shape = RoundedCornerShape(14.dp)
@@ -1303,7 +1303,7 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             confirmButton = {
                 Button(
                     onClick = { contract?.let { vm.placeOrder(side, it, lots) }; pendingSide = null },
-                    enabled = !vm.orderBusy,
+                    enabled = !vm.orderBusy && (side == "SELL" || vm.canBuyContract(contract)),
                     colors = ButtonDefaults.buttonColors(containerColor = if (side == "BUY") Green else Red)
                 ) { Text(if (side == "BUY") "BUY NOW" else "EXIT NOW", color = Color.White, fontWeight = FontWeight.ExtraBold) }
             },
@@ -1365,11 +1365,11 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { pendingSide = "BUY" },
-                        enabled = gatewayReady && !vm.orderBusy,
+                        enabled = gatewayReady && !vm.orderBusy && vm.canBuyContract(contract),
                         modifier = Modifier.weight(1f).height(52.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Green, disabledContainerColor = Panel2),
                         shape = RoundedCornerShape(14.dp)
-                    ) { Text(if (gatewayReady) "BUY $manualType" else "ORDER BLOCKED", color = if (gatewayReady) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
+                    ) { Text(if (!gatewayReady) "ORDER BLOCKED" else if (!vm.canBuyContract(contract)) "WAIT FOR QUOTE" else "BUY $manualType", color = if (gatewayReady && vm.canBuyContract(contract)) Color.White else Muted, fontWeight = FontWeight.ExtraBold) }
 
                     Button(
                         onClick = { pendingSide = "SELL" },

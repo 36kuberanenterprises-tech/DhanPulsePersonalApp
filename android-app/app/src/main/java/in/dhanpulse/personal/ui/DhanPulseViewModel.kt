@@ -209,6 +209,16 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 } else if (analysis != null) {
                     error = null
                     refreshWarning = friendlyError(e, "Broker refresh failed") + ". Showing older analysis; calls and Auto Trade are paused."
+                    analysis = analysis?.let { old ->
+                        old.copy(
+                            dataFresh = false,
+                            tradeDecision = old.tradeDecision.copy(
+                                setupAllowed = false,
+                                status = "DATA_STALE",
+                                message = "Broker refresh failed. Calls are paused until fresh quotes arrive."
+                            )
+                        )
+                    }
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until live analysis refresh succeeds."
                 } else {
                     val msg = friendlyError(e, "Analysis failed")
@@ -233,11 +243,23 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun tick(value: Double): Double = round(value / 0.05) * 0.05
 
-    private fun freshForNewCall(a: AnalysisResponse): Boolean {
+    private fun freshForQuotes(a: AnalysisResponse): Boolean {
         if (a.dataFresh == false) return false
         val timestamp = try { Instant.parse(a.timestamp ?: return false) } catch (_: Exception) { return false }
         val ageMs = System.currentTimeMillis() - timestamp.toEpochMilli()
         if (ageMs < -30_000 || ageMs > 30_000) return false
+        return true
+    }
+
+    fun canBuyContract(contract: OptionContract?): Boolean {
+        val a = analysis ?: return false
+        if (contract?.token.isNullOrBlank() || refreshWarning != null || !freshForQuotes(a)) return false
+        return a.optionChain.contracts.any { it.token == contract?.token && (it.ltp ?: 0.0) > 0.0 }
+    }
+
+    private fun freshForNewCall(a: AnalysisResponse): Boolean {
+        if (!freshForQuotes(a)) return false
+        val timestamp = Instant.parse(a.timestamp ?: return false)
         val time = timestamp.atZone(ZoneId.of("Asia/Kolkata")).toLocalTime()
         return !time.isBefore(LocalTime.of(9, 30)) && time.isBefore(LocalTime.of(15, 30))
     }
@@ -624,6 +646,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun placeOrder(side: String, contract: OptionContract, lots: Int = 1) {
         val s = sessionId ?: return
+        if (side.equals("BUY", ignoreCase = true) && !canBuyContract(contract)) {
+            orderMessage = "Manual BUY paused. Refresh the market and wait for a current option premium."
+            return
+        }
         if (autoTradeEnabled) {
             autoTradeEnabled = false
             clearAutoPosition()

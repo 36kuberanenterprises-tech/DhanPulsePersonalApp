@@ -3,7 +3,7 @@ name: Build DhanPulse APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, fix-market-data-call-tracker-v25 ]
+    branches: [ main, fix-market-data-call-tracker-v25, fix-quote-buy-pause-v25 ]
     paths:
       - 'android-app/**'
       - '.github/workflows/build-apk.yml'
