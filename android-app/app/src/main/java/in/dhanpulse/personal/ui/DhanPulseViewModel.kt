@@ -15,6 +15,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
 import kotlin.math.floor
 import kotlin.math.round
 
@@ -165,6 +168,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun tick(value: Double): Double = round(value / 0.05) * 0.05
 
+    private fun freshForNewCall(a: AnalysisResponse): Boolean {
+        val timestamp = try { Instant.parse(a.timestamp ?: return false) } catch (_: Exception) { return false }
+        val ageMs = System.currentTimeMillis() - timestamp.toEpochMilli()
+        if (ageMs < -30_000 || ageMs > 30_000) return false
+        val time = timestamp.atZone(ZoneId.of("Asia/Kolkata")).toLocalTime()
+        return !time.isBefore(LocalTime.of(9, 30)) && time.isBefore(LocalTime.of(15, 30))
+    }
+
     private fun premiumLevels(reference: Double, timeframe: String): PremiumTradePlan {
         val cfg = when (timeframe) {
             "ONE_MINUTE" -> doubleArrayOf(1.01, 0.94, 1.08, 1.12, 1.18)
@@ -240,7 +251,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        if (!decision.setupAllowed) {
+        if (!decision.setupAllowed || !freshForNewCall(a)) {
             premiumTradePlan = PremiumTradePlan(
                 signal = decision.direction,
                 contract = contract,
@@ -249,7 +260,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 stage = decision.status,
                 confirmationCount = 0,
                 confirmationRequired = 2,
-                decisionNote = decision.message
+                decisionNote = if (freshForNewCall(a)) decision.message else "New calls require fresh market data between 09:30 and 15:30 IST."
             )
             return
         }
@@ -282,7 +293,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             if (call.entryHitAt == null) {
-                val sameSetup = a.tradeDecision.setupAllowed &&
+                val sameSetup = freshForNewCall(a) && a.tradeDecision.setupAllowed &&
                     a.tradeDecision.direction == call.side &&
                     a.suggestedContract?.token == call.token
                 if (!sameSetup) {
@@ -335,7 +346,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         val decision = a.tradeDecision
-        if (!decision.setupAllowed || decision.direction !in setOf("CE", "PE")) {
+        if (!freshForNewCall(a) || !decision.setupAllowed || decision.direction !in setOf("CE", "PE")) {
             blockedCallBias = null
             callPendingKey = null
             callPendingCount = 0
@@ -623,11 +634,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
-            if (result.signal != "CE" && result.signal != "PE") {
+            if (!freshForNewCall(result) || !result.tradeDecision.setupAllowed || result.tradeDecision.direction != result.signal || result.signal !in setOf("CE", "PE")) {
                 blockedSignal = null
                 pendingSignalKey = null
                 pendingSignalCount = 0
-                autoStatus = "WAIT • No auto entry."
+                autoStatus = "WAIT • Fresh, confirmed trade decision required for auto entry."
                 return
             }
 
