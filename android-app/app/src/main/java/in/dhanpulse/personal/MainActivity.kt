@@ -328,6 +328,7 @@ private fun TradeSection(vm: DhanPulseViewModel) {
         item { TradingContextBar(vm) }
         if (a != null) {
             item { TradeDeskHero(a, vm) }
+            item { DecisionPipelineCard(a, vm) }
             item { PremiumDecisionCard(vm) }
             vm.signalHistory.firstOrNull()?.let { latest ->
                 item { LatestCallRecordCard(latest) }
@@ -338,10 +339,115 @@ private fun TradeSection(vm: DhanPulseViewModel) {
 }
 
 @Composable
+private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
+    val d = a.tradeDecision
+    val p = vm.premiumTradePlan
+    val directionColor = when (d.direction) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    val stageText = when {
+        p.callId != null && p.stage == "WAITING_ENTRY" -> "CALL RECORDED • WAITING ENTRY"
+        p.callId != null && p.stage == "ENTRY_ACTIVE" -> "ENTRY ACTIVE"
+        p.callId != null && p.stage.startsWith("TARGET_") -> p.stage.replace("_", " ")
+        p.callId != null && p.stage == "STOP_LOSS_HIT" -> "STOP LOSS HIT"
+        d.direction == "WAIT" -> "WATCHING"
+        !d.setupAllowed && d.status == "REJECTED_CONFLICT" -> "REJECTED • CONFLICT"
+        !d.setupAllowed -> "SETUP FORMING"
+        p.confirmationCount <= 0 -> "SETUP PASSED • SCAN 0/2"
+        p.confirmationCount == 1 -> "CONFIRMING • SCAN 1/2"
+        else -> "PREMIUM CONFIRMATION"
+    }
+    val stageColor = when {
+        p.callId != null && p.stage == "STOP_LOSS_HIT" -> Red
+        p.callId != null && p.stage.startsWith("TARGET_") -> Green
+        d.setupAllowed -> Blue
+        d.status == "REJECTED_CONFLICT" -> Red
+        else -> Amber
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, stageColor.copy(alpha = 0.28f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Trade Decision", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+                    Text("One final direction after market evidence and strategy filters", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill(d.direction, directionColor)
+            }
+
+            Surface(color = stageColor.copy(alpha = 0.09f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, stageColor.copy(alpha = 0.22f))) {
+                Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(stageText, color = stageColor, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                    Text(
+                        if (d.message.isNotBlank()) d.message else "Waiting for confirmation.",
+                        color = Muted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DecisionMetric("ALIGNMENT", "${d.supportingVotes}/${d.totalVotes}", if (d.setupAllowed) Green else Amber, Modifier.weight(1f))
+                DecisionMetric("REGIME", d.regime, if (d.regimeSuitable) Green else Red, Modifier.weight(1f))
+                DecisionMetric("SCAN", "${p.confirmationCount}/${p.confirmationRequired}", Blue, Modifier.weight(1f))
+            }
+
+            Text("STRATEGY CONSENSUS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            d.strategyVotes.forEach { vote ->
+                val vc = when (vote.vote) { "CE" -> Green; "PE" -> Red; else -> Muted }
+                Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(vote.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            vote.detail?.let { Text(it, color = Muted, fontSize = 8.sp) }
+                        }
+                        StatusPill(vote.vote, vc)
+                    }
+                }
+            }
+
+            if (d.conflicts.isNotEmpty()) {
+                Surface(color = Red.copy(alpha = 0.08f), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Red.copy(alpha = 0.18f))) {
+                    Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("WHY NO CALL", color = Red, fontWeight = FontWeight.ExtraBold, fontSize = 9.sp)
+                        d.conflicts.forEach { Text("• $it", color = Muted, fontSize = 9.sp) }
+                    }
+                }
+            }
+
+            a.suggestedContract?.let { contract ->
+                Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("SELECTED CANDIDATE", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(contract.tradingSymbol ?: "Option", color = Ink, fontWeight = FontWeight.ExtraBold)
+                        Text(d.selectedContractReason ?: "Near-ATM contract selected.", color = Muted, fontSize = 9.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DecisionMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(color.copy(alpha = 0.08f)).padding(10.dp)) {
+        Text(label, color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = color, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
+    }
+}
+
+@Composable
 private fun PremiumDecisionCard(vm: DhanPulseViewModel) {
     val p = vm.premiumTradePlan
     val contract = p.contract
     val actionColor = when (p.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = Panel),
         shape = RoundedCornerShape(22.dp),
@@ -351,59 +457,83 @@ private fun PremiumDecisionCard(vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Premium Trade Plan", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
-                    Text("Strike-price entry, SL and 3 targets • updates every 3 sec", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Only the final selected direction appears here", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill(p.signal, actionColor)
             }
 
-            if (p.signal == "WAIT" || contract == null || p.entry == null) {
+            if (p.signal == "WAIT" || contract == null) {
                 Surface(color = Amber.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.25f))) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                        Text("WAIT", color = Amber, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-                        Text("No premium call will be recorded until the CE/PE signal is confirmed twice.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text("WATCHING", color = Amber, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(p.decisionNote ?: "No confirmed directional setup.", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
-            } else {
-                Surface(color = Panel2, shape = RoundedCornerShape(16.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("SELECTED STRIKE", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                            Text(contract.tradingSymbol ?: "Option", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
-                            Text("Strike ${n(contract.strike)} • ${contract.optionType ?: p.signal}", color = Muted, fontSize = 10.sp)
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("LIVE PREMIUM", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                            Text(n(contract.ltp), color = actionColor, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
-                        }
-                    }
-                }
-
-                val statusLabel = when (p.status) {
-                    "WAITING_ENTRY" -> "BUY ABOVE"
-                    "ENTERED" -> "ENTERED"
-                    "T1_HIT" -> "T1 HIT"
-                    "T2_HIT" -> "T2 HIT"
-                    "T3_HIT" -> "T3 HIT"
-                    "SL_HIT" -> "SL HIT"
-                    else -> "BUY ABOVE"
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PremiumLevelBox(statusLabel, p.entry, Blue, Modifier.weight(1f))
-                    PremiumLevelBox("STOP LOSS", p.stopLoss, Red, Modifier.weight(1f))
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PremiumLevelBox("TARGET 1", p.target1, Green, Modifier.weight(1f))
-                    PremiumLevelBox("TARGET 2", p.target2, Green, Modifier.weight(1f))
-                    PremiumLevelBox("TARGET 3", p.target3, Green, Modifier.weight(1f))
-                }
-
-                Text(
-                    if (p.status == "BUY_ABOVE") "Wait for premium to cross the Entry level. The call is recorded only after the same CE/PE setup is confirmed on two live scans."
-                    else "This call is locked with fixed levels. DhanPulse is tracking T1, T2, T3 and SL against the live option premium.",
-                    color = Muted,
-                    style = MaterialTheme.typography.labelSmall
-                )
+                return@Column
             }
+
+            Surface(color = Panel2, shape = RoundedCornerShape(16.dp)) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if (p.callId == null) "CANDIDATE STRIKE" else "RECORDED CALL", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text(contract.tradingSymbol ?: "Option", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                        Text("Strike ${n(contract.strike)} • ${contract.optionType ?: p.signal}", color = Muted, fontSize = 10.sp)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("LIVE PREMIUM", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text(n(contract.ltp), color = actionColor, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                    }
+                }
+            }
+
+            if (p.status == "FILTERED") {
+                Surface(color = Red.copy(alpha = 0.08f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Red.copy(alpha = 0.20f))) {
+                    Column(Modifier.fillMaxWidth().padding(13.dp)) {
+                        Text("NO TRADE CALL YET", color = Red, fontWeight = FontWeight.ExtraBold)
+                        Text(p.decisionNote ?: "The market bias exists, but the meta filters rejected the setup.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                return@Column
+            }
+
+            val statusLabel = when (p.status) {
+                "WAITING_ENTRY" -> "BUY ABOVE"
+                "ENTERED" -> "ENTRY ACTIVE"
+                "T1_HIT" -> "T1 HIT"
+                "T2_HIT" -> "T2 HIT"
+                "T3_HIT" -> "T3 HIT"
+                "SL_HIT" -> "SL HIT"
+                else -> "BUY ABOVE"
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PremiumLevelBox(statusLabel, p.entry, Blue, Modifier.weight(1f))
+                PremiumLevelBox("STOP LOSS", p.stopLoss, Red, Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PremiumLevelBox("TARGET 1", p.target1, Green, Modifier.weight(1f))
+                PremiumLevelBox("TARGET 2", p.target2, Green, Modifier.weight(1f))
+                PremiumLevelBox("TARGET 3", p.target3, Green, Modifier.weight(1f))
+            }
+
+            val progress = p.confirmationCount.coerceIn(0, p.confirmationRequired)
+            LinearProgressIndicator(
+                progress = { if (p.confirmationRequired > 0) progress.toFloat() / p.confirmationRequired.toFloat() else 0f },
+                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(6.dp)),
+                color = Blue,
+                trackColor = Panel2
+            )
+            Text(
+                when {
+                    p.callId != null && p.status == "WAITING_ENTRY" -> "CALL CONFIRMED • Levels locked • waiting for premium to cross Buy Above."
+                    p.callId != null -> "CALL ACTIVE • Original levels are locked and being tracked."
+                    progress == 0 -> "Meta setup passed. Waiting for the first matching live confirmation."
+                    progress == 1 -> "Confirmation 1/2 complete. Same direction and strike must remain valid on the next scan."
+                    else -> "Premium confirmation complete."
+                },
+                color = Muted,
+                style = MaterialTheme.typography.labelSmall
+            )
         }
     }
 }
@@ -823,11 +953,20 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Index ${n(a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
-                Text(
-                    if (a.signal == "WAIT") "WAIT" else "PREMIUM PLAN READY",
-                    color = if (a.signal == "WAIT") Amber else Blue,
-                    fontWeight = FontWeight.ExtraBold
-                )
+                val d = a.tradeDecision
+                val heroText = when {
+                    d.direction == "WAIT" -> "WATCHING"
+                    d.setupAllowed -> "SETUP PASSED"
+                    d.status == "REJECTED_CONFLICT" -> "FILTERED"
+                    else -> "CONFIRMING"
+                }
+                val heroColor = when {
+                    d.direction == "WAIT" -> Amber
+                    d.setupAllowed -> Green
+                    d.status == "REJECTED_CONFLICT" -> Red
+                    else -> Blue
+                }
+                Text(heroText, color = heroColor, fontWeight = FontWeight.ExtraBold)
             }
         }
     }
@@ -928,7 +1067,7 @@ fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                 Column {
                     Text(a.signal, color = color, fontSize = 54.sp, fontWeight = FontWeight.Black)
-                    Text(if (a.signal == "WAIT") "No trade confirmation" else if (a.signal == "CE") "Bullish confirmation" else "Bearish confirmation", color = Muted)
+                    Text(if (a.signal == "WAIT") "Market bias only • no trade call" else if (a.signal == "CE") "Bullish market bias • not yet a trade call" else "Bearish market bias • not yet a trade call", color = Muted)
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text("INDEX LTP", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -944,7 +1083,10 @@ fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
             a.suggestedContract?.let {
                 Surface(color = color.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, color.copy(alpha = 0.25f))) {
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(it.tradingSymbol ?: "Suggested contract", color = Ink, fontWeight = FontWeight.Bold)
+                        Column {
+                            Text("CANDIDATE STRIKE • NOT A CALL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                            Text(it.tradingSymbol ?: "Candidate contract", color = Ink, fontWeight = FontWeight.Bold)
+                        }
                         Text("LTP ${n(it.ltp)}", color = color, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -1677,7 +1819,7 @@ fun OptionCard(a: AnalysisResponse) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text("Option intelligence", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Near ATM open interest", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Market evidence only • CE and PE OI are not trade calls", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text("EXPIRY", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
