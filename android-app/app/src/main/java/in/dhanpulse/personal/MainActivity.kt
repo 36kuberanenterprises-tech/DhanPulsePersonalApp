@@ -229,7 +229,11 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
-                        StatusPill("LIVE", Green)
+                        val status = vm.analysis?.tradeDecision?.status
+                        StatusPill(
+                            if (status == "MARKET_CLOSED") "CLOSED" else if (vm.refreshWarning != null || vm.analysis == null) "DELAYED" else "LIVE",
+                            if (vm.refreshWarning != null || vm.analysis == null) Amber else Green
+                        )
                     }
                     Text(vm.profile?.name ?: "Angel One connected", color = Muted, fontSize = 10.sp)
                     Text("v${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 9.sp)
@@ -335,7 +339,7 @@ private fun MarketSection(vm: DhanPulseViewModel) {
     ) {
         item { TradingContextBar(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
-        vm.refreshWarning?.let { item { InfoStrip("Live refresh delayed", it) } }
+        vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
         if (vm.loading && a == null) item { LoadingMarketCard() }
         if (a != null) {
             item { SignalCard(a, vm::fetchAnalysis) }
@@ -355,6 +359,8 @@ private fun TradeSection(vm: DhanPulseViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { TradingContextBar(vm) }
+        vm.error?.let { item { ErrorStrip(it) } }
+        vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
         if (a != null) {
             item { TradeDeskHero(a, vm) }
             item { DecisionPipelineCard(a, vm) }
@@ -377,6 +383,8 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
         p.callId != null && p.stage == "ENTRY_ACTIVE" -> "ENTRY ACTIVE"
         p.callId != null && p.stage.startsWith("TARGET_") -> p.stage.replace("_", " ")
         p.callId != null && p.stage == "STOP_LOSS_HIT" -> "STOP LOSS HIT"
+        d.status == "MARKET_CLOSED" -> "MARKET CLOSED"
+        d.status == "DATA_STALE" -> "DATA DELAYED"
         d.direction == "WAIT" -> "WATCHING"
         !d.setupAllowed && d.status == "REJECTED_CONFLICT" -> "REJECTED • CONFLICT"
         !d.setupAllowed -> "SETUP FORMING"
@@ -1818,6 +1826,10 @@ fun MarketCard(a: AnalysisResponse) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Market structure", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
             Text("Price trend and momentum", color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (a.dataFresh == false) {
+                Text("Index quote time: ${m.feedTime ?: "Not supplied by broker"}", color = Amber, fontSize = 10.sp)
+                m.lastCandleTime?.let { Text("Last candle: $it", color = Muted, fontSize = 10.sp) }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricTile("LTP", n(m.ltp), Modifier.weight(1f))
                 MetricTile("FUT AVG", n(m.vwap), Modifier.weight(1f))
@@ -1851,7 +1863,7 @@ fun OptionCard(a: AnalysisResponse) {
             Text("Option intelligence", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
             Text("Market evidence only • CE and PE OI are not trade calls", color = Muted, style = MaterialTheme.typography.bodySmall)
             Text("EXPIRY  ${o.expiry ?: "NA"}", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Text("PCR uses fresh paired CE and PE quotes near ATM. Support and resistance use the highest OI strikes in the displayed window.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            Text(if (a.dataFresh == false) "Last reported option quotes for reference only. No live OI vote or new calls." else "PCR uses fresh paired CE and PE quotes near ATM. Support and resistance use the highest OI strikes in the displayed window.", color = Muted, style = MaterialTheme.typography.labelSmall)
             o.pcrCoverage?.let { Text("PCR coverage: $it", color = Muted, fontSize = 10.sp) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LevelTile("SUPPORT", n(o.support), Green, Modifier.weight(1f))

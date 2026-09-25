@@ -18,6 +18,15 @@ const marketOpenFor = now => {
   return new Date(utc);
 };
 
+export function marketDataState(now, feedAgeMs, hasQuote = true) {
+  const p = istParts(now);
+  const weekday = new Date(now.getTime() + IST_OFFSET_MS).getUTCDay();
+  const minutes = p.h * 60 + p.min;
+  const inSession = weekday >= 1 && weekday <= 5 && minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 30;
+  if (!inSession) return 'MARKET_CLOSED';
+  return hasQuote && feedAgeMs != null && feedAgeMs >= -30_000 && feedAgeMs <= 90_000 ? 'LIVE' : 'DATA_STALE';
+}
+
 const INTERVAL_MINUTES = {
   ONE_MINUTE: 1,
   THREE_MINUTE: 3,
@@ -91,13 +100,13 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key) 
   throw lastError || new Error('Unable to load market history');
 }
 
-async function liveCandles(session, exchange, token, interval, livePrice, now) {
+async function liveCandles(session, exchange, token, interval, livePrice, now, appendLive = true) {
   const key = [exchange, token, interval].join('|');
   const mins = INTERVAL_MINUTES[interval] || 5;
   let state = liveCandleCache.get(key);
 
   const staleGap = state?.lastLiveAt ? Date.now() - state.lastLiveAt : Number.MAX_SAFE_INTEGER;
-  const mustReload = !state || state.candles.length < 35 || staleGap > Math.max(120_000, mins * 2 * 60_000);
+  const mustReload = !state || state.candles.length < 35 || (appendLive && staleGap > Math.max(120_000, mins * 2 * 60_000));
 
   if (mustReload) {
     let lock = candleLoadLocks.get(key);
@@ -116,7 +125,7 @@ async function liveCandles(session, exchange, token, interval, livePrice, now) {
   const last = candles[candles.length - 1];
   const lastMs = last ? new Date(last.timestamp).getTime() : 0;
 
-  if (price > 0) {
+  if (appendLive && price > 0) {
     if (last && Math.abs(lastMs - bucketMs) < 60_000) {
       last.high = Math.max(Number(last.high), price);
       last.low = Math.min(Number(last.low), price);
@@ -134,7 +143,7 @@ async function liveCandles(session, exchange, token, interval, livePrice, now) {
   }
 
   state.candles = candles.slice(-1200);
-  state.lastLiveAt = Date.now();
+  if (appendLive) state.lastLiveAt = Date.now();
   liveCandleCache.set(key, state);
 
   if (state.candles.length < 35) {
@@ -400,14 +409,12 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   let byTokenQuote = new Map(fetchedQuotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
   const uq = byTokenQuote.get(String(underlying.token)) || {};
   let spot = quoteLtp(uq);
-  if (!Number.isFinite(spot) || spot <= 0) throw new Error(`Live ${symbol} index quote is unavailable. No new calls can be evaluated.`);
-
   const now = new Date();
   const indexFeedAge = quoteFeedAgeMs(uq, now.getTime());
-  if (indexFeedAge == null || indexFeedAge < -30_000 || indexFeedAge > 90_000) {
-    throw new Error(`Live ${symbol} index feed time is missing or delayed. No new calls can be evaluated.`);
-  }
-  const candles = await liveCandles(session, uExchange, String(underlying.token), interval, spot, now);
+  const marketStatus = marketDataState(now, indexFeedAge, Number.isFinite(spot) && spot > 0);
+  const candles = await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE');
+  if (!Number.isFinite(spot) || spot <= 0) spot = Number(candles[candles.length - 1]?.close);
+  if (!Number.isFinite(spot) || spot <= 0) throw new Error(`${symbol} index quote and historical close are unavailable.`);
   const closes = candles.map(c => c.close);
 
   const e9 = ema(closes, 9), e15 = ema(closes, 15), rv = rsi(closes, 14), mv = macd(closes), st = supertrend(candles, 10, 3), a = atr(candles, 14);
@@ -420,10 +427,11 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     const avgPrice = Number(fq.avgPrice ?? fq.averagePrice ?? 0);
     const fp = quoteLtp(fq);
     const futureAge = quoteFeedAgeMs(fq, now.getTime());
-    if (Number.isFinite(avgPrice) && avgPrice > 0 && Number.isFinite(fp) && fp > 0 && futureAge != null && futureAge >= -30_000 && futureAge <= 90_000) {
+    if (Number.isFinite(avgPrice) && avgPrice > 0 && Number.isFinite(fp) && fp > 0 &&
+        (marketStatus !== 'LIVE' || (futureAge != null && futureAge >= -30_000 && futureAge <= 90_000))) {
       vw = avgPrice;
       futuresPrice = fp;
-      vwapSource = `Broker traded average: ${future.symbol || future.name} (futures price ${round(fp)})`;
+      vwapSource = `${marketStatus === 'LIVE' ? 'Broker traded average' : 'Last reported futures average'}: ${future.symbol || future.name} (futures price ${round(fp)})`;
     } else if (Object.keys(fq).length) {
       vwapSource = `Broker has no fresh traded average for ${future.symbol || future.name}`;
     }
@@ -456,8 +464,8 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       const sym = String(c.symbol || '');
       const optionType = /PE$/i.test(sym) ? 'PE' : /CE$/i.test(sym) ? 'CE' : (String(c.instrumenttype).toUpperCase().includes('PE') ? 'PE' : 'CE');
       const age = quoteFeedAgeMs(z, now.getTime());
-      const fresh = age != null && age >= -30_000 && age <= 90_000;
-      return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType, ltp: fresh ? round(quoteLtp(z)) : null, oi: fresh ? quoteOi(z) : 0, lotSize: Number(c.lotsize || 0) };
+      const usable = marketStatus !== 'LIVE' || (age != null && age >= -30_000 && age <= 90_000);
+      return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType, ltp: usable ? round(quoteLtp(z)) : null, oi: usable ? quoteOi(z) : 0, lotSize: Number(c.lotsize || 0) };
     }).sort((a,b) => a.strike - b.strike || a.optionType.localeCompare(b.optionType));
   }
   // Calculate PCR from matched, freshly quoted CE/PE pairs near ATM. Missing
@@ -481,9 +489,16 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
     exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
   } : null;
-  const tradeDecision = buildTradeDecision({
+  const computedDecision = buildTradeDecision({
     engine, trend, htf, oi, regime, sr, spot, atrValue: a, selected: selection
   });
+  const tradeDecision = marketStatus === 'LIVE' ? computedDecision : {
+    ...computedDecision,
+    direction: 'WAIT', setupAllowed: false, status: marketStatus, conflicts: [],
+    message: marketStatus === 'MARKET_CLOSED'
+      ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
+      : 'Index quote feed time is missing or delayed. Showing last available prices. New calls are paused.'
+  };
 
   const levels = a ? {
     underlyingEntry: round(spot),
@@ -495,13 +510,13 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
 
   return {
     symbol, timestamp: new Date().toISOString(), timeframe: interval,
-    signal: engine.signal, dataFresh: true,
+    signal: marketStatus === 'LIVE' ? engine.signal : 'WAIT', dataFresh: marketStatus === 'LIVE',
     ruleScore: { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
-    market: { ltp: round(spot), ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
+    market: { ltp: round(spot), feedTime: uq.exchFeedTime || null, lastCandleTime: candles[candles.length - 1]?.timestamp || null, ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
     optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), pcrCoverage: coverage, totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
-    suggestedContract: suggested, trackedContract,
+    suggestedContract: marketStatus === 'LIVE' ? suggested : null, trackedContract,
     tradeDecision,
-    levels,
+    levels: marketStatus === 'LIVE' ? levels : null,
     rules: engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',

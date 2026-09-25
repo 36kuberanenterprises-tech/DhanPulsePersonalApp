@@ -197,12 +197,19 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val result = client().analysis(s, selectedSymbol, selectedTimeframe, trackedToken)
                 analysis = result
                 error = null
-                refreshWarning = if (result.dataFresh == false) "Broker refresh failed. Showing an older snapshot; calls and Auto Trade are paused." else null
+                refreshWarning = when {
+                    result.tradeDecision.status == "MARKET_CLOSED" -> "Market closed. Showing the last available broker prices. New calls and Auto Trade are paused until fresh session data returns."
+                    result.dataFresh == false -> "Index feed is delayed or its time is unavailable. Showing the last available prices; new calls and Auto Trade are paused."
+                    else -> null
+                }
                 if (result.dataFresh != false) {
                     updateSignalTracker(result)
                     updatePremiumDecision(result)
                     if (autoTradeEnabled) evaluateAutoTrade(result)
-                } else if (autoTradeEnabled) autoStatus = "Auto Trade paused until a fresh broker quote is available."
+                } else {
+                    premiumTradePlan = PremiumTradePlan(signal = "WAIT", status = "WAIT", stage = result.tradeDecision.status, decisionNote = refreshWarning)
+                    if (autoTradeEnabled) autoStatus = "Auto Trade paused until a fresh broker quote is available."
+                }
             } catch (e: Exception) {
                 if (e is HttpException && e.code() == 401) {
                     logout("Broker session expired. Please login again.")
@@ -212,6 +219,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     analysis = analysis?.let { old ->
                         old.copy(
                             dataFresh = false,
+                            signal = "WAIT",
+                            suggestedContract = null,
+                            levels = null,
                             tradeDecision = old.tradeDecision.copy(
                                 setupAllowed = false,
                                 status = "DATA_STALE",
@@ -219,6 +229,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                             )
                         )
                     }
+                    premiumTradePlan = PremiumTradePlan(signal = "WAIT", status = "WAIT", stage = "DATA_STALE", decisionNote = refreshWarning)
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until live analysis refresh succeeds."
                 } else {
                     val msg = friendlyError(e, "Analysis failed")
@@ -836,7 +847,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         refreshJob = viewModelScope.launch {
             var tick = 0
             while (isActive && sessionId != null) {
-                delay(3_000)
+                val indiaTime = Instant.now().atZone(indiaZone)
+                val day = indiaTime.dayOfWeek.value
+                val time = indiaTime.toLocalTime()
+                val marketOpen = day in 1..5 && !time.isBefore(LocalTime.of(9, 15)) && time.isBefore(LocalTime.of(15, 30))
+                delay(if (marketOpen) 3_000 else 60_000)
                 fetchAnalysis()
                 tick++
                 if (tick % 5 == 0) fetchAccount()

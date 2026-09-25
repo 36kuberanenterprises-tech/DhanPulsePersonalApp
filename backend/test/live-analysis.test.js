@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveNearestFuture, resolveOptionWindow, quoteFeedAgeMs } from '../src/angel.js';
-import { signalEngine, nearAtmOi } from '../src/analysis.js';
+import { signalEngine, nearAtmOi, marketDataState } from '../src/analysis.js';
 
 const expiryRows = [
   { token: '100', name: 'NIFTY', symbol: 'NIFTY24SEP26FUT', exch_seg: 'NFO', instrumenttype: 'FUTIDX', expiry: '24SEP2026' },
@@ -25,6 +25,17 @@ test('broker feed time is read as India time, not UTC', () => {
   const now = Date.parse('2026-09-25T04:30:45Z');
   assert.equal(quoteFeedAgeMs({ exchFeedTime: '25-Sep-2026 10:00:05' }, now), 40_000);
   assert.equal(quoteFeedAgeMs({}, now), null);
+});
+
+test('an old quote after trading hours is a closed market snapshot, not a live call', () => {
+  const now = new Date('2026-09-25T12:40:00Z'); // 18:10 IST
+  assert.equal(marketDataState(now, 2 * 60 * 60 * 1000), 'MARKET_CLOSED');
+  assert.equal(marketDataState(now, null, false), 'MARKET_CLOSED');
+  assert.equal(marketDataState(new Date('2026-09-26T04:30:00Z'), 0), 'MARKET_CLOSED');
+  const tradingHour = new Date('2026-09-25T04:30:00Z');
+  assert.equal(marketDataState(tradingHour, 40_000), 'LIVE');
+  assert.equal(marketDataState(tradingHour, 120_000), 'DATA_STALE');
+  assert.equal(marketDataState(tradingHour, null), 'DATA_STALE');
 });
 
 test('futures rule compares the futures price against its own traded average', () => {

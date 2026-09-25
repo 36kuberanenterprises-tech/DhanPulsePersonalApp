@@ -165,7 +165,7 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval + '|' + trackedToken;
 
   const recent = analysisCache.get(key);
-  if (recent && Date.now() - recent.at < LIVE_ANALYSIS_MIN_MS) {
+  if (recent && Date.now() - recent.at < (recent.value.dataFresh === false ? 60_000 : LIVE_ANALYSIS_MIN_MS)) {
     return res.json(recent.value);
   }
 
@@ -180,6 +180,9 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
       const value = {
         ...cached.value,
         dataFresh: false,
+        signal: 'WAIT',
+        suggestedContract: null,
+        levels: null,
         tradeDecision: {
           ...cached.value.tradeDecision,
           setupAllowed: false,
