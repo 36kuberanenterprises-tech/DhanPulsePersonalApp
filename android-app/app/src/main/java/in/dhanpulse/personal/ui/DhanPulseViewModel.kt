@@ -127,8 +127,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 analysis = result
                 error = null
                 refreshWarning = null
-                updatePremiumDecision(result)
                 updateSignalTracker(result)
+                updatePremiumDecision(result)
                 if (autoTradeEnabled) evaluateAutoTrade(result)
             } catch (e: Exception) {
                 if (e is HttpException && e.code() == 401) {
@@ -194,6 +194,16 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private fun updatePremiumDecision(a: AnalysisResponse) {
         val tracked = activeTrackedCall(a)
         if (tracked != null) {
+            val stage = when (tracked.status) {
+                "WAITING_ENTRY" -> "WAITING_ENTRY"
+                "ENTERED" -> "ENTRY_ACTIVE"
+                "T1_HIT" -> "TARGET_1_HIT"
+                "T2_HIT" -> "TARGET_2_HIT"
+                "T3_HIT" -> "TARGET_3_HIT"
+                "SL_HIT" -> "STOP_LOSS_HIT"
+                "CANCELLED" -> "CANCELLED"
+                else -> tracked.status
+            }
             premiumTradePlan = PremiumTradePlan(
                 signal = tracked.side,
                 contract = a.optionChain.contracts.firstOrNull { it.token == tracked.token } ?: a.suggestedContract,
@@ -204,23 +214,55 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 target2 = tracked.target2,
                 target3 = tracked.target3,
                 status = tracked.status,
+                stage = stage,
+                confirmationCount = 2,
+                confirmationRequired = 2,
+                decisionNote = "Recorded call is locked. Live premium is being tracked against the original levels.",
                 callId = tracked.id
             )
             return
         }
 
+        val decision = a.tradeDecision
         val contract = a.suggestedContract
         val premium = contract?.ltp
-        if (a.signal !in setOf("CE", "PE") || contract == null || premium == null || premium <= 0) {
-            premiumTradePlan = PremiumTradePlan(signal = "WAIT", contract = contract, status = "WAIT")
+
+        if (decision.direction !in setOf("CE", "PE") || contract == null || premium == null || premium <= 0) {
+            premiumTradePlan = PremiumTradePlan(
+                signal = "WAIT",
+                contract = contract,
+                status = "WAIT",
+                stage = "WATCHING",
+                confirmationCount = 0,
+                confirmationRequired = 2,
+                decisionNote = decision.message.ifBlank { "Waiting for a directional setup." }
+            )
+            return
+        }
+
+        if (!decision.setupAllowed) {
+            premiumTradePlan = PremiumTradePlan(
+                signal = decision.direction,
+                contract = contract,
+                referencePremium = tick(premium),
+                status = "FILTERED",
+                stage = decision.status,
+                confirmationCount = 0,
+                confirmationRequired = 2,
+                decisionNote = decision.message
+            )
             return
         }
 
         val lv = premiumLevels(premium, a.timeframe ?: selectedTimeframe)
         premiumTradePlan = lv.copy(
-            signal = a.signal,
+            signal = decision.direction,
             contract = contract,
-            status = "BUY_ABOVE"
+            status = "BUY_ABOVE",
+            stage = if (callPendingCount <= 0) "SETUP_FORMING" else "CONFIRMING",
+            confirmationCount = callPendingCount.coerceAtMost(2),
+            confirmationRequired = 2,
+            decisionNote = "Meta decision passed. Confirming the same direction and strike on two live scans before the call is recorded."
         )
     }
 
@@ -240,7 +282,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             if (call.entryHitAt == null) {
-                val sameSetup = a.signal == call.side &&
+                val sameSetup = a.tradeDecision.setupAllowed &&
+                    a.tradeDecision.direction == call.side &&
                     a.suggestedContract?.token == call.token
                 if (!sameSetup) {
                     val misses = (pendingCancelCounts[call.id] ?: 0) + 1
@@ -291,7 +334,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             refreshSignalStats()
         }
 
-        if (a.signal == "WAIT") {
+        val decision = a.tradeDecision
+        if (!decision.setupAllowed || decision.direction !in setOf("CE", "PE")) {
             blockedCallBias = null
             callPendingKey = null
             callPendingCount = 0
@@ -300,10 +344,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
         val contract = a.suggestedContract ?: return
         val premium = contract.ltp ?: return
-        if (a.signal !in setOf("CE", "PE") || premium <= 0) return
+        if (premium <= 0) return
         if (activeTrackedCall(a) != null) return
 
-        val biasKey = a.symbol + "|" + (a.timeframe ?: selectedTimeframe) + "|" + a.signal
+        val biasKey = a.symbol + "|" + (a.timeframe ?: selectedTimeframe) + "|" + decision.direction
         if (blockedCallBias == biasKey) return
 
         val confirmKey = biasKey + "|" + (contract.token ?: contract.tradingSymbol ?: "")
@@ -326,7 +370,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             id = "CALL-" + now.toString(),
             symbol = a.symbol,
             timeframe = a.timeframe ?: selectedTimeframe,
-            side = a.signal,
+            side = decision.direction,
             token = token,
             tradingSymbol = symbol,
             strike = contract.strike,
@@ -359,6 +403,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             target2 = call.target2,
             target3 = call.target3,
             status = call.status,
+            stage = "WAITING_ENTRY",
+            confirmationCount = 2,
+            confirmationRequired = 2,
+            decisionNote = "Confirmed call recorded. Waiting for the option premium to cross the fixed Buy Above level.",
             callId = call.id
         )
     }
