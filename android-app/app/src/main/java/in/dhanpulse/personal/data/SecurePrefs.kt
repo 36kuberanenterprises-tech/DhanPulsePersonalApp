@@ -22,5 +22,26 @@ class SecurePrefs(context: Context) {
         get() = prefs.getString("apiKey", "") ?: ""
         set(v) = prefs.edit().putString("apiKey", v).apply()
 
+    var sessionId: String?
+        get() = prefs.getString("sessionId", null)
+        set(v) = prefs.edit().putString("sessionId", v).apply()
+    var sessionExpiry: Long
+        get() = prefs.getLong("sessionExpiry", 0L)
+        set(v) = prefs.edit().putLong("sessionExpiry", v).apply()
+    var lastUserActivity: Long
+        get() = prefs.getLong("lastUserActivity", 0L)
+        set(v) = prefs.edit().putLong("lastUserActivity", v).apply()
+    var profileName: String?
+        get() = prefs.getString("profileName", null)
+        set(v) = prefs.edit().putString("profileName", v).apply()
+    var profileCode: String?
+        get() = prefs.getString("profileCode", null)
+        set(v) = prefs.edit().putString("profileCode", v).apply()
+
+    fun clearSession() {
+        prefs.edit().remove("sessionId").remove("sessionExpiry").remove("lastUserActivity")
+            .remove("profileName").remove("profileCode").apply()
+    }
+
     fun clear() = prefs.edit().clear().apply()
 }
