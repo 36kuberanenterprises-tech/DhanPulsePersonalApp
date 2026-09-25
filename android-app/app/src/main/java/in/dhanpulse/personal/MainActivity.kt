@@ -104,7 +104,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("DhanPulse", color = Ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(8.dp))
-                        StatusPill("LIVE", Green)
+                        StatusPill(if (vm.refreshWarning == null) "LIVE" else "DELAYED", if (vm.refreshWarning == null) Green else Amber)
                     }
                     Text("Trading & Investment", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
@@ -689,11 +689,11 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Line)) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("Call Performance", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                     Text("All generated premium calls stored on this phone", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                StatusPill("${s.generated} CALLS", Blue)
+                Text("${s.generated} calls", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1064,16 +1064,14 @@ fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
                     Text("Refresh", color = Ink, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontWeight = FontWeight.Bold)
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                Column {
-                    Text(a.signal, color = color, fontSize = 54.sp, fontWeight = FontWeight.Black)
-                    Text(if (a.signal == "WAIT") "Market bias only • no trade call" else if (a.signal == "CE") "Bullish market bias • not yet a trade call" else "Bearish market bias • not yet a trade call", color = Muted)
-                }
-                Column(horizontalAlignment = Alignment.End) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(a.signal, color = color, fontSize = 48.sp, fontWeight = FontWeight.Black)
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(1f)) {
                     Text("INDEX LTP", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    Text(n(a.market.ltp), color = Ink, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(n(a.market.ltp), color = Ink, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
                 }
             }
+            Text(if (a.signal == "WAIT") "Market bias only • no trade call" else if (a.signal == "CE") "Bullish market bias • not yet a trade call" else "Bearish market bias • not yet a trade call", color = Muted)
             HorizontalDivider(color = Line)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 ScoreMetric("BULL", a.ruleScore.bullish.toString(), Green)
@@ -1082,10 +1080,10 @@ fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
             }
             a.suggestedContract?.let {
                 Surface(color = color.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, color.copy(alpha = 0.25f))) {
-                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Column {
                             Text("CANDIDATE STRIKE • NOT A CALL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                            Text(it.tradingSymbol ?: "Candidate contract", color = Ink, fontWeight = FontWeight.Bold)
+                            Text(it.tradingSymbol ?: "Candidate contract", color = Ink, fontWeight = FontWeight.Bold, softWrap = true)
                         }
                         Text("LTP ${n(it.ltp)}", color = color, fontWeight = FontWeight.Bold)
                     }
@@ -1099,7 +1097,7 @@ fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
 fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     val levels = a.levels
     val contract = a.suggestedContract
-    val active = a.signal == "CE" || a.signal == "PE"
+    val active = a.tradeDecision.setupAllowed && a.tradeDecision.direction == a.signal && (a.signal == "CE" || a.signal == "PE")
     val actionColor = when (a.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
     var lots by remember(contract?.token) { mutableStateOf(1) }
     var pendingSide by remember { mutableStateOf<String?>(null) }
@@ -1148,7 +1146,7 @@ fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Surface(color = Amber.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.25f))) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
                         Text("WAIT", color = Amber, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
-                        Text("No fresh entry until the confirmation rules produce a CE or PE signal.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text(a.tradeDecision.message.ifBlank { "No fresh entry until the trade decision passes all checks." }, color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             } else {
@@ -1190,7 +1188,7 @@ fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { pendingSide = "BUY" },
-                        enabled = gatewayReady && !vm.orderBusy,
+                        enabled = gatewayReady && !vm.orderBusy && active,
                         modifier = Modifier.weight(1f).height(52.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Green, disabledContainerColor = Panel2),
                         shape = RoundedCornerShape(14.dp)
@@ -1451,7 +1449,7 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Backtest Lab", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Clarity v1.2 • research only • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Research model ${report?.version ?: "CLARITY_V1_2"} • separate from app version • no real orders", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill(if (vm.backtestBusy) "RUNNING" else "HISTORICAL", if (vm.backtestBusy) Amber else Blue)
             }
@@ -1816,16 +1814,10 @@ fun OptionCard(a: AnalysisResponse) {
     val o = a.optionChain
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Line)) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("Option intelligence", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Market evidence only • CE and PE OI are not trade calls", color = Muted, style = MaterialTheme.typography.bodySmall)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("EXPIRY", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    Text(o.expiry ?: "NA", color = Ink, fontWeight = FontWeight.Bold)
-                }
-            }
+            Text("Option intelligence", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+            Text("Market evidence only • CE and PE OI are not trade calls", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text("EXPIRY  ${o.expiry ?: "NA"}", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("OI and PCR cover nearby strikes only. Support and resistance use the highest OI strikes in this window.", color = Muted, style = MaterialTheme.typography.labelSmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LevelTile("SUPPORT", n(o.support), Green, Modifier.weight(1f))
                 LevelTile("ATM", n(o.atm), Blue, Modifier.weight(1f))
