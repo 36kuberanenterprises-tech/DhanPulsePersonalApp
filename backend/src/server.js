@@ -185,6 +185,7 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
         levels: null,
         tradeDecision: {
           ...cached.value.tradeDecision,
+          direction: 'WAIT',
           setupAllowed: false,
           status: 'DATA_STALE',
           message: 'Broker refresh failed. Calls are paused until fresh quotes arrive.'

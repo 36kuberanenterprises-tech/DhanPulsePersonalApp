@@ -987,7 +987,7 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text("Trader Desk", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                    Text("Signal, execution and risk • live scan every 3 sec", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(if (a.dataFresh == false) "Last reported market snapshot • new calls paused" else "Signal, execution and risk • live scan every 3 sec", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusPill(a.signal, c)
             }
@@ -995,6 +995,8 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 Text("Index ${n(a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
                 val d = a.tradeDecision
                 val heroText = when {
+                    d.status == "MARKET_CLOSED" -> "CLOSED"
+                    d.status == "DATA_STALE" -> "DELAYED"
                     d.direction == "WAIT" -> "WATCHING"
                     d.setupAllowed -> "SETUP PASSED"
                     d.status == "REJECTED_CONFLICT" -> "FILTERED"
