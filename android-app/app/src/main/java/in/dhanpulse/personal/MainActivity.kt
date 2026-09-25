@@ -13,6 +13,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +33,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
 import `in`.dhanpulse.personal.model.AnalysisResponse
 import `in`.dhanpulse.personal.model.AccountSummary
 import `in`.dhanpulse.personal.model.BacktestSlice
@@ -106,7 +114,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                         Spacer(Modifier.width(8.dp))
                         StatusPill(if (vm.refreshWarning == null) "LIVE" else "DELAYED", if (vm.refreshWarning == null) Green else Amber)
                     }
-                    Text("Trading & Investment", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Trading & Investment • v${BuildConfig.VERSION_NAME}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             Text("Angel One market intelligence", color = Muted, style = MaterialTheme.typography.bodyLarge)
@@ -151,7 +159,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                         else Text("Connect securely", fontWeight = FontWeight.Bold)
                     }
 
-                    Text("PIN and TOTP are used only for this login and are not saved on the phone.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    Text("PIN and TOTP are not saved. Your encrypted session stays available today while you use the app. One hour without use logs you out.", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -160,13 +168,33 @@ fun LoginScreen(vm: DhanPulseViewModel) {
 
 @Composable
 fun DashboardScreen(vm: DhanPulseViewModel) {
-    DisposableEffect(Unit) {
-        vm.startAutoRefresh()
-        onDispose { vm.stopAutoRefresh() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> vm.onAppForeground()
+                Lifecycle.Event.ON_STOP -> vm.onAppBackground()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); vm.onAppBackground() }
+    }
+    LaunchedEffect(vm.sessionId) {
+        while (vm.sessionId != null) {
+            delay(30_000)
+            vm.checkSessionTimeout()
+        }
     }
     var section by remember { mutableStateOf("MARKET") }
 
     Scaffold(
+        modifier = Modifier.pointerInput(vm) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                vm.markUserActive()
+            }
+        },
         containerColor = AppBg,
         bottomBar = { TraderBottomNav(section) { section = it } }
     ) { inner ->
@@ -204,6 +232,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                         StatusPill("LIVE", Green)
                     }
                     Text(vm.profile?.name ?: "Angel One connected", color = Muted, fontSize = 10.sp)
+                    Text("v${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 9.sp)
                 }
             }
             Surface(onClick = { vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
@@ -899,6 +928,8 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Trading controls", color = Ink, fontWeight = FontWeight.ExtraBold)
                     AccountSettingRow("Broker", "Angel One SmartAPI")
+                    AccountSettingRow("App version", BuildConfig.VERSION_NAME)
+                    AccountSettingRow("Login", "Until midnight IST; logout after 1 hour without use")
                     AccountSettingRow("Auto Trade", if (vm.autoTradeEnabled) "ON" else "OFF")
                     AccountSettingRow("Auto lots", vm.autoLots.toString())
                     AccountSettingRow("Account / P&L refresh", "Every 15 seconds")
@@ -911,7 +942,7 @@ private fun AccountSection(vm: DhanPulseViewModel) {
         }
         item {
             Button(
-                onClick = vm::logout,
+                onClick = { vm.logout() },
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Red.copy(alpha = 0.16f), contentColor = Red),
                 shape = RoundedCornerShape(14.dp)
