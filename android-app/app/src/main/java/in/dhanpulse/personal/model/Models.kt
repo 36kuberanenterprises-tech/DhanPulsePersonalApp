@@ -11,7 +11,29 @@ data class OptionContract(val token: String? = null, val tradingSymbol: String? 
 data class OptionChainSummary(val expiry: String? = null, val atm: Double? = null, val nearAtmPcr: Double? = null, val totalCeOi: Double? = null, val totalPeOi: Double? = null, val support: Double? = null, val resistance: Double? = null, val contracts: List<OptionContract> = emptyList())
 data class Levels(val underlyingEntry: Double? = null, val stop: Double? = null, val target1: Double? = null, val target2: Double? = null, val basis: String? = null)
 data class SignalRule(val name: String, val state: String, val detail: String? = null)
-data class AnalysisResponse(val symbol: String, val timestamp: String? = null, val timeframe: String? = null, val signal: String = "WAIT", val ruleScore: RuleScore = RuleScore(), val market: MarketMetrics = MarketMetrics(), val optionChain: OptionChainSummary = OptionChainSummary(), val suggestedContract: OptionContract? = null, val levels: Levels? = null, val rules: List<SignalRule> = emptyList(), val notes: List<String> = emptyList())
+data class StrategyVote(
+    val name: String = "",
+    val vote: String = "WAIT",
+    val detail: String? = null
+)
+
+data class TradeDecision(
+    val direction: String = "WAIT",
+    val status: String = "WATCHING",
+    val setupAllowed: Boolean = false,
+    val supportingVotes: Int = 0,
+    val totalVotes: Int = 0,
+    val alignmentPct: Double = 0.0,
+    val regime: String = "UNKNOWN",
+    val regimeSuitable: Boolean = false,
+    val strategyVotes: List<StrategyVote> = emptyList(),
+    val conflicts: List<String> = emptyList(),
+    val selectedContractReason: String? = null,
+    val selectedContractScore: Double? = null,
+    val message: String = ""
+)
+
+data class AnalysisResponse(val symbol: String, val timestamp: String? = null, val timeframe: String? = null, val signal: String = "WAIT", val ruleScore: RuleScore = RuleScore(), val market: MarketMetrics = MarketMetrics(), val optionChain: OptionChainSummary = OptionChainSummary(), val suggestedContract: OptionContract? = null, val tradeDecision: TradeDecision = TradeDecision(), val levels: Levels? = null, val rules: List<SignalRule> = emptyList(), val notes: List<String> = emptyList())
 data class ErrorResponse(val error: String? = null)
 
 data class PremiumTradePlan(
@@ -24,6 +46,10 @@ data class PremiumTradePlan(
     val target2: Double? = null,
     val target3: Double? = null,
     val status: String = "WAIT",
+    val stage: String = "WATCHING",
+    val confirmationCount: Int = 0,
+    val confirmationRequired: Int = 2,
+    val decisionNote: String? = null,
     val callId: String? = null
 )
 
