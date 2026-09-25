@@ -10,6 +10,9 @@ import retrofit2.http.*
 import java.util.concurrent.TimeUnit
 
 interface DhanPulseApi {
+    @GET("api/markets/mcx")
+    suspend fun mcxMarkets(@Header("X-Session-Id") sessionId: String): McxCatalog
+
     @POST("api/auth/login")
     suspend fun login(@Body request: LoginRequest): LoginResponse
 

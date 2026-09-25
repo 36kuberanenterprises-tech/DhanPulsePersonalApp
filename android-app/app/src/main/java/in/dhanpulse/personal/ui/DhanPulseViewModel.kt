@@ -32,6 +32,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var sessionId by mutableStateOf<String?>(null)
     var profile by mutableStateOf<UserProfile?>(null)
     var selectedSymbol by mutableStateOf("NIFTY")
+    var selectedMarket by mutableStateOf("EQUITY")
+        private set
+    var mcxIndices by mutableStateOf<List<McxIndexInfo>>(emptyList())
+        private set
+    var mcxCatalogError by mutableStateOf<String?>(null)
+        private set
+    private var lastEquitySymbol = "NIFTY"
+    private var lastMcxSymbol = "MCXBULLDEX"
     var selectedTimeframe by mutableStateOf("FIVE_MINUTE")
     var analysis by mutableStateOf<AnalysisResponse?>(null)
     var account by mutableStateOf<AccountSummary?>(null)
@@ -51,6 +59,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var signalStats by mutableStateOf(SignalStats())
         private set
+    val visibleCalls: List<SignalCall>
+        get() = signalHistory.filter { (it.exchange.equals("MCX", true)) == (selectedMarket == "MCX") }
+    val visibleStats: SignalStats
+        get() = statsFor(visibleCalls)
 
     var backtestYears by mutableStateOf(3)
         private set
@@ -135,6 +147,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         if (!checkSessionTimeout()) {
             markUserActive()
             startAutoRefresh()
+            if (selectedMarket == "MCX") fetchMcxCatalog()
             fetchAnalysis()
             fetchAccount()
         }
@@ -186,19 +199,27 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun fetchAnalysis() {
         val s = sessionId ?: return
         if (analysisRefreshInFlight) return
+        val requestedSymbol = selectedSymbol
+        val requestedTimeframe = selectedTimeframe
         analysisRefreshInFlight = true
         loading = analysis == null
         viewModelScope.launch {
             try {
                 val trackedToken = signalHistory.firstOrNull {
-                    it.symbol == selectedSymbol && it.timeframe == selectedTimeframe &&
+                    it.symbol == requestedSymbol && it.timeframe == requestedTimeframe &&
                         it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED")
                 }?.token
-                val result = client().analysis(s, selectedSymbol, selectedTimeframe, trackedToken)
+                val result = client().analysis(s, requestedSymbol, requestedTimeframe, trackedToken)
+                if (requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
+                    analysisRefreshInFlight = false
+                    fetchAnalysis()
+                    return@launch
+                }
                 analysis = result
                 error = null
                 refreshWarning = when {
                     result.tradeDecision.status == "MARKET_CLOSED" -> "Market closed. Showing the last available broker prices. New calls and Auto Trade are paused until fresh session data returns."
+                    result.tradeDecision.status == "HISTORY_UNAVAILABLE" -> "Broker index quote is visible, but historical candles are unavailable. Calls are paused until history loads."
                     result.dataFresh == false -> "Index feed is delayed or its time is unavailable. Showing the last available prices; new calls and Auto Trade are paused."
                     else -> null
                 }
@@ -262,17 +283,26 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
-    fun canBuyContract(contract: OptionContract?): Boolean {
+    fun canBuyContract(contract: OptionContract?, lots: Int = 1): Boolean {
         val a = analysis ?: return false
-        if (contract?.token.isNullOrBlank() || refreshWarning != null || !freshForQuotes(a)) return false
-        return a.optionChain.contracts.any { it.token == contract?.token && (it.ltp ?: 0.0) > 0.0 }
+        val c = contract ?: return false
+        if (a.symbol != selectedSymbol || c.token.isNullOrBlank() || refreshWarning != null || !freshForQuotes(a)) return false
+        if (a.segment == "MCX") {
+            if (c.exchange != "MCX" || !freshForNewCall(a) || a.tradeDecision.status == "NO_OPTIONS") return false
+            val indiaNow = Instant.now().atZone(indiaZone)
+            val expiryToday = indiaNow.format(java.time.format.DateTimeFormatter.ofPattern("ddMMMyyyy", java.util.Locale.ENGLISH)).uppercase()
+            if (a.optionChain.expiry?.uppercase() == expiryToday && !indiaNow.toLocalTime().isBefore(LocalTime.of(16, 30))) return false
+            val premiumCost = (c.ltp ?: return false) * (c.lotSize ?: return false) * lots
+            if (premiumCost <= 0 || (account?.availableCash ?: return false) < premiumCost) return false
+        }
+        return a.optionChain.contracts.any { it.token == c.token && (it.ltp ?: 0.0) > 0.0 }
     }
 
     private fun freshForNewCall(a: AnalysisResponse): Boolean {
         if (!freshForQuotes(a)) return false
         val timestamp = Instant.parse(a.timestamp ?: return false)
         val time = timestamp.atZone(ZoneId.of("Asia/Kolkata")).toLocalTime()
-        return !time.isBefore(LocalTime.of(9, 30)) && time.isBefore(LocalTime.of(15, 30))
+        return !time.isBefore(LocalTime.of(9, 30)) && time.isBefore(if (a.segment == "MCX") LocalTime.of(23, 15) else LocalTime.of(15, 30))
     }
 
     private fun premiumLevels(reference: Double, timeframe: String): PremiumTradePlan {
@@ -359,7 +389,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 stage = decision.status,
                 confirmationCount = 0,
                 confirmationRequired = 2,
-                decisionNote = if (freshForNewCall(a)) decision.message else "New calls require fresh market data between 09:30 and 15:30 IST."
+                decisionNote = if (freshForNewCall(a)) decision.message else "New calls require fresh market data between 09:30 and ${if (a.segment == "MCX") "23:15" else "15:30"} IST."
             )
             return
         }
@@ -543,8 +573,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun refreshSignalStats() {
-        val h = signalHistory
-        signalStats = SignalStats(
+        signalStats = statsFor(signalHistory)
+    }
+
+    private fun statsFor(h: List<SignalCall>): SignalStats = SignalStats(
             generated = h.size,
             entered = h.count { it.entryHitAt != null },
             target1Hits = h.count { it.t1HitAt != null },
@@ -555,7 +587,6 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             open = h.count { it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED") },
             unresolved = h.count { it.status == "UNRESOLVED" }
         )
-    }
 
     fun fetchAccount() {
         val s = sessionId ?: return
@@ -599,6 +630,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runBacktest() {
         val s = sessionId ?: return
+        if (selectedMarket == "MCX") {
+            backtestError = "MCX option buying has not passed a historical backtest in this app. Research is currently available for the equity indices only."
+            return
+        }
         if (autoTradeEnabled) {
             backtestError = "Switch Auto Trade OFF before running a historical backtest. This avoids historical API traffic interfering with live automatic trading."
             return
@@ -633,6 +668,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             autoStatus = "Auto Trade is OFF. Existing positions are not changed."
             return
         }
+        if (selectedMarket == "MCX") {
+            autoTradeEnabled = false
+            autoStatus = "MCX Auto Trade is off until the new strategy has been tested with live broker data. Manual index option buys remain available after quote and order checks."
+            return
+        }
 
         val gateway = orderGateway
         if (gateway?.executionReady != true) {
@@ -657,7 +697,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun placeOrder(side: String, contract: OptionContract, lots: Int = 1) {
         val s = sessionId ?: return
-        if (side.equals("BUY", ignoreCase = true) && !canBuyContract(contract)) {
+        if (side.equals("BUY", ignoreCase = true) && !canBuyContract(contract, lots)) {
             orderMessage = "Manual BUY paused. Refresh the market and wait for a current option premium."
             return
         }
@@ -811,6 +851,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             autoStatus = "Auto Trade switched OFF because timeframe changed. Re-arm Auto Trade after checking the new setup."
         }
         analysis = null
+        premiumTradePlan = PremiumTradePlan()
+        refreshWarning = null
+        error = null
         backtestReport = null
         backtestError = null
         pendingSignalKey = null
@@ -828,18 +871,57 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectSymbol(symbol: String) {
+        if (selectedMarket == "MCX") {
+            if (symbol != "MCXBULLDEX" && mcxIndices.none { it.symbol == symbol }) return
+            lastMcxSymbol = symbol
+        } else {
+            if (symbol !in setOf("NIFTY", "BANKNIFTY", "SENSEX")) return
+            lastEquitySymbol = symbol
+        }
+        if (symbol == selectedSymbol) return
         selectedSymbol = symbol
         if (autoTradeEnabled) {
             autoTradeEnabled = false
             autoStatus = "Auto Trade switched OFF because symbol changed. Re-arm Auto Trade after checking the new setup."
         }
         analysis = null
+        premiumTradePlan = PremiumTradePlan()
+        refreshWarning = null
+        error = null
         backtestReport = null
         backtestError = null
         pendingSignalKey = null
         pendingSignalCount = 0
         if (autoTradeEnabled) autoStatus = "Auto Trade armed for " + symbol + ". Waiting for confirmation."
         fetchAnalysis()
+    }
+
+    fun showMarket(market: String) {
+        val next = if (market == "MCX") "MCX" else "EQUITY"
+        if (next == selectedMarket) return
+        if (autoTradeEnabled) {
+            autoTradeEnabled = false
+            autoStatus = "Auto Trade switched OFF because the market changed."
+        }
+        selectedMarket = next
+        selectSymbol(if (next == "MCX") lastMcxSymbol else lastEquitySymbol)
+        if (next == "MCX") fetchMcxCatalog()
+        startAutoRefresh()
+    }
+
+    fun fetchMcxCatalog() {
+        val s = sessionId ?: return
+        viewModelScope.launch {
+            try {
+                mcxIndices = client().mcxMarkets(s).indices
+                mcxCatalogError = if (mcxIndices.isEmpty()) "No MCX index instruments were returned by Angel One." else null
+                if (selectedMarket == "MCX" && mcxIndices.isNotEmpty() && mcxIndices.none { it.symbol == selectedSymbol }) {
+                    selectSymbol(mcxIndices.first().symbol)
+                }
+            } catch (e: Exception) {
+                mcxCatalogError = friendlyError(e, "MCX index list unavailable")
+            }
+        }
     }
 
     fun startAutoRefresh() {
@@ -850,7 +932,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val indiaTime = Instant.now().atZone(indiaZone)
                 val day = indiaTime.dayOfWeek.value
                 val time = indiaTime.toLocalTime()
-                val marketOpen = day in 1..5 && !time.isBefore(LocalTime.of(9, 15)) && time.isBefore(LocalTime.of(15, 30))
+                val marketOpen = day in 1..5 && !time.isBefore(if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)) &&
+                    time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
                 delay(if (marketOpen) 3_000 else 60_000)
                 fetchAnalysis()
                 tick++

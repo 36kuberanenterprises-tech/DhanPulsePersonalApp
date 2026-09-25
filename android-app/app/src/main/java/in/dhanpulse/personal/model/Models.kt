@@ -5,6 +5,8 @@ data class UserProfile(val clientcode: String? = null, val name: String? = null)
 data class LoginResponse(val sessionId: String, val expiresAt: String? = null, val profile: UserProfile? = null)
 
 data class RuleScore(val bullish: Int = 0, val bearish: Int = 0, val considered: Int = 0)
+data class McxIndexInfo(val symbol: String = "", val optionContracts: Int = 0, val hasOptions: Boolean = false)
+data class McxCatalog(val indices: List<McxIndexInfo> = emptyList(), val source: String? = null, val updatedAt: String? = null)
 data class SupertrendValue(val direction: String? = null, val value: Double? = null)
 data class MarketMetrics(val ltp: Double? = null, val feedTime: String? = null, val lastCandleTime: String? = null, val ema9: Double? = null, val ema15: Double? = null, val vwap: Double? = null, val vwapSource: String? = null, val rsi: Double? = null, val macdHistogram: Double? = null, val supertrend: SupertrendValue? = null, val atr: Double? = null)
 data class OptionContract(val token: String? = null, val tradingSymbol: String? = null, val exchange: String? = null, val strike: Double? = null, val optionType: String? = null, val ltp: Double? = null, val oi: Double? = null, val lotSize: Int? = null)
@@ -33,7 +35,7 @@ data class TradeDecision(
     val message: String = ""
 )
 
-data class AnalysisResponse(val symbol: String, val timestamp: String? = null, val timeframe: String? = null, val signal: String = "WAIT", val dataFresh: Boolean? = null, val ruleScore: RuleScore = RuleScore(), val market: MarketMetrics = MarketMetrics(), val optionChain: OptionChainSummary = OptionChainSummary(), val suggestedContract: OptionContract? = null, val trackedContract: OptionContract? = null, val tradeDecision: TradeDecision = TradeDecision(), val levels: Levels? = null, val rules: List<SignalRule> = emptyList(), val notes: List<String> = emptyList())
+data class AnalysisResponse(val symbol: String, val segment: String = "EQUITY", val timestamp: String? = null, val timeframe: String? = null, val signal: String = "WAIT", val dataFresh: Boolean? = null, val ruleScore: RuleScore = RuleScore(), val market: MarketMetrics = MarketMetrics(), val optionChain: OptionChainSummary = OptionChainSummary(), val suggestedContract: OptionContract? = null, val trackedContract: OptionContract? = null, val tradeDecision: TradeDecision = TradeDecision(), val levels: Levels? = null, val rules: List<SignalRule> = emptyList(), val notes: List<String> = emptyList())
 data class ErrorResponse(val error: String? = null)
 
 data class PremiumTradePlan(

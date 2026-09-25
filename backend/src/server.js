@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
-import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster } from './angel.js';
+import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs } from './angel.js';
 import { analyse } from './analysis.js';
 import { runBacktest } from './backtest.js';
 
@@ -153,6 +153,15 @@ function requireSession(req, res, next) {
   if (Date.now() >= s.expiresAt) { sessions.delete(id); return res.status(401).json({ error: 'Session expired. Login again.' }); }
   req.smartSession = s; next();
 }
+
+app.get('/api/markets/mcx', requireSession, async (_req, res) => {
+  try {
+    const indices = mcxIndexCatalog(await instrumentMaster());
+    res.json({ indices, source: 'Angel One instrument master', updatedAt: new Date().toISOString() });
+  } catch (e) {
+    res.status(503).json({ error: e.message || 'MCX index list temporarily unavailable' });
+  }
+});
 
 app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   const interval = String(req.query.interval || 'FIVE_MINUTE').toUpperCase();
@@ -343,9 +352,36 @@ app.post('/api/order', requireSession, async (req, res) => {
     );
     if (!contract) return res.status(400).json({ error: 'Selected option contract is not valid in the instrument master', traceId });
 
+    if (exchange === 'MCX' && side === 'BUY') {
+      const supported = mcxIndexCatalog(rows).some(x => x.symbol === String(contract.name || '').toUpperCase() && x.hasOptions);
+      if (!supported) return res.status(400).json({ error: 'Only listed MCX index options are available for buying in this app.', traceId });
+      const entry = mcxOptionEntryWindow(contract);
+      if (!entry.allowed) return res.status(400).json({ error: entry.reason, traceId });
+    }
+
     const lotSize = Math.max(1, Math.floor(Number(contract.lotsize || 1)));
     const quantity = lotSize * lots;
 
+    if (exchange === 'MCX' && side === 'BUY') {
+      const underlying = rows.find(r => r.exch_seg === 'MCX' && r.instrumenttype === 'AMXIDX' &&
+        String(r.symbol || '').toUpperCase() === String(contract.name || '').toUpperCase());
+      const quotes = parseFetched(await marketData(req.smartSession, { MCX: [token, String(underlying.token)] }, 'FULL'));
+      const optionQuote = quotes.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === token);
+      const indexQuote = quotes.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === String(underlying.token));
+      const fresh = q => {
+        const age = quoteFeedAgeMs(q);
+        return age != null && age >= -30_000 && age <= 90_000 && quoteLtp(q) > 0;
+      };
+      if (!fresh(optionQuote) || !fresh(indexQuote)) {
+        return res.status(409).json({ error: 'MCX index or option quote is unavailable or delayed. Buy order paused.', traceId });
+      }
+      const funds = await rmsLimit(req.smartSession);
+      if (n(funds?.data?.availablecash) < quoteLtp(optionQuote) * quantity) {
+        return res.status(400).json({ error: 'Available cash is below the current premium cost for these lots.', traceId });
+      }
+    }
+
+    let positionProductType = null;
     if (side === 'SELL') {
       const pos = await positions(req.smartSession);
       const current = (Array.isArray(pos?.data) ? pos.data : []).find(p => String(p.symboltoken || p.token) === token);
@@ -354,6 +390,12 @@ app.post('/api/order', requireSession, async (req, res) => {
       const netQty = n(current?.netqty ?? current?.netquantity ?? (buyQty - sellQty));
       if (netQty <= 0) return res.status(400).json({ error: 'SELL is enabled only to exit an existing long option position. No long position found.', traceId });
       if (quantity > netQty) return res.status(400).json({ error: `Exit quantity ${quantity} is higher than current long quantity ${netQty}`, traceId });
+      if (exchange === 'MCX') {
+        positionProductType = String(current?.producttype || '').toUpperCase();
+        if (!['CARRYFORWARD', 'INTRADAY'].includes(positionProductType)) {
+          return res.status(400).json({ error: 'The MCX position product type is unavailable. Exit it through your broker.', traceId });
+        }
+      }
     }
 
     const orderPayload = {
@@ -363,7 +405,7 @@ app.post('/api/order', requireSession, async (req, res) => {
       transactiontype: side,
       exchange,
       ordertype: 'MARKET',
-      producttype: 'INTRADAY',
+      producttype: exchange === 'MCX' ? (positionProductType || 'CARRYFORWARD') : 'INTRADAY',
       duration: 'DAY',
       price: '0',
       squareoff: '0',

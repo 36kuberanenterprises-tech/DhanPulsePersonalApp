@@ -1,5 +1,5 @@
 import { ema, rsi, macd, supertrend, atr } from './indicators.js';
-import { instrumentMaster, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs } from './angel.js';
+import { instrumentMaster, mcxIndexCatalog, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs } from './angel.js';
 
 const round = (n, d = 2) => Number.isFinite(n) ? Number(n.toFixed(d)) : null;
 const IST_OFFSET_MS = 330 * 60 * 1000;
@@ -12,17 +12,28 @@ const fmtDate = d => {
   const pad = n => String(n).padStart(2, '0');
   return `${p.y}-${pad(p.m+1)}-${pad(p.day)} ${pad(p.h)}:${pad(p.min)}`;
 };
-const marketOpenFor = now => {
+function mcxCloseMinutes(now) {
   const p = istParts(now);
-  const utc = Date.UTC(p.y, p.m, p.day, 9, 15) - IST_OFFSET_MS;
+  const marchEighth = new Date(Date.UTC(p.y, 2, 8)).getUTCDay();
+  const novemberFirst = new Date(Date.UTC(p.y, 10, 1)).getUTCDay();
+  const marchStart = 8 + (7 - marchEighth) % 7;
+  const novemberEnd = 1 + (7 - novemberFirst) % 7;
+  const summer = (p.m > 2 && p.m < 10) || (p.m === 2 && p.day >= marchStart) || (p.m === 10 && p.day < novemberEnd);
+  return summer ? 23 * 60 + 30 : 23 * 60 + 55;
+}
+
+const marketOpenFor = (now, segment = 'EQUITY') => {
+  const p = istParts(now);
+  const utc = Date.UTC(p.y, p.m, p.day, 9, segment === 'MCX' ? 0 : 15) - IST_OFFSET_MS;
   return new Date(utc);
 };
 
-export function marketDataState(now, feedAgeMs, hasQuote = true) {
+export function marketDataState(now, feedAgeMs, hasQuote = true, segment = 'EQUITY') {
   const p = istParts(now);
   const weekday = new Date(now.getTime() + IST_OFFSET_MS).getUTCDay();
   const minutes = p.h * 60 + p.min;
-  const inSession = weekday >= 1 && weekday <= 5 && minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 30;
+  const inSession = weekday >= 1 && weekday <= 5 && minutes >= (segment === 'MCX' ? 9 * 60 : 9 * 60 + 15) &&
+    minutes < (segment === 'MCX' ? mcxCloseMinutes(now) : 15 * 60 + 30);
   if (!inSession) return 'MARKET_CLOSED';
   return hasQuote && feedAgeMs != null && feedAgeMs >= -30_000 && feedAgeMs <= 90_000 ? 'LIVE' : 'DATA_STALE';
 }
@@ -42,17 +53,17 @@ const optionWindowCache = new Map();
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function historyStartFor(now, interval) {
+function historyStartFor(now, interval, segment = 'EQUITY') {
   const p = istParts(now);
-  const lookbackDays = interval === 'FIFTEEN_MINUTE' ? 12 : 10;
-  const utc = Date.UTC(p.y, p.m, p.day - lookbackDays, 9, 15) - IST_OFFSET_MS;
+  const lookbackDays = segment === 'MCX' && interval === 'ONE_MINUTE' ? 5 : interval === 'FIFTEEN_MINUTE' ? 12 : 10;
+  const utc = Date.UTC(p.y, p.m, p.day - lookbackDays, 9, segment === 'MCX' ? 0 : 15) - IST_OFFSET_MS;
   return new Date(utc);
 }
 
-function bucketStartFor(now, interval) {
+function bucketStartFor(now, interval, segment = 'EQUITY') {
   const mins = INTERVAL_MINUTES[interval] || 5;
-  const open = marketOpenFor(now);
-  const close = new Date(open.getTime() + 375 * 60 * 1000);
+  const open = marketOpenFor(now, segment);
+  const close = new Date(open.getTime() + (segment === 'MCX' ? mcxCloseMinutes(now) - 9 * 60 : 375) * 60 * 1000);
   if (now < open) return open;
   if (now > close) return new Date(close.getTime() - mins * 60 * 1000);
   const elapsed = now.getTime() - open.getTime();
@@ -60,7 +71,7 @@ function bucketStartFor(now, interval) {
   return new Date(open.getTime() + bucket * mins * 60 * 1000);
 }
 
-async function loadHistoricalBase(session, exchange, token, interval, now, key) {
+async function loadHistoricalBase(session, exchange, token, interval, now, key, segment) {
   const retryAt = candleRetryAfter.get(key) || 0;
   if (Date.now() < retryAt) throw new Error('Market history is cooling down after a broker rate-limit response. Retrying automatically.');
 
@@ -68,7 +79,7 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key) 
     exchange,
     symboltoken: String(token),
     interval,
-    fromdate: fmtDate(historyStartFor(now, interval)),
+    fromdate: fmtDate(historyStartFor(now, interval, segment)),
     todate: fmtDate(now)
   };
 
@@ -100,7 +111,7 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key) 
   throw lastError || new Error('Unable to load market history');
 }
 
-async function liveCandles(session, exchange, token, interval, livePrice, now, appendLive = true) {
+async function liveCandles(session, exchange, token, interval, livePrice, now, appendLive = true, segment = 'EQUITY') {
   const key = [exchange, token, interval].join('|');
   const mins = INTERVAL_MINUTES[interval] || 5;
   let state = liveCandleCache.get(key);
@@ -111,7 +122,7 @@ async function liveCandles(session, exchange, token, interval, livePrice, now, a
   if (mustReload) {
     let lock = candleLoadLocks.get(key);
     if (!lock) {
-      lock = loadHistoricalBase(session, exchange, token, interval, now, key)
+      lock = loadHistoricalBase(session, exchange, token, interval, now, key, segment)
         .finally(() => candleLoadLocks.delete(key));
       candleLoadLocks.set(key, lock);
     }
@@ -120,7 +131,7 @@ async function liveCandles(session, exchange, token, interval, livePrice, now, a
 
   const candles = state.candles.slice();
   const price = Number(livePrice || candles[candles.length - 1]?.close || 0);
-  const bucketStart = bucketStartFor(now, interval);
+  const bucketStart = bucketStartFor(now, interval, segment);
   const bucketMs = bucketStart.getTime();
   const last = candles[candles.length - 1];
   const lastMs = last ? new Date(last.timestamp).getTime() : 0;
@@ -154,7 +165,7 @@ async function liveCandles(session, exchange, token, interval, livePrice, now, a
 
 function exchangeOf(row) { return row.exch_seg || row.exchange || 'NSE'; }
 
-export function signalEngine({ spot, ema9, ema15, futuresPrice, vwapValue, vwapSource, rsiValue, macdValue, st, pcr }) {
+export function signalEngine({ spot, ema9, ema15, futuresPrice, vwapValue, vwapSource, rsiValue, macdValue, st, pcr }, segment = 'EQUITY') {
   const rules = [];
   let bull = 0, bear = 0;
   const add = (name, state, detail) => {
@@ -175,8 +186,10 @@ export function signalEngine({ spot, ema9, ema15, futuresPrice, vwapValue, vwapS
 
   const considered = bull + bear + rules.filter(r => r.state === 'NEUTRAL').length;
   let signal = 'WAIT';
-  if (bull >= 5 && bull >= bear + 3) signal = 'CE';
-  if (bear >= 5 && bear >= bull + 3) signal = 'PE';
+  const minVotes = segment === 'MCX' ? 4 : 5;
+  const lead = segment === 'MCX' ? 2 : 3;
+  if (bull >= minVotes && bull >= bear + lead) signal = 'CE';
+  if (bear >= minVotes && bear >= bull + lead) signal = 'PE';
   return { signal, bullRules: bull, bearRules: bear, consideredRules: considered, rules };
 }
 
@@ -307,7 +320,7 @@ function selectBestContract(chain, optionType, spot) {
   };
 }
 
-function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue, selected }) {
+function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue, selected, segment = 'EQUITY', now = new Date(), expiry = null }) {
   const direction = engine.signal;
   const votes = [
     { name: 'Core Direction', vote: direction, detail: `${engine.bullRules} bull / ${engine.bearRules} bear confirmations` },
@@ -330,7 +343,7 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
       conflicts: [],
       selectedContractReason: selected.reason,
       selectedContractScore: selected.score,
-      message: `No call: core has ${engine.bullRules} bullish and ${engine.bearRules} bearish checks. A direction needs at least 5 checks and a lead of 3; a large candle alone is not enough.`
+      message: `No call: core has ${engine.bullRules} bullish and ${engine.bearRules} bearish checks. A direction needs at least ${segment === 'MCX' ? '4 checks with a lead of 2' : '5 checks with a lead of 3'}; a large candle alone is not enough.`
     };
   }
 
@@ -340,6 +353,11 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
   if (htf.vote !== 'WAIT' && htf.vote !== direction) conflicts.push('15-minute higher timeframe is opposite.');
   if (oi.vote !== 'WAIT' && oi.vote !== direction) conflicts.push('OI/PCR structure is opposite.');
   if (!regime.suitable) conflicts.push('Market regime is range-like; directional option buying is filtered.');
+  if (!selected.contract) conflicts.push('A current option premium is required before an option buying call.');
+  if (segment === 'MCX') {
+    if (trend.vote !== direction) conflicts.push('MCX trend alignment is not confirmed.');
+    if (htf.vote !== direction) conflicts.push('MCX 15 minute trend is not confirmed.');
+  }
 
   if (atrValue) {
     if (direction === 'CE' && sr.resistance != null && sr.resistance > spot && (sr.resistance - spot) <= atrValue * 0.5) {
@@ -350,10 +368,16 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
     }
   }
 
-  const p = istParts(new Date());
+  const p = istParts(now);
   const minutes = p.h * 60 + p.min;
-  if (minutes < 9 * 60 + 30 || minutes >= 15 * 60 + 30) {
-    conflicts.push('New calls are available from 09:30 to 15:30 IST only.');
+  const callEnd = segment === 'MCX' ? 23 * 60 + 15 : 15 * 60 + 30;
+  if (minutes < 9 * 60 + 30 || minutes >= callEnd) {
+    conflicts.push(`New calls are available from 09:30 to ${segment === 'MCX' ? '23:15' : '15:30'} IST only.`);
+  }
+  if (segment === 'MCX' && expiry && expiry.toUpperCase() ===
+      `${String(p.day).padStart(2, '0')}${['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][p.m]}${p.y}` &&
+      minutes >= 16 * 60 + 30) {
+    conflicts.push('MCX index option expires at 17:00 IST today. New calls stop at 16:30 IST.');
   }
   const setupAllowed = supporting >= 3 && conflicts.length === 0 && regime.suitable;
   const alignmentPct = round(100 * supporting / votes.length, 0);
@@ -379,17 +403,22 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
 
 export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE', trackedToken = null) {
   symbol = symbol.toUpperCase();
-  if (!['NIFTY','BANKNIFTY','SENSEX'].includes(symbol)) throw new Error('Supported symbols: NIFTY, BANKNIFTY, SENSEX');
   const rows = await instrumentMaster();
+  const mcxIndex = mcxIndexCatalog(rows).find(x => x.symbol === symbol);
+  const segment = mcxIndex ? 'MCX' : 'EQUITY';
+  if (!mcxIndex && !['NIFTY','BANKNIFTY','SENSEX'].includes(symbol)) {
+    throw new Error('Index is not in the connected Angel One instrument list.');
+  }
   const underlying = resolveUnderlying(rows, symbol);
   const uExchange = exchangeOf(underlying);
-  const future = resolveNearestFuture(rows, symbol);
+  const future = resolveNearestFuture(rows, symbol, Date.now());
   const cachedWindow = optionWindowCache.get(symbol) || null;
   const trackedRow = trackedToken && rows.find(r =>
     String(r.token) === String(trackedToken) &&
-    r.exch_seg === (symbol === 'SENSEX' ? 'BFO' : 'NFO') &&
+    r.exch_seg === (segment === 'MCX' ? 'MCX' : symbol === 'SENSEX' ? 'BFO' : 'NFO') &&
     /OPT/i.test(String(r.instrumenttype || '')) &&
-    String(r.name || '').toUpperCase().replace(/\s+/g, '') === symbol
+    String(r.name || '').toUpperCase().replace(/\s+/g, '') === symbol &&
+    (segment !== 'MCX' || r.instrumenttype === 'OPTIDX')
   );
 
   const quoteTokens = { [uExchange]: [String(underlying.token)] };
@@ -411,8 +440,31 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   let spot = quoteLtp(uq);
   const now = new Date();
   const indexFeedAge = quoteFeedAgeMs(uq, now.getTime());
-  const marketStatus = marketDataState(now, indexFeedAge, Number.isFinite(spot) && spot > 0);
-  const candles = await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE');
+  const marketStatus = marketDataState(now, indexFeedAge, Number.isFinite(spot) && spot > 0, segment);
+  let candles;
+  try {
+    candles = await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE', segment);
+  } catch (e) {
+    if (segment !== 'MCX') throw e;
+    // Some broker index tokens supply a quote but reject historical candles.
+    // Keep the index visible without fabricating a trend or an option call.
+    return {
+      symbol, segment, timestamp: now.toISOString(), timeframe: interval,
+      signal: 'WAIT', dataFresh: false,
+      ruleScore: { bullish: 0, bearish: 0, considered: 0 },
+      market: { ltp: round(spot), feedTime: uq.exchFeedTime || null, lastCandleTime: null,
+        ema9: null, ema15: null, vwap: null, vwapSource: 'Historical index candles unavailable',
+        rsi: null, macdHistogram: null, supertrend: null, atr: null },
+      optionChain: { expiry: null, atm: null, nearAtmPcr: null, pcrCoverage: '0/0 paired strikes',
+        totalCeOi: null, totalPeOi: null, support: null, resistance: null, contracts: [] },
+      suggestedContract: null, trackedContract: null,
+      tradeDecision: { direction: 'WAIT', status: 'HISTORY_UNAVAILABLE', setupAllowed: false,
+        supportingVotes: 0, totalVotes: 0, alignmentPct: 0, regime: 'UNKNOWN', regimeSuitable: false,
+        strategyVotes: [], conflicts: [], selectedContractReason: null, selectedContractScore: null,
+        message: `Index quote is visible, but broker candles for ${symbol} are unavailable. Calls are paused until history is available. ${e.message}` },
+      levels: null, rules: [], notes: ['No directional option buying call is generated without historical index candles.']
+    };
+  }
   if (!Number.isFinite(spot) || spot <= 0) spot = Number(candles[candles.length - 1]?.close);
   if (!Number.isFinite(spot) || spot <= 0) throw new Error(`${symbol} index quote and historical close are unavailable.`);
   const closes = candles.map(c => c.close);
@@ -440,7 +492,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   let window = cachedWindow;
   const freshWindow = resolveOptionWindow(rows, symbol, spot, 5);
 
-  if (!window || (freshWindow?.atm != null && (freshWindow.atm !== window.atm || freshWindow.expiry !== window.expiry))) {
+  if (!window || freshWindow.expiry !== window.expiry || freshWindow.atm !== window.atm) {
     window = freshWindow;
     optionWindowCache.set(symbol, freshWindow);
 
@@ -473,7 +525,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   // quotes on one side must not turn into a directional OI vote.
   const { ceOi, peOi, pcr, coverage } = nearAtmOi(chain, spot);
 
-  const engine = signalEngine({ spot, ema9: e9, ema15: e15, futuresPrice, vwapValue: vw, vwapSource, rsiValue: rv, macdValue: mv, st, pcr });
+  const engine = signalEngine({ spot, ema9: e9, ema15: e15, futuresPrice, vwapValue: vw, vwapSource, rsiValue: rv, macdValue: mv, st, pcr }, segment);
   const sr = pickSupportResistance(chain, spot);
   const atm = window.atm || null;
   const optionType = engine.signal === 'CE' ? 'CE' : engine.signal === 'PE' ? 'PE' : null;
@@ -491,9 +543,13 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
   } : null;
   const computedDecision = buildTradeDecision({
-    engine, trend, htf, oi, regime, sr, spot, atrValue: a, selected: selection
+    engine, trend, htf, oi, regime, sr, spot, atrValue: a, selected: selection, segment, now, expiry: window.expiry
   });
-  const tradeDecision = marketStatus === 'LIVE' ? computedDecision : {
+  const tradeDecision = segment === 'MCX' && !mcxIndex.hasOptions ? {
+    ...computedDecision,
+    direction: 'WAIT', setupAllowed: false, status: 'NO_OPTIONS', conflicts: [],
+    message: `${symbol} is in the connected MCX index list, but Angel One has no current index option contracts for it. Option buying calls are unavailable.`
+  } : marketStatus === 'LIVE' ? computedDecision : {
     ...computedDecision,
     direction: 'WAIT', setupAllowed: false, status: marketStatus, conflicts: [],
     message: marketStatus === 'MARKET_CLOSED'
@@ -510,14 +566,14 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   } : null;
 
   return {
-    symbol, timestamp: new Date().toISOString(), timeframe: interval,
-    signal: marketStatus === 'LIVE' ? engine.signal : 'WAIT', dataFresh: marketStatus === 'LIVE',
+    symbol, segment, timestamp: new Date().toISOString(), timeframe: interval,
+    signal: marketStatus === 'LIVE' && (segment !== 'MCX' || mcxIndex.hasOptions) ? engine.signal : 'WAIT', dataFresh: marketStatus === 'LIVE',
     ruleScore: { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
     market: { ltp: round(spot), feedTime: uq.exchFeedTime || null, lastCandleTime: candles[candles.length - 1]?.timestamp || null, ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
     optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), pcrCoverage: coverage, totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
-    suggestedContract: marketStatus === 'LIVE' ? suggested : null, trackedContract,
+    suggestedContract: marketStatus === 'LIVE' && (segment !== 'MCX' || mcxIndex.hasOptions) ? suggested : null, trackedContract,
     tradeDecision,
-    levels: marketStatus === 'LIVE' ? levels : null,
+    levels: marketStatus === 'LIVE' && (segment !== 'MCX' || mcxIndex.hasOptions) ? levels : null,
     rules: engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
@@ -525,7 +581,8 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       'Live quotes refresh frequently while historical candles are fetched once, cached, and rolled forward locally to avoid broker historical-API rate limits.',
       'Futures traded average comes from the broker FULL quote; the signal compares that futures contract with its own average. The cash index has no traded volume.',
       'PCR uses fresh, matched CE and PE quotes around ATM. Fewer than three complete strike pairs means PCR is unavailable.',
-      'Call Book tracks sampled option quotes; live orders are separate and require a ready order gateway.'
+      'Call Book tracks sampled option quotes; live orders are separate and require a ready order gateway.',
+      ...(segment === 'MCX' ? ['MCX option buying uses the index trend and 15 minute confirmation. Index data alone never authorises a trade when the broker lists no option contract.'] : [])
     ]
   };
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveNearestFuture, resolveOptionWindow, quoteFeedAgeMs } from '../src/angel.js';
+import { resolveNearestFuture, resolveOptionWindow, resolveUnderlying, quoteFeedAgeMs, mcxIndexCatalog, mcxOptionEntryWindow } from '../src/angel.js';
 import { signalEngine, nearAtmOi, marketDataState } from '../src/analysis.js';
 
 const expiryRows = [
@@ -62,4 +62,51 @@ test('PCR excludes unpaired strikes and pauses its vote with too little coverage
   const missingPut = paired.map(x => x.strike === 23250 && x.optionType === 'PE' ? { ...x, ltp: null } : x);
   assert.equal(nearAtmOi(missingPut, 23200).pcr, null);
   assert.equal(nearAtmOi(missingPut, 23200).coverage, '2/3 paired strikes');
+});
+
+const mcxRows = [
+  { token: '99920005', name: 'MCXBULLDEX', symbol: 'MCXBULLDEX', instrumenttype: 'AMXIDX', exch_seg: 'MCX' },
+  { token: '99920004', name: 'MCXMETLDEX', symbol: 'MCXMETLDEX', instrumenttype: 'AMXIDX', exch_seg: 'MCX' },
+  { token: '210', name: 'MCXBULLDEX', symbol: 'MCXBULLDEX25SEP26FUT', instrumenttype: 'FUTIDX', exch_seg: 'MCX', expiry: '25SEP2026' },
+  { token: '211', name: 'MCXBULLDEX', symbol: 'MCXBULLDEX28OCT26FUT', instrumenttype: 'FUTIDX', exch_seg: 'MCX', expiry: '28OCT2026' },
+  ...['25SEP2026', '28OCT2026'].flatMap((expiry, i) => [32000, 32100, 32200].flatMap(strike => ['CE', 'PE'].map(side => ({
+    token: String(300 + i * 100 + strike - 32000 + (side === 'PE' ? 1 : 0)),
+    name: 'MCXBULLDEX', symbol: `MCXBULLDEX${expiry}${strike}${side}`,
+    exch_seg: 'MCX', instrumenttype: 'OPTIDX', expiry, strike: String(strike * 100), lotsize: '30'
+  }))))
+];
+
+test('MCX catalogue lists every broker index but marks only indexes with active options tradable', () => {
+  const catalog = mcxIndexCatalog(mcxRows, Date.parse('2026-09-25T11:00:00Z'));
+  assert.deepEqual(catalog.map(x => [x.symbol, x.hasOptions]), [['MCXBULLDEX', true], ['MCXMETLDEX', false]]);
+  assert.equal(resolveUnderlying(mcxRows, 'MCXMETLDEX').token, '99920004');
+  assert.equal(resolveOptionWindow(mcxRows, 'MCXMETLDEX', 32050).contracts.length, 0);
+});
+
+test('MCX index options roll after 17:00 IST on expiry day, while equity expiry is unchanged', () => {
+  const before = Date.parse('2026-09-25T11:29:00Z');
+  const after = Date.parse('2026-09-25T11:31:00Z');
+  assert.equal(resolveOptionWindow(mcxRows, 'MCXBULLDEX', 32100, 5, before).expiry, '25SEP2026');
+  assert.equal(resolveOptionWindow(mcxRows, 'MCXBULLDEX', 32100, 5, after).expiry, '28OCT2026');
+  assert.equal(resolveNearestFuture(mcxRows, 'MCXBULLDEX', after).token, '211');
+  assert.equal(mcxOptionEntryWindow(mcxRows[4], before).allowed, false); // no new buys after 16:30 on expiry
+  assert.equal(mcxOptionEntryWindow(mcxRows[4], after).allowed, false);
+  assert.equal(mcxOptionEntryWindow(mcxRows[10], after).allowed, true);
+});
+
+test('MCX session remains available in the evening while equity index is closed', () => {
+  const evening = new Date('2026-09-25T13:25:00Z'); // 18:55 IST
+  assert.equal(marketDataState(evening, 35_000, true, 'MCX'), 'LIVE');
+  assert.equal(marketDataState(evening, 35_000, true), 'MARKET_CLOSED');
+  assert.equal(marketDataState(new Date('2026-09-25T18:01:00Z'), 35_000, true, 'MCX'), 'MARKET_CLOSED');
+  assert.equal(marketDataState(new Date('2026-11-06T18:10:00Z'), 35_000, true, 'MCX'), 'LIVE');
+});
+
+test('MCX option buying core can use four aligned checks but equity stays at five', () => {
+  const inputs = {
+    spot: 32100, ema9: 32090, ema15: 32080, futuresPrice: null, vwapValue: null, vwapSource: 'No future',
+    rsiValue: 56, macdValue: { histogram: 0.3 }, st: { direction: 'BEARISH', value: 32200 }, pcr: null
+  };
+  assert.equal(signalEngine(inputs, 'MCX').signal, 'CE');
+  assert.equal(signalEngine(inputs).signal, 'WAIT');
 });
