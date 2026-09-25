@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import `in`.dhanpulse.personal.data.ApiFactory
 import `in`.dhanpulse.personal.data.DhanPulseApi
+import `in`.dhanpulse.personal.data.SecurePrefs
 import `in`.dhanpulse.personal.model.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -23,6 +24,10 @@ import kotlin.math.round
 
 class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val backendUrl = "https://dhanpulse-personal-api.onrender.com"
+    private val sessionStore = SecurePrefs(app)
+    private val indiaZone = ZoneId.of("Asia/Kolkata")
+    private val inactivityLimitMs = 60 * 60 * 1000L
+    private var lastActivityWrite = 0L
 
     var sessionId by mutableStateOf<String?>(null)
     var profile by mutableStateOf<UserProfile?>(null)
@@ -86,6 +91,57 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         loadSignalHistory()
+        restoreSession()
+    }
+
+    private fun nextIndiaMidnight(now: Long): Long =
+        java.time.Instant.ofEpochMilli(now).atZone(indiaZone).toLocalDate().plusDays(1)
+            .atStartOfDay(indiaZone).toInstant().toEpochMilli()
+
+    private fun restoreSession() {
+        val saved = sessionStore.sessionId ?: return
+        val now = System.currentTimeMillis()
+        val last = sessionStore.lastUserActivity
+        val valid = now < sessionStore.sessionExpiry && last > 0 && last <= now && now - last < inactivityLimitMs
+        if (!valid) {
+            sessionStore.clearSession()
+            return
+        }
+        sessionId = saved
+        profile = UserProfile(clientcode = sessionStore.profileCode, name = sessionStore.profileName)
+    }
+
+    fun markUserActive() {
+        if (sessionId == null) return
+        val now = System.currentTimeMillis()
+        if (checkSessionTimeout(now)) return
+        if (now - lastActivityWrite >= 5_000) {
+            sessionStore.lastUserActivity = now
+            lastActivityWrite = now
+        }
+    }
+
+    fun checkSessionTimeout(now: Long = System.currentTimeMillis()): Boolean {
+        if (sessionId == null) return false
+        val last = sessionStore.lastUserActivity
+        if (now >= sessionStore.sessionExpiry || last <= 0 || now < last || now - last >= inactivityLimitMs) {
+            logout(if (now >= sessionStore.sessionExpiry) "Login again for the new day." else "Logged out after one hour without using the app.")
+            return true
+        }
+        return false
+    }
+
+    fun onAppForeground() {
+        if (!checkSessionTimeout()) {
+            markUserActive()
+            startAutoRefresh()
+            fetchAnalysis()
+            fetchAccount()
+        }
+    }
+
+    fun onAppBackground() {
+        stopAutoRefresh()
     }
 
     private fun client(): DhanPulseApi {
@@ -108,6 +164,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val r = client().login(LoginRequest("", "", pin.trim(), totp.trim()))
                 sessionId = r.sessionId
                 profile = r.profile
+                val now = System.currentTimeMillis()
+                val expiry = runCatching { r.expiresAt?.let { Instant.parse(it).toEpochMilli() } }.getOrNull() ?: nextIndiaMidnight(now)
+                sessionStore.sessionId = r.sessionId
+                sessionStore.sessionExpiry = minOf(expiry, nextIndiaMidnight(now))
+                sessionStore.lastUserActivity = now
+                sessionStore.profileName = r.profile?.name
+                sessionStore.profileCode = r.profile?.clientcode
+                lastActivityWrite = now
                 fetchAnalysis()
                 fetchAccount()
                 fetchOrderDiagnostics()
@@ -135,12 +199,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 if (autoTradeEnabled) evaluateAutoTrade(result)
             } catch (e: Exception) {
                 if (e is HttpException && e.code() == 401) {
-                    sessionId = null
-                    profile = null
-                    analysis = null
-                    account = null
-                    autoTradeEnabled = false
-                    error = "Session expired. Please login again."
+                    logout("Broker session expired. Please login again.")
                 } else if (analysis != null) {
                     error = null
                     refreshWarning = "Live refresh delayed. Retrying automatically."
@@ -749,7 +808,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         refreshJob = null
     }
 
-    fun logout() {
+    fun logout(reason: String? = null) {
+        val oldSession = sessionId
+        sessionStore.clearSession()
+        if (oldSession != null) viewModelScope.launch { runCatching { client().logout(oldSession) } }
         stopAutoRefresh()
         autoTradeEnabled = false
         clearAutoPosition()
@@ -767,7 +829,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         backtestBusy = false
         backtestReport = null
         backtestError = null
-        error = null
+        error = reason
         refreshWarning = null
     }
 

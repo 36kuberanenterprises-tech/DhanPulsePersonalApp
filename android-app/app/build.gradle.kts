@@ -12,21 +12,21 @@ android {
         applicationId = "in.dhanpulse.personal"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "2.3.0"
+        versionCode = 25
+        versionName = "2.4.0"
     }
 
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".preview"
-            manifestPlaceholders["appLabel"] = "DhanPulse 2.3 Preview"
+            applicationIdSuffix = ".preview24"
+            manifestPlaceholders["appLabel"] = "DhanPulse 2.4 Preview"
         }
         getByName("release") {
             manifestPlaceholders["appLabel"] = "DhanPulse"
         }
     }
 
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
