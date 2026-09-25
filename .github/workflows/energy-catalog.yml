@@ -1,0 +1,29 @@
+name: Inspect MCX energy instruments
+on:
+  push:
+    branches: [ add-mcx-energy-options-v261 ]
+    paths: [ '.github/workflows/energy-catalog.yml' ]
+permissions:
+  contents: read
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check live Angel One instrument names and expiry
+        run: |
+          node --input-type=module <<'NODE'
+          const r = await fetch('https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json');
+          if (!r.ok) throw new Error('Instrument master HTTP '+r.status);
+          const rows = await r.json();
+          const energy = rows.filter(x=>x.exch_seg==='MCX' && /CRUDE|NATGAS|NATURALGAS/i.test(String(x.name)));
+          const groups = [...new Set(energy.map(x=>[x.name,x.instrumenttype].join(':')))].sort();
+          console.log('ENERGY GROUPS', JSON.stringify(groups.map(k=>[k,energy.filter(x=>[x.name,x.instrumenttype].join(':')===k).length])));
+          for(const name of [...new Set(energy.map(x=>x.name))].sort()){
+            for(const type of ['FUTCOM','OPTFUT']){
+              const a=energy.filter(x=>x.name===name && x.instrumenttype===type).sort((a,b)=>a.expiry.localeCompare(b.expiry));
+              console.log('SAMPLE',name,type,JSON.stringify(a.slice(0,3).map(x=>({token:x.token,name:x.name,symbol:x.symbol,expiry:x.expiry,strike:x.strike,lotsize:x.lotsize}))));
+              console.log('EXPIRIES',name,type,JSON.stringify([...new Set(a.map(x=>x.expiry))].slice(0,12)));
+            }
+          }
+          NODE
