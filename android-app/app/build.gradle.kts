@@ -18,7 +18,7 @@ android {
 
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".preview"
+            applicationIdSuffix = ".preview24"
             manifestPlaceholders["appLabel"] = "DhanPulse 2.4 Preview"
         }
         getByName("release") {
