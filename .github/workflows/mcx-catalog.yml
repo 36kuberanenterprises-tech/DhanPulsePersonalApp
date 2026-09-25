@@ -1,0 +1,27 @@
+name: Inspect MCX index instruments
+on:
+  push:
+    branches: [ add-mcx-index-options-v26 ]
+    paths: [ '.github/workflows/mcx-catalog.yml' ]
+permissions:
+  contents: read
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect Angel One public instrument master
+        run: |
+          node --input-type=module <<'NODE'
+          const url = 'https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json';
+          const response = await fetch(url);
+          if (!response.ok) throw new Error('Instrument master HTTP ' + response.status);
+          const rows = await response.json();
+          const indexRows = rows.filter(x => x.exch_seg === 'MCX' && /IDX|INDEX/i.test(x.instrumenttype || ''));
+          const focus = rows.filter(x => x.exch_seg === 'MCX' && /BULLDEX|METLDEX/i.test([x.name,x.symbol].join(' ')));
+          const roots = [...new Set(indexRows.map(x => x.name))].sort();
+          console.log('MCX INDEX ROWS', indexRows.length, 'ROOTS', JSON.stringify(roots));
+          console.log('MCX BULLDEX AND METLDEX COUNTS', JSON.stringify(focus.reduce((a,x)=>{const k=[x.name,x.instrumenttype].join(':');a[k]=(a[k]||0)+1;return a;},{})));
+          console.log('INDEX SAMPLE', JSON.stringify(indexRows.slice(0,12)));
+          console.log('BULLDEX SAMPLE', JSON.stringify(focus.filter(x => x.name === 'MCXBULLDEX').slice(0,9)));
+          NODE
