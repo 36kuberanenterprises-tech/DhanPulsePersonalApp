@@ -102,7 +102,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         val saved = sessionStore.sessionId ?: return
         val now = System.currentTimeMillis()
         val last = sessionStore.lastUserActivity
-        val valid = now < sessionStore.sessionExpiry && last in 1..now && now - last < inactivityLimitMs
+        val valid = now < sessionStore.sessionExpiry && last > 0 && last <= now && now - last < inactivityLimitMs
         if (!valid) {
             sessionStore.clearSession()
             return
