@@ -3,7 +3,7 @@ name: Build DhanPulse APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, fix-live-decision-layout-v23 ]
     paths:
       - 'android-app/**'
       - '.github/workflows/build-apk.yml'
