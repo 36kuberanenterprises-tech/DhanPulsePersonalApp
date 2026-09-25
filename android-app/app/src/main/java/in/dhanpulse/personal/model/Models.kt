@@ -6,7 +6,7 @@ data class LoginResponse(val sessionId: String, val expiresAt: String? = null, v
 
 data class RuleScore(val bullish: Int = 0, val bearish: Int = 0, val considered: Int = 0)
 data class SupertrendValue(val direction: String? = null, val value: Double? = null)
-data class MarketMetrics(val ltp: Double? = null, val ema9: Double? = null, val ema15: Double? = null, val vwap: Double? = null, val vwapSource: String? = null, val rsi: Double? = null, val macdHistogram: Double? = null, val supertrend: SupertrendValue? = null, val atr: Double? = null)
+data class MarketMetrics(val ltp: Double? = null, val feedTime: String? = null, val lastCandleTime: String? = null, val ema9: Double? = null, val ema15: Double? = null, val vwap: Double? = null, val vwapSource: String? = null, val rsi: Double? = null, val macdHistogram: Double? = null, val supertrend: SupertrendValue? = null, val atr: Double? = null)
 data class OptionContract(val token: String? = null, val tradingSymbol: String? = null, val exchange: String? = null, val strike: Double? = null, val optionType: String? = null, val ltp: Double? = null, val oi: Double? = null, val lotSize: Int? = null)
 data class OptionChainSummary(val expiry: String? = null, val atm: Double? = null, val nearAtmPcr: Double? = null, val pcrCoverage: String? = null, val totalCeOi: Double? = null, val totalPeOi: Double? = null, val support: Double? = null, val resistance: Double? = null, val contracts: List<OptionContract> = emptyList())
 data class Levels(val underlyingEntry: Double? = null, val stop: Double? = null, val target1: Double? = null, val target2: Double? = null, val basis: String? = null)

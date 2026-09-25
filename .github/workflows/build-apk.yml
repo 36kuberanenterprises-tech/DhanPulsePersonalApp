@@ -3,7 +3,7 @@ name: Build DhanPulse APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, fix-market-data-call-tracker-v25, fix-quote-buy-pause-v25 ]
+    branches: [ main, fix-closed-market-snapshot-v251 ]
     paths:
       - 'android-app/**'
       - '.github/workflows/build-apk.yml'
@@ -59,12 +59,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Rename APK
-        run: cp android-app/app/build/outputs/apk/debug/app-debug.apk DhanPulse-Personal-v2.5-Preview.apk
+        run: cp android-app/app/build/outputs/apk/debug/app-debug.apk DhanPulse-Personal-v2.5.1-Preview.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Personal-v2.5-Preview-APK
-          path: DhanPulse-Personal-v2.5-Preview.apk
+          name: DhanPulse-Personal-v2.5.1-Preview-APK
+          path: DhanPulse-Personal-v2.5.1-Preview.apk
           if-no-files-found: error
           retention-days: 30
