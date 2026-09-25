@@ -190,19 +190,25 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         loading = analysis == null
         viewModelScope.launch {
             try {
-                val result = client().analysis(s, selectedSymbol, selectedTimeframe)
+                val trackedToken = signalHistory.firstOrNull {
+                    it.symbol == selectedSymbol && it.timeframe == selectedTimeframe &&
+                        it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED")
+                }?.token
+                val result = client().analysis(s, selectedSymbol, selectedTimeframe, trackedToken)
                 analysis = result
                 error = null
-                refreshWarning = null
-                updateSignalTracker(result)
-                updatePremiumDecision(result)
-                if (autoTradeEnabled) evaluateAutoTrade(result)
+                refreshWarning = if (result.dataFresh == false) "Broker refresh failed. Showing an older snapshot; calls and Auto Trade are paused." else null
+                if (result.dataFresh != false) {
+                    updateSignalTracker(result)
+                    updatePremiumDecision(result)
+                    if (autoTradeEnabled) evaluateAutoTrade(result)
+                } else if (autoTradeEnabled) autoStatus = "Auto Trade paused until a fresh broker quote is available."
             } catch (e: Exception) {
                 if (e is HttpException && e.code() == 401) {
                     logout("Broker session expired. Please login again.")
                 } else if (analysis != null) {
                     error = null
-                    refreshWarning = "Live refresh delayed. Retrying automatically."
+                    refreshWarning = friendlyError(e, "Broker refresh failed") + ". Showing older analysis; calls and Auto Trade are paused."
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until live analysis refresh succeeds."
                 } else {
                     val msg = friendlyError(e, "Analysis failed")
@@ -228,6 +234,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private fun tick(value: Double): Double = round(value / 0.05) * 0.05
 
     private fun freshForNewCall(a: AnalysisResponse): Boolean {
+        if (a.dataFresh == false) return false
         val timestamp = try { Instant.parse(a.timestamp ?: return false) } catch (_: Exception) { return false }
         val ageMs = System.currentTimeMillis() - timestamp.toEpochMilli()
         if (ageMs < -30_000 || ageMs > 30_000) return false
@@ -337,6 +344,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun updateSignalTracker(a: AnalysisResponse) {
+        if (a.dataFresh == false) return
         val now = System.currentTimeMillis()
         val currentDate = (a.timestamp ?: "").take(10).ifBlank {
             java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(now))
@@ -351,34 +359,21 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 return@map call.copy(status = "UNRESOLVED")
             }
 
-            if (call.entryHitAt == null) {
-                val sameSetup = freshForNewCall(a) && a.tradeDecision.setupAllowed &&
-                    a.tradeDecision.direction == call.side &&
-                    a.suggestedContract?.token == call.token
-                if (!sameSetup) {
-                    val misses = (pendingCancelCounts[call.id] ?: 0) + 1
-                    pendingCancelCounts[call.id] = misses
-                    if (misses >= 3) {
-                        pendingCancelCounts.remove(call.id)
-                        changed = true
-                        return@map call.copy(cancelledAt = now, status = "CANCELLED")
-                    }
-                } else {
-                    pendingCancelCounts.remove(call.id)
-                }
-            }
-
             val currentPremium: Double = (
-                a.optionChain.contracts.firstOrNull { it.token == call.token }?.ltp
+                a.trackedContract?.takeIf { it.token == call.token }?.ltp
+                    ?: a.optionChain.contracts.firstOrNull { it.token == call.token }?.ltp
                     ?: if (a.suggestedContract?.token == call.token) a.suggestedContract?.ltp else null
                 ) ?: return@map call
+            if (currentPremium <= 0) return@map call
 
-            var x = call.copy(lastPremium = tick(currentPremium))
+            var x = call.copy(lastPremium = tick(currentPremium), lastTrackedAt = now)
+            if (x.lastPremium != call.lastPremium || call.lastTrackedAt == null || now - call.lastTrackedAt >= 30_000L) changed = true
             if (x.entryHitAt == null && currentPremium >= x.entry) {
                 x = x.copy(entryHitAt = now, status = "ENTERED")
                 changed = true
             }
             if (x.entryHitAt != null) {
+                pendingCancelCounts.remove(call.id)
                 if (x.t1HitAt == null && currentPremium >= x.target1) {
                     x = x.copy(t1HitAt = now, status = "T1_HIT")
                     changed = true
@@ -392,6 +387,26 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     changed = true
                 } else if (x.t3HitAt == null && x.slHitAt == null && currentPremium <= x.stopLoss) {
                     x = x.copy(slHitAt = now, status = "SL_HIT")
+                    changed = true
+                }
+            } else {
+                val oppositeSetup = a.tradeDecision.setupAllowed &&
+                    a.tradeDecision.direction in setOf("CE", "PE") && a.tradeDecision.direction != call.side
+                val misses = if (oppositeSetup) (pendingCancelCounts[call.id] ?: 0) + 1 else 0
+                if (misses > 0) pendingCancelCounts[call.id] = misses else pendingCancelCounts.remove(call.id)
+                val minutes = when (call.timeframe) {
+                    "ONE_MINUTE" -> 1L
+                    "THREE_MINUTE" -> 3L
+                    "TEN_MINUTE" -> 10L
+                    "FIFTEEN_MINUTE" -> 15L
+                    else -> 5L
+                }
+                val age = now - call.generatedAt
+                val reversed = misses >= 3 && age >= minutes * 60_000L
+                val expired = age >= minutes * 3 * 60_000L
+                if (reversed || expired) {
+                    pendingCancelCounts.remove(call.id)
+                    x = x.copy(cancelledAt = now, status = "CANCELLED")
                     changed = true
                 }
             }
@@ -454,6 +469,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             target2 = t2,
             target3 = t3,
             lastPremium = tick(premium),
+            lastTrackedAt = now,
             status = "WAITING_ENTRY"
         )
 

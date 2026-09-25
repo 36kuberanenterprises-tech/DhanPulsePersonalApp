@@ -3,7 +3,7 @@ name: Build DhanPulse APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, fix-live-decision-layout-v23, feature-session-version-v24 ]
+    branches: [ main, fix-market-data-call-tracker-v25 ]
     paths:
       - 'android-app/**'
       - '.github/workflows/build-apk.yml'
@@ -37,6 +37,12 @@ jobs:
           node --check backend/src/backtest.js
           node --check backend/src/server.js
 
+      - name: Test live market rules
+        working-directory: backend
+        run: |
+          npm install --no-audit --no-fund
+          npm test
+
       - name: Prepare Android SDK
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
@@ -53,12 +59,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Rename APK
-        run: cp android-app/app/build/outputs/apk/debug/app-debug.apk DhanPulse-Personal-v2.4-Preview.apk
+        run: cp android-app/app/build/outputs/apk/debug/app-debug.apk DhanPulse-Personal-v2.5-Preview.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Personal-v2.4-Preview-APK
-          path: DhanPulse-Personal-v2.4-Preview.apk
+          name: DhanPulse-Personal-v2.5-Preview-APK
+          path: DhanPulse-Personal-v2.5-Preview.apk
           if-no-files-found: error
           retention-days: 30

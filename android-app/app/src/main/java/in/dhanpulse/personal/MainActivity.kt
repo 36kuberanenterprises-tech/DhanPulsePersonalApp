@@ -335,7 +335,7 @@ private fun MarketSection(vm: DhanPulseViewModel) {
     ) {
         item { TradingContextBar(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
-        vm.refreshWarning?.let { item { InfoStrip("Live refresh delayed", "Showing the latest successful analysis. Automatic retry is active.") } }
+        vm.refreshWarning?.let { item { InfoStrip("Live refresh delayed", it) } }
         if (vm.loading && a == null) item { LoadingMarketCard() }
         if (a != null) {
             item { SignalCard(a, vm::fetchAnalysis) }
@@ -659,6 +659,7 @@ private fun CallRecordDetails(call: `in`.dhanpulse.personal.model.SignalCall, co
                 Column(horizontalAlignment = Alignment.End) {
                     Text("LAST TRACKED PREMIUM", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                     Text(n(call.lastPremium), color = callResultColor(call.status), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                    call.lastTrackedAt?.let { Text("At ${formatCallTime(it)}", color = Muted, fontSize = 9.sp) }
                 }
             }
         }
@@ -720,7 +721,7 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Call Performance", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                    Text("All generated premium calls stored on this phone", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Quote crossings sampled while the app is refreshing; not actual fills", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 Text("${s.generated} calls", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
             }
@@ -1016,6 +1017,7 @@ private fun SignalRulesPanel(a: AnalysisResponse) {
                 Column {
                     Text("Signal checks", color = Ink, fontWeight = FontWeight.ExtraBold)
                     Text("${a.rules.size} engine conditions", color = Muted, fontSize = 10.sp)
+                    if (!a.tradeDecision.setupAllowed) Text(a.tradeDecision.message, color = Amber, fontSize = 10.sp)
                 }
                 Text(if (open) "Hide" else "View", color = Blue, fontWeight = FontWeight.Bold)
             }
@@ -1818,8 +1820,9 @@ fun MarketCard(a: AnalysisResponse) {
             Text("Price trend and momentum", color = Muted, style = MaterialTheme.typography.bodySmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricTile("LTP", n(m.ltp), Modifier.weight(1f))
-                MetricTile("VWAP", n(m.vwap), Modifier.weight(1f))
+                MetricTile("FUT AVG", n(m.vwap), Modifier.weight(1f))
             }
+            Text("Futures reference: ${m.vwapSource ?: "Unavailable"}", color = if (m.vwap == null) Amber else Muted, fontSize = 10.sp)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricTile("EMA 9", n(m.ema9), Modifier.weight(1f))
                 MetricTile("EMA 15", n(m.ema15), Modifier.weight(1f))
@@ -1848,7 +1851,8 @@ fun OptionCard(a: AnalysisResponse) {
             Text("Option intelligence", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
             Text("Market evidence only • CE and PE OI are not trade calls", color = Muted, style = MaterialTheme.typography.bodySmall)
             Text("EXPIRY  ${o.expiry ?: "NA"}", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Text("OI and PCR cover nearby strikes only. Support and resistance use the highest OI strikes in this window.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            Text("PCR uses fresh paired CE and PE quotes near ATM. Support and resistance use the highest OI strikes in the displayed window.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            o.pcrCoverage?.let { Text("PCR coverage: $it", color = Muted, fontSize = 10.sp) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LevelTile("SUPPORT", n(o.support), Green, Modifier.weight(1f))
                 LevelTile("ATM", n(o.atm), Blue, Modifier.weight(1f))

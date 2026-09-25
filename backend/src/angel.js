@@ -27,6 +27,22 @@ async function jsonFetch(url, init, label) {
   return data;
 }
 
+async function jsonFetchViaProxy(url, init, label, proxyUrl) {
+  const dispatcher = new ProxyAgent(proxyUrl);
+  try {
+    const r = await undiciRequest(url, { ...init, dispatcher });
+    const body = await r.body.text();
+    let data;
+    try { data = JSON.parse(body); } catch { throw new Error(`${label}: non JSON response (${r.statusCode})`); }
+    if (r.statusCode < 200 || r.statusCode >= 300 || data?.status === false) {
+      throw new Error(`${label}: ${data?.message || r.statusCode} ${data?.errorcode || ''}`.trim());
+    }
+    return data;
+  } finally {
+    await dispatcher.close();
+  }
+}
+
 export async function login({ apiKey, clientCode, pin, totp }) {
   return jsonFetch(`${ROOT}/rest/auth/angelbroking/user/v1/loginByPassword`, {
     method: 'POST', headers: baseHeaders(apiKey),
@@ -105,7 +121,9 @@ function dateValue(s) {
   if (m) {
     const months = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
     const month = months[m[2].toUpperCase()];
-    if (month != null) return Date.UTC(Number(m[3]), month, Number(m[1]), 18, 30);
+    // Instrument expiry is an Indian trading date, not midnight UTC. Stop
+    // selecting it after the regular 15:30 IST session on that date.
+    if (month != null) return Date.UTC(Number(m[3]), month, Number(m[1]), 10, 0);
   }
   const d = new Date(raw);
   return Number.isNaN(d.getTime()) ? Number.MAX_SAFE_INTEGER : d.getTime();
@@ -134,17 +152,15 @@ export function resolveUnderlying(rows, symbol) {
   return found;
 }
 
-export function resolveNearestFuture(rows, symbol) {
-  const now = Date.now() - 24 * 60 * 60 * 1000;
+export function resolveNearestFuture(rows, symbol, now = Date.now()) {
   return rows
     .filter(r => /FUT/i.test(String(r.instrumenttype || '')) && matchesUnderlying(r, symbol))
     .filter(r => dateValue(r.expiry) >= now)
     .sort((a, b) => dateValue(a.expiry) - dateValue(b.expiry))[0] || null;
 }
 
-export function resolveOptionWindow(rows, symbol, spot, wing = 5) {
+export function resolveOptionWindow(rows, symbol, spot, wing = 5, now = Date.now()) {
   const targetSeg = symbol === 'SENSEX' ? 'BFO' : 'NFO';
-  const now = Date.now() - 24 * 60 * 60 * 1000;
   const opts = rows.filter(r => r.exch_seg === targetSeg && /OPT/i.test(String(r.instrumenttype || '')) && matchesUnderlying(r, symbol))
     .filter(r => dateValue(r.expiry) >= now)
     .map(r => ({ ...r, strikeN: normalizeStrike(r.strike) }))
@@ -175,4 +191,14 @@ export function quoteLtp(q) {
 
 export function quoteOi(q) {
   return Number(q?.opnInterest ?? q?.openInterest ?? q?.oi ?? 0);
+}
+
+export function quoteFeedAgeMs(q, now = Date.now()) {
+  const raw = String(q?.exchFeedTime || '').trim();
+  const m = raw.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const month = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 }[m[2].toUpperCase()];
+  if (month == null) return null;
+  const ms = Date.UTC(Number(m[3]), month, Number(m[1]), Number(m[4]), Number(m[5]), Number(m[6])) - 330 * 60_000;
+  return now - ms;
 }
