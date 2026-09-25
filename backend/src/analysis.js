@@ -302,7 +302,7 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
       conflicts: [],
       selectedContractReason: selected.reason,
       selectedContractScore: selected.score,
-      message: 'No directional call. Waiting for the core confirmation threshold.'
+      message: `No call: core has ${engine.bullRules} bullish and ${engine.bearRules} bearish checks. A direction needs at least 5 checks and a lead of 3; a large candle alone is not enough.`
     };
   }
 
@@ -322,6 +322,11 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
     }
   }
 
+  const p = istParts(new Date());
+  const minutes = p.h * 60 + p.min;
+  if (minutes < 9 * 60 + 30 || minutes >= 15 * 60 + 30) {
+    conflicts.push('New calls are available from 09:30 to 15:30 IST only.');
+  }
   const setupAllowed = supporting >= 3 && conflicts.length === 0 && regime.suitable;
   const alignmentPct = round(100 * supporting / votes.length, 0);
   return {
@@ -388,7 +393,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   let window = cachedWindow;
   const freshWindow = resolveOptionWindow(rows, symbol, spot, 5);
 
-  if (!window) {
+  if (!window || (freshWindow?.atm != null && (freshWindow.atm !== window.atm || freshWindow.expiry !== window.expiry))) {
     window = freshWindow;
     optionWindowCache.set(symbol, freshWindow);
 
@@ -403,8 +408,6 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
         byTokenQuote = new Map(fetchedQuotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
       } catch {}
     }
-  } else if (freshWindow?.atm != null && freshWindow.atm !== window.atm) {
-    optionWindowCache.set(symbol, freshWindow);
   }
 
   let chain = [];
