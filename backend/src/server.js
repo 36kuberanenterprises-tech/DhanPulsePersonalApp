@@ -158,9 +158,11 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   const interval = String(req.query.interval || 'FIVE_MINUTE').toUpperCase();
   const allowed = ['ONE_MINUTE','THREE_MINUTE','FIVE_MINUTE','TEN_MINUTE','FIFTEEN_MINUTE'];
   if (!allowed.includes(interval)) return res.status(400).json({ error: 'Unsupported interval' });
+  const trackedToken = String(req.query.trackedToken || '').trim();
+  if (trackedToken && !/^\d{1,12}$/.test(trackedToken)) return res.status(400).json({ error: 'Invalid tracked option token' });
 
   const sessionId = req.header('X-Session-Id');
-  const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval;
+  const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval + '|' + trackedToken;
 
   const recent = analysisCache.get(key);
   if (recent && Date.now() - recent.at < LIVE_ANALYSIS_MIN_MS) {
@@ -168,7 +170,7 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   }
 
   try {
-    const result = await analyse(req.smartSession, req.params.symbol, interval);
+    const result = await analyse(req.smartSession, req.params.symbol, interval, trackedToken || null);
     analysisCache.set(key, { at: Date.now(), value: result });
     res.json(result);
   } catch (e) {
@@ -177,7 +179,13 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
     if (cached && Date.now() - cached.at <= 2 * 60 * 1000) {
       const value = {
         ...cached.value,
-        timestamp: new Date().toISOString(),
+        dataFresh: false,
+        tradeDecision: {
+          ...cached.value.tradeDecision,
+          setupAllowed: false,
+          status: 'DATA_STALE',
+          message: 'Broker refresh failed. Calls are paused until fresh quotes arrive.'
+        },
         notes: [
           ...(cached.value.notes || []),
           'Latest broker refresh was temporarily unavailable. Showing the most recent successful analysis.'

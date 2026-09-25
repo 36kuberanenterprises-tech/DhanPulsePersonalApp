@@ -17,7 +17,8 @@ interface DhanPulseApi {
     suspend fun analysis(
         @Header("X-Session-Id") sessionId: String,
         @Path("symbol") symbol: String,
-        @Query("interval") interval: String = "FIVE_MINUTE"
+        @Query("interval") interval: String = "FIVE_MINUTE",
+        @Query("trackedToken") trackedToken: String? = null
     ): AnalysisResponse
 
     @GET("api/account")

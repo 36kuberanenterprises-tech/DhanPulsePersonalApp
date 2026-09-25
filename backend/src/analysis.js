@@ -1,5 +1,5 @@
-import { ema, rsi, macd, supertrend, vwap, atr } from './indicators.js';
-import { instrumentMaster, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi } from './angel.js';
+import { ema, rsi, macd, supertrend, atr } from './indicators.js';
+import { instrumentMaster, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs } from './angel.js';
 
 const round = (n, d = 2) => Number.isFinite(n) ? Number(n.toFixed(d)) : null;
 const IST_OFFSET_MS = 330 * 60 * 1000;
@@ -145,7 +145,7 @@ async function liveCandles(session, exchange, token, interval, livePrice, now) {
 
 function exchangeOf(row) { return row.exch_seg || row.exchange || 'NSE'; }
 
-function signalEngine({ spot, ema9, ema15, vwapValue, rsiValue, macdValue, st, pcr }) {
+export function signalEngine({ spot, ema9, ema15, futuresPrice, vwapValue, vwapSource, rsiValue, macdValue, st, pcr }) {
   const rules = [];
   let bull = 0, bear = 0;
   const add = (name, state, detail) => {
@@ -154,8 +154,10 @@ function signalEngine({ spot, ema9, ema15, vwapValue, rsiValue, macdValue, st, p
   };
   add('Price vs EMA 9', spot > ema9 ? 'BULLISH' : 'BEARISH', `${round(spot)} vs ${round(ema9)}`);
   add('EMA 9 vs EMA 15', ema9 > ema15 ? 'BULLISH' : 'BEARISH', `${round(ema9)} vs ${round(ema15)}`);
-  if (vwapValue != null) add('Price vs futures VWAP', spot > vwapValue ? 'BULLISH' : 'BEARISH', `${round(spot)} vs ${round(vwapValue)}`);
-  else rules.push({ name: 'Price vs futures VWAP', state: 'UNAVAILABLE', detail: 'No usable futures volume data' });
+  // A futures trade average must be compared with the same futures contract.
+  // The cash index has a different price because of the futures basis.
+  if (vwapValue != null && futuresPrice != null) add('Futures vs traded average', futuresPrice > vwapValue ? 'BULLISH' : futuresPrice < vwapValue ? 'BEARISH' : 'NEUTRAL', `${round(futuresPrice)} vs ${round(vwapValue)}`);
+  else rules.push({ name: 'Futures vs traded average', state: 'UNAVAILABLE', detail: vwapSource });
   add('RSI', rsiValue >= 55 ? 'BULLISH' : rsiValue <= 45 ? 'BEARISH' : 'NEUTRAL', `${round(rsiValue)}`);
   add('MACD histogram', macdValue?.histogram > 0 ? 'BULLISH' : macdValue?.histogram < 0 ? 'BEARISH' : 'NEUTRAL', `${round(macdValue?.histogram ?? 0, 4)}`);
   add('Supertrend', st?.direction || 'NEUTRAL', st ? `${round(st.value)}` : 'Unavailable');
@@ -205,14 +207,14 @@ function resampleCandles(candles, minutes = 15) {
   return [...buckets.values()].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
 }
 
-function directionFromTrend({ spot, ema9, ema15, macdValue, st, vwapValue }) {
+function directionFromTrend({ spot, ema9, ema15, macdValue, st, futuresPrice, vwapValue }) {
   let bull = 0, bear = 0;
   if (spot > ema9) bull++; else bear++;
   if (ema9 > ema15) bull++; else bear++;
   if ((macdValue?.histogram ?? 0) > 0) bull++; else if ((macdValue?.histogram ?? 0) < 0) bear++;
   if (st?.direction === 'BULLISH') bull++; else if (st?.direction === 'BEARISH') bear++;
-  if (vwapValue != null) {
-    if (spot > vwapValue) bull++; else bear++;
+  if (vwapValue != null && futuresPrice != null) {
+    if (futuresPrice > vwapValue) bull++; else if (futuresPrice < vwapValue) bear++;
   }
   if (bull >= 4 && bull >= bear + 2) return { vote: 'CE', detail: `${bull} bullish / ${bear} bearish trend checks` };
   if (bear >= 4 && bear >= bull + 2) return { vote: 'PE', detail: `${bear} bearish / ${bull} bullish trend checks` };
@@ -255,6 +257,23 @@ function inferStrikeStep(chain) {
     if (d > 0) diffs.push(d);
   }
   return diffs.length ? Math.min(...diffs) : 50;
+}
+
+export function nearAtmOi(chain, spot) {
+  const step = inferStrikeStep(chain);
+  const pairedStrikes = [...new Set(chain.map(x => x.strike))].filter(strike => Math.abs(strike - spot) <= step * 2);
+  const pairs = pairedStrikes.map(strike => {
+    const ce = chain.find(x => x.strike === strike && x.optionType === 'CE');
+    const pe = chain.find(x => x.strike === strike && x.optionType === 'PE');
+    return ce?.ltp > 0 && pe?.ltp > 0 && ce.oi > 0 && pe.oi > 0 ? { ce, pe } : null;
+  }).filter(Boolean);
+  const ceOi = pairs.reduce((s,x)=>s+x.ce.oi,0);
+  const peOi = pairs.reduce((s,x)=>s+x.pe.oi,0);
+  return {
+    ceOi, peOi,
+    pcr: pairs.length >= 3 && ceOi > 0 && peOi > 0 ? peOi / ceOi : null,
+    coverage: `${pairs.length}/${pairedStrikes.length} paired strikes`
+  };
 }
 
 function selectBestContract(chain, optionType, spot) {
@@ -349,7 +368,7 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
 }
 
 
-export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE') {
+export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE', trackedToken = null) {
   symbol = symbol.toUpperCase();
   if (!['NIFTY','BANKNIFTY','SENSEX'].includes(symbol)) throw new Error('Supported symbols: NIFTY, BANKNIFTY, SENSEX');
   const rows = await instrumentMaster();
@@ -357,6 +376,12 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const uExchange = exchangeOf(underlying);
   const future = resolveNearestFuture(rows, symbol);
   const cachedWindow = optionWindowCache.get(symbol) || null;
+  const trackedRow = trackedToken && rows.find(r =>
+    String(r.token) === String(trackedToken) &&
+    r.exch_seg === (symbol === 'SENSEX' ? 'BFO' : 'NFO') &&
+    /OPT/i.test(String(r.instrumenttype || '')) &&
+    String(r.name || '').toUpperCase().replace(/\s+/g, '') === symbol
+  );
 
   const quoteTokens = { [uExchange]: [String(underlying.token)] };
   if (future) {
@@ -366,27 +391,41 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   if (cachedWindow?.contracts?.length) {
     for (const c of cachedWindow.contracts) (quoteTokens[c.exch_seg] ||= []).push(String(c.token));
   }
+  if (trackedRow && !quoteTokens[trackedRow.exch_seg]?.includes(String(trackedRow.token))) {
+    (quoteTokens[trackedRow.exch_seg] ||= []).push(String(trackedRow.token));
+  }
 
   const q = await marketData(session, quoteTokens, 'FULL');
   let fetchedQuotes = parseFetched(q);
   let byTokenQuote = new Map(fetchedQuotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
-  const uq = byTokenQuote.get(String(underlying.token)) || fetchedQuotes[0] || {};
+  const uq = byTokenQuote.get(String(underlying.token)) || {};
   let spot = quoteLtp(uq);
+  if (!Number.isFinite(spot) || spot <= 0) throw new Error(`Live ${symbol} index quote is unavailable. No new calls can be evaluated.`);
 
   const now = new Date();
+  const indexFeedAge = quoteFeedAgeMs(uq, now.getTime());
+  if (indexFeedAge == null || indexFeedAge < -30_000 || indexFeedAge > 90_000) {
+    throw new Error(`Live ${symbol} index feed time is missing or delayed. No new calls can be evaluated.`);
+  }
   const candles = await liveCandles(session, uExchange, String(underlying.token), interval, spot, now);
-  if (!spot) spot = candles[candles.length - 1].close;
   const closes = candles.map(c => c.close);
 
   const e9 = ema(closes, 9), e15 = ema(closes, 15), rv = rsi(closes, 14), mv = macd(closes), st = supertrend(candles, 10, 3), a = atr(candles, 14);
 
-  let vw = null, vwapSource = 'Unavailable';
+  let vw = null, futuresPrice = null, vwapSource = future
+    ? `Futures quote missing for ${future.symbol || future.name}`
+    : 'No unexpired futures contract found';
   if (future) {
     const fq = byTokenQuote.get(String(future.token)) || {};
     const avgPrice = Number(fq.avgPrice ?? fq.averagePrice ?? 0);
-    if (Number.isFinite(avgPrice) && avgPrice > 0) {
+    const fp = quoteLtp(fq);
+    const futureAge = quoteFeedAgeMs(fq, now.getTime());
+    if (Number.isFinite(avgPrice) && avgPrice > 0 && Number.isFinite(fp) && fp > 0 && futureAge != null && futureAge >= -30_000 && futureAge <= 90_000) {
       vw = avgPrice;
-      vwapSource = `Live futures average price ${future.symbol || future.name}`;
+      futuresPrice = fp;
+      vwapSource = `Broker traded average: ${future.symbol || future.name} (futures price ${round(fp)})`;
+    } else if (Object.keys(fq).length) {
+      vwapSource = `Broker has no fresh traded average for ${future.symbol || future.name}`;
     }
   }
 
@@ -416,24 +455,32 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       const z = byTokenQuote.get(String(c.token)) || {};
       const sym = String(c.symbol || '');
       const optionType = /PE$/i.test(sym) ? 'PE' : /CE$/i.test(sym) ? 'CE' : (String(c.instrumenttype).toUpperCase().includes('PE') ? 'PE' : 'CE');
-      return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType, ltp: round(quoteLtp(z)), oi: quoteOi(z), lotSize: Number(c.lotsize || 0) };
+      const age = quoteFeedAgeMs(z, now.getTime());
+      const fresh = age != null && age >= -30_000 && age <= 90_000;
+      return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType, ltp: fresh ? round(quoteLtp(z)) : null, oi: fresh ? quoteOi(z) : 0, lotSize: Number(c.lotsize || 0) };
     }).sort((a,b) => a.strike - b.strike || a.optionType.localeCompare(b.optionType));
   }
-  const ceOi = chain.filter(x => x.optionType === 'CE').reduce((s,x)=>s+x.oi,0);
-  const peOi = chain.filter(x => x.optionType === 'PE').reduce((s,x)=>s+x.oi,0);
-  const pcr = ceOi > 0 ? peOi / ceOi : null;
+  // Calculate PCR from matched, freshly quoted CE/PE pairs near ATM. Missing
+  // quotes on one side must not turn into a directional OI vote.
+  const { ceOi, peOi, pcr, coverage } = nearAtmOi(chain, spot);
 
-  const engine = signalEngine({ spot, ema9: e9, ema15: e15, vwapValue: vw, rsiValue: rv, macdValue: mv, st, pcr });
+  const engine = signalEngine({ spot, ema9: e9, ema15: e15, futuresPrice, vwapValue: vw, vwapSource, rsiValue: rv, macdValue: mv, st, pcr });
   const sr = pickSupportResistance(chain, spot);
   const atm = window.atm || null;
   const optionType = engine.signal === 'CE' ? 'CE' : engine.signal === 'PE' ? 'PE' : null;
 
-  const trend = directionFromTrend({ spot, ema9: e9, ema15: e15, macdValue: mv, st, vwapValue: vw });
+  const trend = directionFromTrend({ spot, ema9: e9, ema15: e15, macdValue: mv, st, futuresPrice, vwapValue: vw });
   const htf = higherTimeframeVote(candles);
   const oi = oiVote(pcr, sr, spot);
   const regime = regimeState({ spot, ema9: e9, ema15: e15, atrValue: a, st });
   const selection = selectBestContract(chain, optionType, spot);
   const suggested = selection.contract;
+  const trackedQuote = trackedRow ? byTokenQuote.get(String(trackedRow.token)) : null;
+  const trackedAge = quoteFeedAgeMs(trackedQuote, now.getTime());
+  const trackedContract = trackedQuote && quoteLtp(trackedQuote) > 0 && trackedAge != null && trackedAge >= -30_000 && trackedAge <= 90_000 ? {
+    token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
+    exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
+  } : null;
   const tradeDecision = buildTradeDecision({
     engine, trend, htf, oi, regime, sr, spot, atrValue: a, selected: selection
   });
@@ -448,11 +495,11 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
 
   return {
     symbol, timestamp: new Date().toISOString(), timeframe: interval,
-    signal: engine.signal,
+    signal: engine.signal, dataFresh: true,
     ruleScore: { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
     market: { ltp: round(spot), ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
-    optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
-    suggestedContract: suggested,
+    optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), pcrCoverage: coverage, totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
+    suggestedContract: suggested, trackedContract,
     tradeDecision,
     levels,
     rules: engine.rules,
@@ -460,9 +507,9 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
       'The meta decision requires Core Direction plus agreement from Trend, 15m higher timeframe and OI/PCR layers, with a non-range regime.',
       'Live quotes refresh frequently while historical candles are fetched once, cached, and rolled forward locally to avoid broker historical-API rate limits.',
-      'VWAP reference uses the live nearest-futures average traded price, avoiding repeated historical futures requests.',
-      'PCR shown here is calculated from the selected near ATM option window, not the full exchange chain.',
-      'This build does not place orders.'
+      'Futures traded average comes from the broker FULL quote; the signal compares that futures contract with its own average. The cash index has no traded volume.',
+      'PCR uses fresh, matched CE and PE quotes around ATM. Fewer than three complete strike pairs means PCR is unavailable.',
+      'Call Book tracks sampled option quotes; live orders are separate and require a ready order gateway.'
     ]
   };
 }
