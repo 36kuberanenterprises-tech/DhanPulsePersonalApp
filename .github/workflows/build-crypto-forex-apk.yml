@@ -1,0 +1,39 @@
+name: Build DhanPulse Crypto Forex APK
+
+on:
+  push:
+    branches:
+      - crypto-forex-android-v1
+    paths:
+      - 'crypto-forex-android/**'
+      - '.github/workflows/build-crypto-forex-apk.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build debug APK
+        working-directory: crypto-forex-android
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DhanPulse-Crypto-Forex-v1.0.0-APK
+          path: crypto-forex-android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
