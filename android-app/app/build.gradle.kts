@@ -16,6 +16,16 @@ android {
         versionName = "2.3.0"
     }
 
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".preview"
+            manifestPlaceholders["appLabel"] = "DhanPulse 2.3 Preview"
+        }
+        getByName("release") {
+            manifestPlaceholders["appLabel"] = "DhanPulse"
+        }
+    }
+
     buildFeatures { compose = true }
 
     compileOptions {
