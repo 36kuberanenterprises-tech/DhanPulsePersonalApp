@@ -182,6 +182,168 @@ function pickSupportResistance(chain, spot) {
   };
 }
 
+function resampleCandles(candles, minutes = 15) {
+  const size = minutes * 60 * 1000;
+  const buckets = new Map();
+  for (const row of candles) {
+    const t = new Date(row.timestamp).getTime();
+    if (!Number.isFinite(t)) continue;
+    const key = Math.floor(t / size) * size;
+    const old = buckets.get(key);
+    if (!old) {
+      buckets.set(key, {
+        timestamp: new Date(key).toISOString(),
+        open: row.open, high: row.high, low: row.low, close: row.close, volume: Number(row.volume || 0)
+      });
+    } else {
+      old.high = Math.max(old.high, row.high);
+      old.low = Math.min(old.low, row.low);
+      old.close = row.close;
+      old.volume += Number(row.volume || 0);
+    }
+  }
+  return [...buckets.values()].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
+function directionFromTrend({ spot, ema9, ema15, macdValue, st, vwapValue }) {
+  let bull = 0, bear = 0;
+  if (spot > ema9) bull++; else bear++;
+  if (ema9 > ema15) bull++; else bear++;
+  if ((macdValue?.histogram ?? 0) > 0) bull++; else if ((macdValue?.histogram ?? 0) < 0) bear++;
+  if (st?.direction === 'BULLISH') bull++; else if (st?.direction === 'BEARISH') bear++;
+  if (vwapValue != null) {
+    if (spot > vwapValue) bull++; else bear++;
+  }
+  if (bull >= 4 && bull >= bear + 2) return { vote: 'CE', detail: `${bull} bullish / ${bear} bearish trend checks` };
+  if (bear >= 4 && bear >= bull + 2) return { vote: 'PE', detail: `${bear} bearish / ${bull} bullish trend checks` };
+  return { vote: 'WAIT', detail: `${bull} bullish / ${bear} bearish trend checks` };
+}
+
+function higherTimeframeVote(candles) {
+  const h = resampleCandles(candles, 15);
+  if (h.length < 20) return { vote: 'WAIT', detail: '15m history not ready' };
+  const closes = h.map(x => x.close);
+  const e9 = ema(closes, 9), e15 = ema(closes, 15);
+  const st = supertrend(h, 10, 3);
+  if (e9 > e15 && st?.direction === 'BULLISH') return { vote: 'CE', detail: `15m EMA9 ${round(e9)} > EMA15 ${round(e15)} and Supertrend bullish` };
+  if (e9 < e15 && st?.direction === 'BEARISH') return { vote: 'PE', detail: `15m EMA9 ${round(e9)} < EMA15 ${round(e15)} and Supertrend bearish` };
+  return { vote: 'WAIT', detail: `15m trend mixed: EMA9 ${round(e9)}, EMA15 ${round(e15)}, ST ${st?.direction || 'NA'}` };
+}
+
+function oiVote(pcr, sr, spot) {
+  if (pcr == null) return { vote: 'WAIT', detail: 'Near-ATM OI unavailable' };
+  if (pcr >= 1.1) return { vote: 'CE', detail: `PCR ${round(pcr)} supports bullish bias; support ${round(sr.support)}` };
+  if (pcr <= 0.9) return { vote: 'PE', detail: `PCR ${round(pcr)} supports bearish bias; resistance ${round(sr.resistance)}` };
+  return { vote: 'WAIT', detail: `PCR ${round(pcr)} is neutral` };
+}
+
+function regimeState({ spot, ema9, ema15, atrValue, st }) {
+  if (!spot || !atrValue) return { name: 'UNKNOWN', suitable: false, detail: 'ATR/regime unavailable' };
+  const gap = Math.abs(ema9 - ema15);
+  const ratio = gap / Math.max(atrValue, 0.01);
+  const aligned = (ema9 > ema15 && st?.direction === 'BULLISH') || (ema9 < ema15 && st?.direction === 'BEARISH');
+  if (ratio < 0.18) return { name: 'RANGE', suitable: false, detail: `EMA separation is only ${round(ratio,2)}x ATR` };
+  if (aligned && ratio >= 0.45) return { name: 'TRENDING', suitable: true, detail: `EMA separation ${round(ratio,2)}x ATR with Supertrend alignment` };
+  return { name: 'TRANSITION', suitable: true, detail: `EMA separation ${round(ratio,2)}x ATR; trend is developing` };
+}
+
+function inferStrikeStep(chain) {
+  const strikes = [...new Set(chain.map(x => Number(x.strike)).filter(Number.isFinite))].sort((a,b)=>a-b);
+  const diffs = [];
+  for (let i=1;i<strikes.length;i++) {
+    const d = strikes[i]-strikes[i-1];
+    if (d > 0) diffs.push(d);
+  }
+  return diffs.length ? Math.min(...diffs) : 50;
+}
+
+function selectBestContract(chain, optionType, spot) {
+  if (!optionType) return { contract: null, reason: 'No directional bias', score: null };
+  const candidates = chain.filter(x => x.optionType === optionType && Number(x.ltp) > 0);
+  if (!candidates.length) return { contract: null, reason: `No live ${optionType} premium available`, score: null };
+  const step = Math.max(1, inferStrikeStep(chain));
+  const maxOi = Math.max(1, ...candidates.map(x => Number(x.oi || 0)));
+  const ranked = candidates.map(x => {
+    const distance = Math.abs(Number(x.strike)-spot);
+    const distanceScore = Math.max(0, 1 - distance / (step * 3));
+    const oiScore = Math.max(0, Math.min(1, Number(x.oi || 0) / maxOi));
+    const premiumScore = Number(x.ltp) >= 15 ? 1 : Math.max(0, Number(x.ltp) / 15);
+    const score = 0.58 * distanceScore + 0.32 * oiScore + 0.10 * premiumScore;
+    return { x, score, distance, oiScore };
+  }).sort((a,b)=>b.score-a.score || a.distance-b.distance);
+  const best = ranked[0];
+  return {
+    contract: best.x,
+    score: round(best.score * 100, 1),
+    reason: `${optionType} strike ${round(best.x.strike)} selected from near-ATM contracts using distance, live premium and OI liquidity; score ${round(best.score*100,1)}/100`
+  };
+}
+
+function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue, selected }) {
+  const direction = engine.signal;
+  const votes = [
+    { name: 'Core Direction', vote: direction, detail: `${engine.bullRules} bull / ${engine.bearRules} bear confirmations` },
+    { name: 'Trend Alignment', vote: trend.vote, detail: trend.detail },
+    { name: '15m Higher Timeframe', vote: htf.vote, detail: htf.detail },
+    { name: 'OI / PCR', vote: oi.vote, detail: oi.detail }
+  ];
+
+  if (!['CE','PE'].includes(direction)) {
+    return {
+      direction: 'WAIT',
+      status: 'WATCHING',
+      setupAllowed: false,
+      supportingVotes: 0,
+      totalVotes: votes.length,
+      alignmentPct: 0,
+      regime: regime.name,
+      regimeSuitable: regime.suitable,
+      strategyVotes: votes,
+      conflicts: [],
+      selectedContractReason: selected.reason,
+      selectedContractScore: selected.score,
+      message: 'No directional call. Waiting for the core confirmation threshold.'
+    };
+  }
+
+  const supporting = votes.filter(v => v.vote === direction).length;
+  const conflicts = [];
+  if (trend.vote !== 'WAIT' && trend.vote !== direction) conflicts.push('Trend alignment is opposite to the core direction.');
+  if (htf.vote !== 'WAIT' && htf.vote !== direction) conflicts.push('15-minute higher timeframe is opposite.');
+  if (oi.vote !== 'WAIT' && oi.vote !== direction) conflicts.push('OI/PCR structure is opposite.');
+  if (!regime.suitable) conflicts.push('Market regime is range-like; directional option buying is filtered.');
+
+  if (atrValue) {
+    if (direction === 'CE' && sr.resistance != null && sr.resistance > spot && (sr.resistance - spot) <= atrValue * 0.5) {
+      conflicts.push('Heavy CE OI resistance is too close above the index.');
+    }
+    if (direction === 'PE' && sr.support != null && sr.support < spot && (spot - sr.support) <= atrValue * 0.5) {
+      conflicts.push('Heavy PE OI support is too close below the index.');
+    }
+  }
+
+  const setupAllowed = supporting >= 3 && conflicts.length === 0 && regime.suitable;
+  const alignmentPct = round(100 * supporting / votes.length, 0);
+  return {
+    direction,
+    status: setupAllowed ? 'READY_FOR_PREMIUM' : (conflicts.length ? 'REJECTED_CONFLICT' : 'CONFIRMING'),
+    setupAllowed,
+    supportingVotes: supporting,
+    totalVotes: votes.length,
+    alignmentPct,
+    regime: regime.name,
+    regimeSuitable: regime.suitable,
+    strategyVotes: votes,
+    conflicts,
+    selectedContractReason: selected.reason,
+    selectedContractScore: selected.score,
+    message: setupAllowed
+      ? `${direction} setup passed meta confirmation. Waiting for two live scans and premium breakout.`
+      : (conflicts[0] || `Only ${supporting}/${votes.length} strategy layers support ${direction}; waiting for stronger agreement.`)
+  };
+}
+
+
 export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE') {
   symbol = symbol.toUpperCase();
   if (!['NIFTY','BANKNIFTY','SENSEX'].includes(symbol)) throw new Error('Supported symbols: NIFTY, BANKNIFTY, SENSEX');
@@ -262,7 +424,16 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const sr = pickSupportResistance(chain, spot);
   const atm = window.atm || null;
   const optionType = engine.signal === 'CE' ? 'CE' : engine.signal === 'PE' ? 'PE' : null;
-  const suggested = optionType ? chain.filter(x => x.optionType === optionType).sort((x,y)=>Math.abs(x.strike-spot)-Math.abs(y.strike-spot))[0] || null : null;
+
+  const trend = directionFromTrend({ spot, ema9: e9, ema15: e15, macdValue: mv, st, vwapValue: vw });
+  const htf = higherTimeframeVote(candles);
+  const oi = oiVote(pcr, sr, spot);
+  const regime = regimeState({ spot, ema9: e9, ema15: e15, atrValue: a, st });
+  const selection = selectBestContract(chain, optionType, spot);
+  const suggested = selection.contract;
+  const tradeDecision = buildTradeDecision({
+    engine, trend, htf, oi, regime, sr, spot, atrValue: a, selected: selection
+  });
 
   const levels = a ? {
     underlyingEntry: round(spot),
@@ -279,10 +450,12 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     market: { ltp: round(spot), ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
     optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
     suggestedContract: suggested,
+    tradeDecision,
     levels,
     rules: engine.rules,
     notes: [
-      'Signal is a rule based market view, not a probability or guarantee.',
+      'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
+      'The meta decision requires Core Direction plus agreement from Trend, 15m higher timeframe and OI/PCR layers, with a non-range regime.',
       'Live quotes refresh frequently while historical candles are fetched once, cached, and rolled forward locally to avoid broker historical-API rate limits.',
       'VWAP reference uses the live nearest-futures average traded price, avoiding repeated historical futures requests.',
       'PCR shown here is calculated from the selected near ATM option window, not the full exchange chain.',
