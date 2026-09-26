@@ -93,6 +93,10 @@ async function universe() {
   return universeCache;
 }
 
+export async function stockWatchlist() {
+  return universe();
+}
+
 export function quoteSpread(quote) {
   const bid = Number(quote?.depth?.buy?.[0]?.price);
   const ask = Number(quote?.depth?.sell?.[0]?.price);

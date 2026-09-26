@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs } from './angel.js';
 import { analyse } from './analysis.js';
 import { runBacktest } from './backtest.js';
+import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
 
 const app = express();
@@ -277,6 +278,11 @@ function summarizeAccount(rmsRaw, posRaw, master = []) {
   };
 }
 
+app.get('/api/backtest/catalog', requireSession, async (_req, res) => {
+  try { res.json(await backtestCatalog()); }
+  catch (e) { res.status(503).json({ error: e.message || 'Broker backtest instrument list unavailable' }); }
+});
+
 app.post('/api/backtest', requireSession, async (req, res) => {
   try {
     const body = req.body || {};
@@ -285,12 +291,16 @@ app.post('/api/backtest', requireSession, async (req, res) => {
     const interval = String(body.interval || 'FIVE_MINUTE').toUpperCase();
     const years = Number(body.years || 3);
     const capital = Number(body.capital || 20000);
+    const kind = String(body.kind || '').toUpperCase();
+    const exchange = String(body.exchange || '').toUpperCase();
 
-    if (!['NIFTY','BANKNIFTY','SENSEX'].includes(symbol)) return res.status(400).json({ error: 'Unsupported symbol' });
+    if (!kind && !['NIFTY','BANKNIFTY','SENSEX'].includes(symbol)) return res.status(400).json({ error: 'Select an available instrument from the backtest catalogue' });
     if (!allowedIntervals.includes(interval)) return res.status(400).json({ error: 'Unsupported interval' });
     if (![1,3,5].includes(years)) return res.status(400).json({ error: 'Backtest period must be 1, 3 or 5 years' });
 
-    const result = await runBacktest(req.smartSession, { symbol, interval, years, capital });
+    const choice = kind ? findBacktestChoice(await backtestCatalog(), { symbol, exchange, kind }) : null;
+    if (choice?.kind === 'STOCK' && interval !== 'FIVE_MINUTE') return res.status(400).json({ error: 'Stock scanner research uses five minute candles' });
+    const result = await runBacktest(req.smartSession, { symbol, interval, years, capital, choice });
     res.json(result);
   } catch (e) {
     console.error('Backtest failed:', e?.message || e);

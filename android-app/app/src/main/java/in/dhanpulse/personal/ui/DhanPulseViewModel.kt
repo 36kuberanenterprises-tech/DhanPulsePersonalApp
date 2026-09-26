@@ -83,6 +83,27 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     var backtestYears by mutableStateOf(3)
         private set
+    var backtestGroup by mutableStateOf("INDEX")
+        private set
+    var backtestChoice by mutableStateOf<BacktestChoice?>(null)
+        private set
+    var backtestTimeframe by mutableStateOf("FIVE_MINUTE")
+        private set
+    var backtestCatalog by mutableStateOf<BacktestCatalog?>(null)
+        private set
+    var backtestCatalogBusy by mutableStateOf(false)
+        private set
+    var backtestCatalogError by mutableStateOf<String?>(null)
+        private set
+    val backtestChoices: List<BacktestChoice>
+        get() = when (backtestGroup) {
+            "MCX_INDEX" -> backtestCatalog?.mcx.orEmpty()
+            "STOCK" -> backtestCatalog?.stocks.orEmpty()
+            else -> backtestCatalog?.indices.orEmpty()
+        }
+    val researchPassedForTrading: Boolean
+        get() = backtestReport?.let { it.kind == "INDEX" && it.symbol == selectedSymbol &&
+            it.interval == selectedTimeframe && it.adaptive.gatePassed } == true
     var backtestCapital by mutableStateOf(20000.0)
         private set
     var backtestBusy by mutableStateOf(false)
@@ -659,6 +680,49 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         backtestError = null
     }
 
+    fun fetchBacktestCatalog(force: Boolean = false) {
+        val s = sessionId ?: return
+        if (backtestCatalogBusy || backtestCatalog != null && !force) return
+        backtestCatalogBusy = true
+        viewModelScope.launch {
+            try {
+                val result = client().backtestCatalog(s)
+                backtestCatalog = result
+                backtestChoice = (result.indices + result.mcx + result.stocks).firstOrNull {
+                    it.symbol == backtestChoice?.symbol && it.exchange == backtestChoice?.exchange && it.kind == backtestChoice?.kind
+                } ?: backtestChoices.firstOrNull()
+                backtestCatalogError = null
+            } catch (e: Exception) {
+                backtestCatalogError = friendlyError(e, "Backtest instruments unavailable")
+            } finally {
+                backtestCatalogBusy = false
+            }
+        }
+    }
+
+    fun selectBacktestGroup(group: String) {
+        if (backtestBusy || group !in setOf("INDEX", "MCX_INDEX", "STOCK")) return
+        backtestGroup = group
+        backtestChoice = backtestChoices.firstOrNull()
+        if (group == "STOCK") backtestTimeframe = "FIVE_MINUTE"
+        backtestReport = null
+        backtestError = null
+    }
+
+    fun selectBacktestChoice(choice: BacktestChoice) {
+        if (backtestBusy || !choice.enabled || backtestChoices.none { it.symbol == choice.symbol && it.exchange == choice.exchange }) return
+        backtestChoice = choice
+        backtestReport = null
+        backtestError = null
+    }
+
+    fun selectBacktestTimeframe(interval: String) {
+        if (backtestBusy || backtestGroup == "STOCK" || interval !in setOf("ONE_MINUTE", "THREE_MINUTE", "FIVE_MINUTE", "TEN_MINUTE", "FIFTEEN_MINUTE")) return
+        backtestTimeframe = interval
+        backtestReport = null
+        backtestError = null
+    }
+
     fun updateBacktestCapital(capital: Double) {
         backtestCapital = capital.coerceIn(1000.0, 10000000.0)
         backtestReport = null
@@ -666,8 +730,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runBacktest() {
         val s = sessionId ?: return
-        if (selectedMarket == "MCX") {
-            backtestError = "MCX option buying has not passed a historical backtest in this app. Research is currently available for the equity indices only."
+        val choice = backtestChoice
+        if (choice == null) {
+            backtestError = "Load the broker instrument list and choose a symbol first."
             return
         }
         if (autoTradeEnabled) {
@@ -682,10 +747,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 backtestReport = client().backtest(
                     s,
                     BacktestRequest(
-                        symbol = selectedSymbol,
-                        interval = selectedTimeframe,
+                        symbol = choice.symbol,
+                        interval = backtestTimeframe,
                         years = backtestYears,
-                        capital = backtestCapital
+                        capital = backtestCapital,
+                        exchange = choice.exchange,
+                        kind = choice.kind
                     )
                 )
             } catch (e: Exception) {
@@ -718,7 +785,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        val researchPassed = backtestReport?.adaptive?.gatePassed == true
+        val researchPassed = researchPassedForTrading
         autoTradeEnabled = true
         autoStatus = if (researchPassed) {
             "Order gateway READY and research gate PASSED. Auto Trade armed for 2 matching CE/PE confirmations."
@@ -900,8 +967,6 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         premiumTradePlan = PremiumTradePlan()
         refreshWarning = null
         error = null
-        backtestReport = null
-        backtestError = null
         pendingSignalKey = null
         pendingSignalCount = 0
         if (autoTradeEnabled) autoStatus = "Auto Trade armed on " + timeframeLabel(interval) + ". Waiting for confirmation."
@@ -934,8 +999,6 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         premiumTradePlan = PremiumTradePlan()
         refreshWarning = null
         error = null
-        backtestReport = null
-        backtestError = null
         pendingSignalKey = null
         pendingSignalCount = 0
         if (autoTradeEnabled) autoStatus = "Auto Trade armed for " + symbol + ". Waiting for confirmation."
@@ -1125,6 +1188,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         backtestBusy = false
         backtestReport = null
         backtestError = null
+        backtestCatalog = null
+        backtestCatalogError = null
+        backtestChoice = null
         error = reason
         refreshWarning = null
     }
