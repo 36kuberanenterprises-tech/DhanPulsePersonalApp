@@ -43,6 +43,7 @@ jobs:
           mkdir -p crypto-forex-app/buildsrc
           unzip -t /tmp/dhanpulse-project.zip
           unzip -q /tmp/dhanpulse-project.zip -d crypto-forex-app/buildsrc
+          sed -i 's/applicationId = "com.dhanpulse.cryptofxv11"/applicationId = "com.dhanpulse.cryptofxbg"/' crypto-forex-app/buildsrc/app/build.gradle.kts
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
