@@ -10,11 +10,17 @@ import com.google.gson.Gson
 import `in`.dhanpulse.personal.data.ApiFactory
 import `in`.dhanpulse.personal.data.DhanPulseApi
 import `in`.dhanpulse.personal.data.SecurePrefs
+import `in`.dhanpulse.personal.data.LivePriceStream
+import `in`.dhanpulse.personal.data.LivePriceEvent
 import `in`.dhanpulse.personal.model.*
+import android.os.SystemClock
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import retrofit2.HttpException
 import java.time.Instant
 import java.time.LocalTime
@@ -59,6 +65,19 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private var lastMcxSymbol = "MCXBULLDEX"
     var selectedTimeframe by mutableStateOf("FIVE_MINUTE")
     var analysis by mutableStateOf<AnalysisResponse?>(null)
+    var livePriceEvent by mutableStateOf<LivePriceEvent?>(null)
+        private set
+    var liveStreamStatus by mutableStateOf("CONNECTING")
+        private set
+    private var livePriceArrivedAt = 0L
+    private val livePriceStream = LivePriceStream(backendUrl)
+    private var liveStreamJob: Job? = null
+    fun liveDisplayPrice(report: AnalysisResponse): Double? =
+        livePriceEvent?.takeIf {
+            it.symbol == report.symbol && it.status == "LIVE" &&
+                it.price != null && it.price > 0 &&
+                SystemClock.elapsedRealtime() - livePriceArrivedAt < 10_000
+        }?.price
     var account by mutableStateOf<AccountSummary?>(null)
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
@@ -188,6 +207,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         if (!checkSessionTimeout()) {
             markUserActive()
             startAutoRefresh()
+            startLivePriceStream()
             if (selectedMarket == "MCX") fetchMcxCatalog()
             if (stocksVisible) fetchStockScanner() else fetchAnalysis()
             fetchAccount()
@@ -196,6 +216,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onAppBackground() {
         stopAutoRefresh()
+        stopLivePriceStream()
     }
 
     private fun client(): DhanPulseApi {
@@ -227,6 +248,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 sessionStore.profileCode = r.profile?.clientcode
                 lastActivityWrite = now
                 fetchAnalysis()
+                startLivePriceStream()
                 fetchAccount()
                 fetchOrderDiagnostics()
             } catch (e: Exception) {
@@ -991,6 +1013,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (symbol == selectedSymbol) return
         selectedSymbol = symbol
+        startLivePriceStream()
         if (autoTradeEnabled) {
             autoTradeEnabled = false
             autoStatus = "Auto Trade switched OFF because symbol changed. Re-arm Auto Trade after checking the new setup."
@@ -1021,6 +1044,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun showStocks(visible: Boolean) {
         if (stocksVisible == visible) return
         stocksVisible = visible
+        if (visible) stopLivePriceStream() else startLivePriceStream()
         if (visible) fetchStockScanner() else fetchAnalysis()
         startAutoRefresh()
     }
@@ -1150,6 +1174,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val time = indiaTime.toLocalTime()
                 val marketOpen = day in 1..5 && !time.isBefore(if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)) &&
                     time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
+                if (!stocksVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
+                if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
                 delay(if (stocksVisible) { if (marketOpen) 30_000 else 60_000 } else { if (marketOpen) 3_000 else 60_000 })
                 if (stocksVisible) fetchStockScanner() else fetchAnalysis()
                 tick++
@@ -1157,6 +1183,61 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 if (tick % 20 == 0) fetchOrderDiagnostics()
             }
         }
+    }
+
+    private fun startLivePriceStream() {
+        val session = sessionId ?: return
+        stopLivePriceStream()
+        if (stocksVisible) return
+        val indiaTime = Instant.now().atZone(indiaZone)
+        val start = if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)
+        val end = if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30)
+        if (indiaTime.dayOfWeek.value !in 1..5 || indiaTime.toLocalTime().isBefore(start) ||
+            !indiaTime.toLocalTime().isBefore(end)) {
+            liveStreamStatus = "MARKET_CLOSED"
+            return
+        }
+        val symbol = selectedSymbol
+        liveStreamStatus = "CONNECTING"
+        liveStreamJob = viewModelScope.launch {
+            var retryMs = 1500L
+            while (isActive && sessionId == session && selectedSymbol == symbol && !stocksVisible) {
+                try {
+                    livePriceStream.collect(session, symbol) { event ->
+                        withContext(Dispatchers.Main) {
+                            if (sessionId == session && selectedSymbol == symbol && !stocksVisible) {
+                                liveStreamStatus = event.status
+                                if (event.status == "LIVE" && event.price != null && event.price > 0) {
+                                    livePriceArrivedAt = SystemClock.elapsedRealtime()
+                                    livePriceEvent = event
+                                    retryMs = 1500L
+                                } else {
+                                    livePriceEvent = null
+                                }
+                            }
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    livePriceEvent = null
+                    liveStreamStatus = "DELAYED"
+                }
+                if (isActive) {
+                    livePriceEvent = null
+                    liveStreamStatus = "DELAYED"
+                    delay(retryMs)
+                    retryMs = (retryMs * 2).coerceAtMost(10_000L)
+                }
+            }
+        }
+    }
+
+    private fun stopLivePriceStream() {
+        liveStreamJob?.cancel()
+        liveStreamJob = null
+        livePriceEvent = null
+        liveStreamStatus = "STOPPED"
     }
 
     fun stopAutoRefresh() {
@@ -1169,6 +1250,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         sessionStore.clearSession()
         if (oldSession != null) viewModelScope.launch { runCatching { client().logout(oldSession) } }
         stopAutoRefresh()
+        stopLivePriceStream()
         autoTradeEnabled = false
         clearAutoPosition()
         blockedSignal = null
