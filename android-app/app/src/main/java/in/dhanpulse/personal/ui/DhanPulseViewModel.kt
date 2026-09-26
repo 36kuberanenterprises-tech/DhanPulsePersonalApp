@@ -1024,7 +1024,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         val todayTrades = paperStockTrades.filter { indiaDate(it.openedAt) == today }
         val losses = todayTrades.count { (it.netPnl ?: 0.0) < 0.0 }
         val realized = todayTrades.sumOf { it.netPnl ?: 0.0 }
-        if (openPaperStock != null || todayTrades.size >= 3 || losses >= 2 || realized <= -200.0) {
+        if (openPaperStock != null || todayTrades.size >= 3 || losses >= 2 ||
+            realized <= -200.0 || realized - plan.estimatedLoss < -200.0) {
             stockPaperMessage = "Paper limit reached: one open position, three entries, two losses, or Rs. 200 daily loss."
             return
         }
