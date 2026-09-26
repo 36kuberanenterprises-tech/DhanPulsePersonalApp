@@ -1,0 +1,38 @@
+name: Build APK Signing Tools
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-apksig-tools.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.23.x'
+      - name: Build apksig tools
+        run: |
+          mkdir -p out
+          GOBIN="$PWD/out" go install github.com/agusibrahim/apksig-go/cmd/apksign@v1.1.0
+          GOBIN="$PWD/out" go install github.com/agusibrahim/apksig-go/cmd/apksigverify@v1.1.0
+          chmod +x out/apksign out/apksigverify
+      - name: Upload tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: apksig-go-linux-amd64
+          path: |
+            out/apksign
+            out/apksigverify
+          if-no-files-found: error
+          retention-days: 7
