@@ -42,6 +42,8 @@ import `in`.dhanpulse.personal.model.AccountSummary
 import `in`.dhanpulse.personal.model.BacktestSlice
 import `in`.dhanpulse.personal.model.BacktestStrategy
 import `in`.dhanpulse.personal.model.AdaptivePhase
+import `in`.dhanpulse.personal.model.StockCandidate
+import `in`.dhanpulse.personal.model.PaperStockTrade
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
 import kotlin.math.abs
 
@@ -207,6 +209,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         bottomBar = { TraderBottomNav(section) {
             if (it == "MCX") vm.showMarket("MCX")
             if (it == "MARKET") vm.showMarket("EQUITY")
+            vm.showStocks(it == "STOCKS")
             section = it
         } }
     ) { inner ->
@@ -216,6 +219,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             TraderHeader(vm)
             when (section) {
                 "MCX" -> McxSection(vm) { section = "TRADE" }
+                "STOCKS" -> StocksSection(vm)
                 "TRADE" -> TradeSection(vm)
                 "POSITIONS" -> PositionsSection(vm)
                 "RESEARCH" -> ResearchSection(vm)
@@ -242,17 +246,17 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
-                        val status = vm.analysis?.tradeDecision?.status
+                        val status = if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
                         StatusPill(
-                            if (status == "MARKET_CLOSED") "CLOSED" else if (status == "NO_OPTIONS") "NO OPTIONS" else if (vm.refreshWarning != null || vm.analysis == null) "DELAYED" else "LIVE",
-                            if (status == "NO_OPTIONS" || vm.refreshWarning != null || vm.analysis == null) Amber else Green
+                            if (status == "MARKET_CLOSED") "CLOSED" else if (status == "NO_OPTIONS") "NO OPTIONS" else if (vm.stocksVisible && (status == "DATA_STALE" || vm.stockScan == null)) "DELAYED" else if (!vm.stocksVisible && (vm.refreshWarning != null || vm.analysis == null)) "DELAYED" else "LIVE",
+                            if (status == "NO_OPTIONS" || status == "DATA_STALE" || (vm.stocksVisible && vm.stockScan == null) || (!vm.stocksVisible && (vm.refreshWarning != null || vm.analysis == null))) Amber else Green
                         )
                     }
-                    Text((vm.profile?.name ?: "Angel One connected") + if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
+                    Text((vm.profile?.name ?: "Angel One connected") + if (vm.stocksVisible) " • NSE Stocks" else if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
                     Text("v${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 9.sp)
                 }
             }
-            Surface(onClick = { vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
+            Surface(onClick = { if (vm.stocksVisible) vm.fetchStockScanner() else vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
                 Text("Refresh", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
         }
@@ -264,6 +268,7 @@ private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
     val tabs = listOf(
         "MARKET" to "Market",
         "MCX" to "MCX",
+        "STOCKS" to "Stocks",
         "TRADE" to "Trade",
         "POSITIONS" to "Positions",
         "RESEARCH" to "Research",
@@ -942,6 +947,115 @@ private fun OrderGatewayCard(vm: DhanPulseViewModel) {
                 enabled = !vm.orderGatewayBusy,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("CHECK ORDER ROUTE", fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+private fun stockRs(value: Double?): String = if (value == null) "NA" else "Rs. " + String.format("%,.2f", value)
+
+private fun stockTime(raw: String?): String = runCatching {
+    java.time.Instant.parse(raw ?: "").atZone(java.time.ZoneId.of("Asia/Kolkata"))
+        .format(java.time.format.DateTimeFormatter.ofPattern("dd MMM, HH:mm:ss")) + " IST"
+}.getOrDefault("Time unavailable")
+
+@Composable
+private fun StocksSection(vm: DhanPulseViewModel) {
+    val scan = vm.stockScan
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { SectionTitle("Daily Stock Scanner", "NSE cash shares • 5 minute setups • paper tracking") }
+        item {
+            InfoStrip("Research only", "No live stock orders. Paper entry and exit prices are quote samples, not exchange fills. Keep the app open to refresh; missed moves are marked unresolved.")
+        }
+        if (vm.stockScanLoading && scan == null) item { LoadingMarketCard() }
+        vm.stockScanError?.let { message -> item { InfoStrip("Scanner unavailable", message) } }
+        if (scan != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text("${scan.marketStatus.replace('_', ' ')} • ${stockTime(scan.timestamp)}", color = if (scan.marketStatus == "SCANNING") Green else Amber, fontWeight = FontWeight.Bold)
+                        Text("${scan.scanned} watchlist stocks • ${scan.evaluated} evaluated • Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"}", color = Ink)
+                        Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (scan.strongestSector != null && scan.weakestSector != null) {
+                            HorizontalDivider(color = Line)
+                            Text("Strongest: ${scan.strongestSector.name} ${String.format("%+.2f%%", scan.strongestSector.changePct)} (${scan.strongestSector.count} stocks)", color = Green, style = MaterialTheme.typography.bodySmall)
+                            Text("Weakest: ${scan.weakestSector.name} ${String.format("%+.2f%%", scan.weakestSector.changePct)} (${scan.weakestSector.count} stocks)", color = Red, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("Best BUY: ${scan.bestBuy?.symbol ?: "None confirmed"}  •  Best SELL: ${scan.bestSell?.symbol ?: "None confirmed"}", color = Ink, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+        vm.stockPaperMessage?.let { message -> item { InfoStrip("Paper journal", message) } }
+        if (vm.openPaperStock != null && !java.time.LocalTime.now(java.time.ZoneId.of("Asia/Kolkata")).isBefore(java.time.LocalTime.of(15, 0))) {
+            item { InfoStrip("Exit reminder", "Close or mark the open paper position now. Angel One MIS positions are due for square off around 3:10 pm; this journal does not place an order.") }
+        }
+        vm.openPaperStock?.let { open -> item { PaperStockCard(vm, open) } }
+        if (scan != null) {
+            item { SectionTitle("Candidates", "WAIT is a decision when data or setup is incomplete") }
+            if (scan.candidates.isEmpty()) item { EmptyStateCard("No entry candidates now", scan.note) }
+            items(scan.candidates, key = { it.symbol }) { candidate -> StockCandidateCard(vm, candidate) }
+        }
+        if (vm.paperStockTrades.isNotEmpty()) {
+            item { SectionTitle("Paper journal", "Estimated results from manually recorded quote samples") }
+            items(vm.paperStockTrades.take(20), key = { it.id }) { trade ->
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("${trade.symbol} ${trade.side} • ${trade.quantity} shares", color = Ink, fontWeight = FontWeight.Bold)
+                        Text("${stockRs(trade.entry)} entry • ${if (trade.closedAt == null) "OPEN" else trade.exitReason ?: "CLOSED"}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text("${stockTime(java.time.Instant.ofEpochMilli(trade.openedAt).toString())} • Net ${stockRs(trade.netPnl)}", color = if ((trade.netPnl ?: 0.0) < 0) Red else Green, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
+    val ready = stock.status == "READY" && stock.plan != null
+    val plan = stock.plan
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, if (ready) Green.copy(alpha = 0.45f) else Line)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(stock.symbol, color = Ink, fontWeight = FontWeight.ExtraBold)
+                Text(if (ready) stock.side else "WAIT", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
+            }
+            Text("${stock.sector} • ${stock.setup?.replace('_', ' ') ?: "No setup"} • LTP ${stockRs(stock.price)}", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text(stock.reason, color = if (ready) Green else Muted, style = MaterialTheme.typography.bodySmall)
+            if (ready && plan != null) {
+                HorizontalDivider(color = Line)
+                Text("Entry ${stockRs(plan.entry)} • Stop ${stockRs(plan.stop)}", color = Ink)
+                Text("T1 ${stockRs(plan.target1)} • T2 ${stockRs(plan.target2)} • T3 ${stockRs(plan.target3)}", color = Ink, style = MaterialTheme.typography.bodySmall)
+                Text("${plan.quantity} shares • risk up to ${stockRs(plan.estimatedLoss)} incl. estimated costs ${stockRs(plan.estimatedCosts)}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text("VWAP ${stockRs(stock.vwap)} • relative volume ${stock.volumeRatio?.let { String.format("%.2fx", it) } ?: "NA"} • quote ${stock.quoteTime ?: "NA"}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { vm.startPaperStock(stock) }, enabled = vm.openPaperStock == null, modifier = Modifier.fillMaxWidth()) {
+                    Text("Record paper entry")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaperStockCard(vm: DhanPulseViewModel, trade: PaperStockTrade) {
+    val quote = vm.stockScan?.trackedQuote?.takeIf { it.token == trade.token && it.fresh }
+    val price = quote?.price
+    val sign = if (trade.side == "BUY") 1 else -1
+    val pnl = price?.let { (it - trade.entry) * trade.quantity * sign - trade.estimatedCosts }
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Blue.copy(alpha = 0.5f))) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Open paper position • ${trade.symbol} ${trade.side}", color = Blue, fontWeight = FontWeight.ExtraBold)
+            Text("Entry ${stockRs(trade.entry)} • ${trade.quantity} shares • stop ${stockRs(trade.stop)}", color = Ink)
+            Text("Latest quote ${stockRs(price)} • estimated net ${stockRs(pnl)}", color = if ((pnl ?: 0.0) < 0) Red else Green)
+            Text("This estimate includes allowance for charges and spread. It does not prove that a target or stop filled.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { vm.closePaperStock() }, enabled = price != null, modifier = Modifier.fillMaxWidth()) { Text("Close paper at latest quote") }
+            TextButton(onClick = { vm.closePaperStock(unresolved = true) }) { Text("Mark unresolved", color = Amber) }
         }
     }
 }

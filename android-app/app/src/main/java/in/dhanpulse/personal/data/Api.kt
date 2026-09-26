@@ -13,6 +13,12 @@ interface DhanPulseApi {
     @GET("api/markets/mcx")
     suspend fun mcxMarkets(@Header("X-Session-Id") sessionId: String): McxCatalog
 
+    @GET("api/stocks/scanner")
+    suspend fun stockScanner(
+        @Header("X-Session-Id") sessionId: String,
+        @Query("trackedToken") trackedToken: String? = null
+    ): StockScanResponse
+
     @POST("api/auth/login")
     suspend fun login(@Body request: LoginRequest): LoginResponse
 
