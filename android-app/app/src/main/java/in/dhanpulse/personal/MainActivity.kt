@@ -381,8 +381,8 @@ private fun MarketSection(vm: DhanPulseViewModel) {
         vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
         if (vm.loading && a == null) item { LoadingMarketCard() }
         if (a != null) {
-            item { SignalCard(a, vm::fetchAnalysis) }
-            item { MarketCard(a) }
+            item { SignalCard(a, vm) }
+            item { MarketCard(a, vm) }
             item { OptionCard(a) }
             item { SignalRulesPanel(a) }
         }
@@ -439,8 +439,8 @@ private fun McxSection(vm: DhanPulseViewModel, onTrade: () -> Unit) {
                 else "${vm.selectedSymbol} has no current index option contract in Angel One. Market information is shown where available. No option call or buy is offered.")
         }
         if (a != null) {
-            if (index?.hasOptions != false && energy?.hasOptions != false) item { SignalCard(a, vm::fetchAnalysis) }
-            item { MarketCard(a) }
+            if (index?.hasOptions != false && energy?.hasOptions != false) item { SignalCard(a, vm) }
+            item { MarketCard(a, vm) }
             if (index?.hasOptions != false && energy?.hasOptions != false && a.tradeDecision.status != "NO_OPTIONS") {
                 item { OptionCard(a) }
                 item { SignalRulesPanel(a) }
@@ -1295,7 +1295,7 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 StatusPill(a.signal, c)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("${if (a.instrumentType == "ENERGY") "Futures" else "Index"} ${n(a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
+                Text("${if (a.instrumentType == "ENERGY") "Futures" else "Index"} ${n(vm.liveDisplayPrice(a) ?: a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
                 val d = a.tradeDecision
                 val heroText = when {
                     d.status == "MARKET_CLOSED" -> "CLOSED"
@@ -1409,8 +1409,9 @@ private fun AccountSettingRow(label: String, value: String) {
 }
 
 @Composable
-fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
+fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     val color = when (a.signal.uppercase()) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    val streamPrice = vm.liveDisplayPrice(a)
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
             .background(Brush.linearGradient(listOf(color.copy(alpha = 0.20f), Panel2, Panel)))
@@ -1422,17 +1423,20 @@ fun SignalCard(a: AnalysisResponse, refresh: () -> Unit) {
                     Text(a.symbol.replace("BANKNIFTY", "BANK NIFTY"), color = Muted, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                     Text("CURRENT MARKET BIAS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
-                Surface(onClick = refresh, color = Panel2, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Line)) {
+                Surface(onClick = vm::fetchAnalysis, color = Panel2, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Line)) {
                     Text("Refresh", color = Ink, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontWeight = FontWeight.Bold)
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(a.signal, color = color, fontSize = 48.sp, fontWeight = FontWeight.Black)
                 Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(1f)) {
-                    Text("INDEX LTP", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    Text(n(a.market.ltp), color = Ink, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                    Text(if (streamPrice != null) "STREAM LTP" else "QUOTE LTP", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(n(streamPrice ?: a.market.ltp), color = Ink, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
                 }
             }
+            Text(if (streamPrice != null) "Broker price stream active. Analysis follows the selected ${timeframeShort(vm.selectedTimeframe)} timeframe."
+                else "Price stream ${vm.liveStreamStatus.lowercase().replace('_', ' ')}. Analysis uses broker quotes and the selected timeframe.",
+                color = if (streamPrice != null) Green else Muted, fontSize = 10.sp)
             Text(if (a.signal == "WAIT") "Market bias only • no trade call" else if (a.signal == "CE") "Bullish market bias • not yet a trade call" else "Bearish market bias • not yet a trade call", color = Muted)
             HorizontalDivider(color = Line)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -2150,8 +2154,9 @@ private fun AccountMetric(label: String, value: String, color: Color, modifier: 
 }
 
 @Composable
-fun MarketCard(a: AnalysisResponse) {
+fun MarketCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     val m = a.market
+    val streamPrice = vm.liveDisplayPrice(a)
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Line)) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Market structure", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
@@ -2162,7 +2167,7 @@ fun MarketCard(a: AnalysisResponse) {
             }
             m.instrumentLabel?.let { Text("Underlying futures: $it", color = Muted, fontSize = 10.sp) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricTile("LTP", n(m.ltp), Modifier.weight(1f))
+                MetricTile(if (streamPrice != null) "STREAM LTP" else "QUOTE LTP", n(streamPrice ?: m.ltp), Modifier.weight(1f))
                 MetricTile("FUT AVG", n(m.vwap), Modifier.weight(1f))
             }
             Text("Futures reference: ${m.vwapSource ?: "Unavailable"}", color = if (m.vwap == null) Amber else Muted, fontSize = 10.sp)

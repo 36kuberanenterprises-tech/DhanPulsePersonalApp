@@ -3,7 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs } from './angel.js';
-import { analyse } from './analysis.js';
+import { analyse, marketDataState } from './analysis.js';
+import { openAngelPriceStream, streamInstrument } from './live-stream.js';
 import { runBacktest } from './backtest.js';
 import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
@@ -14,6 +15,7 @@ app.use(express.json({ limit: '256kb' }));
 
 const sessions = new Map();
 const analysisCache = new Map();
+const liveConnections = new Map();
 const LIVE_ANALYSIS_MIN_MS = 2500;
 const IST_OFFSET_MS = 330 * 60 * 1000;
 const nextIndiaMidnight = now => {
@@ -162,6 +164,74 @@ app.get('/api/markets/mcx', requireSession, async (_req, res) => {
     res.json({ indices: mcxIndexCatalog(rows), energy: mcxEnergyCatalog(rows), source: 'Angel One instrument master', updatedAt: new Date().toISOString() });
   } catch (e) {
     res.status(503).json({ error: e.message || 'MCX index list temporarily unavailable' });
+  }
+});
+
+app.get('/api/live/:symbol/stream', requireSession, async (req, res) => {
+  const sessionId = req.header('X-Session-Id');
+  const symbol = String(req.params.symbol || '').toUpperCase();
+  let instrument;
+  let segment = 'EQUITY';
+  try {
+    const rows = await instrumentMaster();
+    const mcx = [...mcxIndexCatalog(rows), ...mcxEnergyCatalog(rows)].some(x => x.symbol === symbol);
+    if (!mcx && !['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(symbol)) {
+      return res.status(400).json({ error: 'Live market symbol unavailable' });
+    }
+    segment = mcx ? 'MCX' : 'EQUITY';
+    instrument = streamInstrument(resolveUnderlying(rows, symbol));
+    if (mcx && instrument.exchangeType !== 5) throw new Error('MCX feed token unavailable');
+  } catch (e) {
+    return res.status(503).json({ error: e.message || 'Live broker stream unavailable' });
+  }
+
+  liveConnections.get(sessionId)?.();
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders();
+  let closed = false;
+  let lastTickAt = 0;
+  let lastSentAt = 0;
+  let stopBroker = () => {};
+  const send = event => {
+    if (!closed && !res.destroyed) res.write('data: ' + JSON.stringify({ symbol, ...event }) + '\n\n');
+  };
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(keepAlive);
+    stopBroker();
+    if (liveConnections.get(sessionId) === close) liveConnections.delete(sessionId);
+    res.end();
+  };
+  const keepAlive = setInterval(() => {
+    if (Date.now() >= req.smartSession.expiresAt) return close();
+    if (Date.now() - lastTickAt > 15_000) send({ status: 'DELAYED' });
+    else if (!res.destroyed) res.write(': heartbeat\n\n');
+  }, 15_000);
+  liveConnections.set(sessionId, close);
+  res.on('close', close);
+  send({ status: 'CONNECTING' });
+  try {
+    stopBroker = openAngelPriceStream(req.smartSession, instrument, tick => {
+      const now = Date.now();
+      if (now - tick.exchangeTimestamp > 90_000) return;
+      const status = marketDataState(new Date(now), now - tick.exchangeTimestamp, true, segment);
+      if (status !== 'LIVE') return;
+      lastTickAt = now;
+      if (now - lastSentAt < 50 || res.writableLength > 64_000) return;
+      lastSentAt = now;
+      send({ status, price: tick.price, exchangeTime: new Date(tick.exchangeTimestamp).toISOString(),
+        receivedAt: new Date(now).toISOString() });
+    }, close);
+    if (closed) stopBroker();
+  } catch (e) {
+    send({ status: 'DELAYED', message: e.message });
+    close();
   }
 });
 
@@ -505,13 +575,14 @@ app.post('/api/order', requireSession, async (req, res) => {
 
 app.post('/api/auth/logout', requireSession, (req, res) => {
   const id = req.header('X-Session-Id');
+  liveConnections.get(id)?.();
   sessions.delete(id);
   for (const key of analysisCache.keys()) if (key.startsWith(id + '|')) analysisCache.delete(key);
   res.json({ ok: true });
 });
 
 setInterval(() => {
-  for (const [id, s] of sessions) if (Date.now() >= s.expiresAt) sessions.delete(id);
+  for (const [id, s] of sessions) if (Date.now() >= s.expiresAt) { liveConnections.get(id)?.(); sessions.delete(id); }
 }, 30 * 60 * 1000).unref();
 
 const port = Number(process.env.PORT || 8787);
