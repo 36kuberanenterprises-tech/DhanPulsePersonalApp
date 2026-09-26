@@ -1,0 +1,62 @@
+name: Build DhanPulse Crypto Forex Background APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'crypto-forex-app/**'
+      - '.github/workflows/build-crypto-forex.yml'
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Reconstruct Android project
+        run: |
+          cat crypto-forex-app/project.part* | base64 -d > /tmp/dhanpulse-project.zip
+          mkdir -p crypto-forex-app/buildsrc
+          unzip -q /tmp/dhanpulse-project.zip -d crypto-forex-app/buildsrc
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "sdk.dir=$ANDROID_HOME" > crypto-forex-app/buildsrc/local.properties
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build release APK
+        working-directory: crypto-forex-app/buildsrc
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Prepare APK artifact
+        run: cp crypto-forex-app/buildsrc/app/build/outputs/apk/release/app-release-unsigned.apk DhanPulse_Crypto_Forex_v1.8.0_unsigned.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DhanPulse-Crypto-Forex-v1.8.0-Unsigned
+          path: DhanPulse_Crypto_Forex_v1.8.0_unsigned.apk
+          if-no-files-found: error
+          retention-days: 30
