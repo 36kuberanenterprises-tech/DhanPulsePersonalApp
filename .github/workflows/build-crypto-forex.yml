@@ -25,8 +25,23 @@ jobs:
 
       - name: Reconstruct Android project
         run: |
-          cat crypto-forex-app/project.part* | base64 -d > /tmp/dhanpulse-project.zip
+          cat \
+            crypto-forex-app/project.part00 \
+            crypto-forex-app/project.part01 \
+            crypto-forex-app/project.part02 \
+            crypto-forex-app/project.part03 \
+            crypto-forex-app/project.part04a \
+            crypto-forex-app/project.part04b0 \
+            crypto-forex-app/project.part04b1 \
+            crypto-forex-app/project.part04c \
+            crypto-forex-app/project.part04d \
+            crypto-forex-app/project.part04e \
+            crypto-forex-app/project.part04f \
+            crypto-forex-app/project.part05 \
+            crypto-forex-app/project.part06 \
+            | base64 -d > /tmp/dhanpulse-project.zip
           mkdir -p crypto-forex-app/buildsrc
+          unzip -t /tmp/dhanpulse-project.zip
           unzip -q /tmp/dhanpulse-project.zip -d crypto-forex-app/buildsrc
 
       - name: Set up Java 17
