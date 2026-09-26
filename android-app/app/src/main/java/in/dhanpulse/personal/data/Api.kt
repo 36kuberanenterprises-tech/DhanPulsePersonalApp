@@ -41,6 +41,9 @@ interface DhanPulseApi {
         @Body request: BacktestRequest
     ): BacktestReport
 
+    @GET("api/backtest/catalog")
+    suspend fun backtestCatalog(@Header("X-Session-Id") sessionId: String): BacktestCatalog
+
     @GET("api/order/diagnostics")
     suspend fun orderDiagnostics(
         @Header("X-Session-Id") sessionId: String

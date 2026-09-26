@@ -203,7 +203,23 @@ data class BacktestRequest(
     val symbol: String,
     val interval: String,
     val years: Int = 3,
-    val capital: Double = 20000.0
+    val capital: Double = 20000.0,
+    val exchange: String = "NSE",
+    val kind: String = "INDEX"
+)
+
+data class BacktestChoice(
+    val symbol: String = "", val label: String = "", val exchange: String = "NSE",
+    val kind: String = "INDEX", val token: String = "", val sector: String? = null,
+    val enabled: Boolean = true, val reason: String? = null
+)
+
+data class BacktestCatalog(
+    val indices: List<BacktestChoice> = emptyList(),
+    val mcx: List<BacktestChoice> = emptyList(),
+    val stocks: List<BacktestChoice> = emptyList(),
+    val energy: List<BacktestChoice> = emptyList(),
+    val source: String = ""
 )
 
 data class BacktestSlice(
@@ -332,6 +348,8 @@ data class BacktestPeriod(
 data class BacktestReport(
     val version: String? = null,
     val symbol: String = "",
+    val kind: String = "INDEX",
+    val exchange: String = "NSE",
     val interval: String = "",
     val years: Int = 0,
     val capital: Double = 0.0,

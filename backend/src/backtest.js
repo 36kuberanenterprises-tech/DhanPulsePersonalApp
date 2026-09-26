@@ -1,4 +1,5 @@
 import { instrumentMaster, resolveUnderlying, candleData, parseCandles } from './angel.js';
+import { sizeStockTrade } from './stock-scanner.js';
 
 const IST_MS = 330 * 60 * 1000;
 const MAX_DAYS = { ONE_MINUTE:30, THREE_MINUTE:60, FIVE_MINUTE:100, TEN_MINUTE:100, FIFTEEN_MINUTE:200 };
@@ -18,9 +19,15 @@ function istParts(d=new Date()){
   return {y:x.getUTCFullYear(),m:x.getUTCMonth(),day:x.getUTCDate()};
 }
 function makeIstDate(y,m,day,hh,mm){ return new Date(Date.UTC(y,m,day,hh,mm)-IST_MS); }
-function yearsAgoStart(years){ const p=istParts(); return makeIstDate(p.y-years,p.m,p.day,9,15); }
-function todayEnd(){
-  const p=istParts(), now=new Date(), close=makeIstDate(p.y,p.m,p.day,15,30);
+function yearsAgoStart(years,market='EQUITY'){ const p=istParts(); return makeIstDate(p.y-years,p.m,p.day,9,market==='MCX'?0:15); }
+function coverageNote(candles,years,market='EQUITY'){
+  if(!candles.length)return '';
+  const requested=yearsAgoStart(years,market),first=new Date(candles[0].timestamp);
+  return first.getTime()-requested.getTime()>45*86400000
+    ? ` Partial history: ${years} years were requested, but broker candles begin on ${first.toISOString().slice(0,10)}. Results use only the actual dates shown.` : '';
+}
+function todayEnd(market='EQUITY'){
+  const p=istParts(), now=new Date(), close=makeIstDate(p.y,p.m,p.day,market==='MCX'?23:15,market==='MCX'?59:30);
   return now<close?now:close;
 }
 async function candleWithRetry(session,payload){
@@ -32,24 +39,25 @@ async function candleWithRetry(session,payload){
   throw last;
 }
 
-export async function historicalCandles(session,symbol,interval,years){
-  const key=symbol+'|'+interval+'|'+years;
+export async function historicalCandles(session,symbol,interval,years,choice=null){
+  const market=choice?.exchange==='MCX'?'MCX':'EQUITY';
+  const key=(choice?.exchange||'AUTO')+'|'+(choice?.token||symbol)+'|'+interval+'|'+years;
   const hit=cache.get(key);
   if(hit && Date.now()-hit.at<6*60*60*1000) return hit.rows;
 
-  const master=await instrumentMaster();
-  const underlying=resolveUnderlying(master,symbol);
+  const underlying=choice ? {token:choice.token,exch_seg:choice.exchange} :
+    resolveUnderlying(await instrumentMaster(),symbol);
   const exchange=exchangeOf(underlying), token=String(underlying.token);
   const maxDays=MAX_DAYS[interval];
   if(!maxDays) throw new Error('Unsupported historical interval');
 
-  const start=yearsAgoStart(years), end=todayEnd(), rows=[];
+  const start=yearsAgoStart(years,market), end=todayEnd(market), rows=[];
   let cursor=new Date(start);
   while(cursor<end){
     let chunkEnd=new Date(cursor.getTime()+(maxDays-1)*86400000);
     if(chunkEnd>end) chunkEnd=new Date(end);
     const cp=istParts(chunkEnd);
-    chunkEnd=makeIstDate(cp.y,cp.m,cp.day,15,30);
+    chunkEnd=makeIstDate(cp.y,cp.m,cp.day,market==='MCX'?23:15,market==='MCX'?59:30);
     if(chunkEnd>end) chunkEnd=new Date(end);
     const raw=await candleWithRetry(session,{
       exchange,
@@ -252,7 +260,11 @@ function isStandardTradingDay(ts){
   return w==='Mon'||w==='Tue'||w==='Wed'||w==='Thu'||w==='Fri';
 }
 const dayKey=ts=>String(ts).slice(0,10);
-function timeBucket(ts){const m=istHm(ts);if(m<630)return '09:25-10:30';if(m<720)return '10:30-12:00';if(m<810)return '12:00-13:30';return '13:30-15:00';}
+function timeBucket(ts,market='EQUITY'){
+  const m=istHm(ts);
+  if(market==='MCX')return m<720?'09:30-12:00':m<960?'12:00-16:00':m<1200?'16:00-20:00':'20:00-23:20';
+  if(m<630)return '09:25-10:30';if(m<720)return '10:30-12:00';if(m<810)return '12:00-13:30';return '13:30-15:00';
+}
 function regimeBucket(adx){if(adx==null)return 'UNKNOWN';if(adx>=25)return 'TRENDING';if(adx<18)return 'RANGE';return 'TRANSITION';}
 function volatilityBucket(atrPct,s){if(atrPct==null||s.volLow==null||s.volHigh==null)return 'UNKNOWN';if(atrPct<=s.volLow)return 'LOW VOL';if(atrPct>=s.volHigh)return 'HIGH VOL';return 'NORMAL VOL';}
 function phaseBucket(i,length){const p=i/Math.max(1,length-1);if(p<0.60)return 'DEVELOPMENT 60%';if(p<0.80)return 'VALIDATION 20%';return 'OUT OF SAMPLE 20%';}
@@ -285,6 +297,7 @@ function simulate(strategy,candles,entryInterval,higherCandles,cfg={}){
   const trades=[];
   let lastExit=-10,dailyCount=0,activeDay='';
   const stopAtr=cfg.stopAtr??1,t1Atr=cfg.t1Atr??1.5,t2Atr=cfg.t2Atr??2,maxTrades=cfg.maxTradesPerDay??3,frictionR=cfg.frictionR??0.05;
+  const mcx=cfg.market==='MCX';
 
   for(let i=40;i<candles.length-1;i++){
     const dk=dayKey(candles[i].timestamp);
@@ -293,7 +306,7 @@ function simulate(strategy,candles,entryInterval,higherCandles,cfg={}){
     if(dk!==activeDay){activeDay=dk;dailyCount=0;}
     if(i<=lastExit+2||dailyCount>=maxTrades)continue;
     const minute=istHm(candles[i].timestamp);
-    if(minute<565||minute>895)continue;
+    if(minute<(mcx?570:565)||minute>(mcx?1375:895))continue;
 
     const side=signalAt(strategy,candles,s,htf,i,cfg);
     if(side==='WAIT')continue;
@@ -305,7 +318,13 @@ function simulate(strategy,candles,entryInterval,higherCandles,cfg={}){
     let t1Hit=false,grossR=null,exitIndex=entryIndex,reason='EOD';
 
     for(let j=entryIndex;j<candles.length;j++){
-      if(dayKey(candles[j].timestamp)!==dk){exitIndex=Math.max(entryIndex,j-1);break;}
+      if(dayKey(candles[j].timestamp)!==dk){
+        exitIndex=Math.max(entryIndex,j-1);
+        const endBar=candles[exitIndex],moveR=dir*(endBar.close-entry)/riskDistance;
+        grossR=t1Hit?0.5*(t1Atr/stopAtr)+0.5*Math.max(0,Math.min(t2Atr/stopAtr,moveR)):
+          Math.max(-1,Math.min(t1Atr/stopAtr,moveR));
+        reason='EOD';break;
+      }
       const bar=candles[j],stopLevel=t1Hit?entry:stop;
       const stopHit=dir===1?bar.low<=stopLevel:bar.high>=stopLevel;
       const t1HitNow=dir===1?bar.high>=t1:bar.low<=t1;
@@ -323,7 +342,7 @@ function simulate(strategy,candles,entryInterval,higherCandles,cfg={}){
         if(t2HitNow){grossR=0.5*t1R+0.5*t2R;exitIndex=j;reason='T2';break;}
       }
 
-      if(istHm(bar.timestamp)>=920||j===candles.length-1){
+      if(istHm(bar.timestamp)>=(mcx?1400:920)||j===candles.length-1){
         const moveR=dir*(bar.close-entry)/riskDistance;
         grossR=t1Hit?0.5*t1R+0.5*Math.max(0,Math.min(t2R,moveR)):Math.max(-1,Math.min(t1R,moveR));
         exitIndex=j;reason='EOD';break;
@@ -333,7 +352,7 @@ function simulate(strategy,candles,entryInterval,higherCandles,cfg={}){
     const netR=grossR-frictionR;
     trades.push({
       date:dk,side,entry:round(entry),exit:round(candles[exitIndex]?.close),grossR:round(grossR,3),netR:round(netR,3),reason,
-      timeBucket:timeBucket(candles[i].timestamp),weekday:wd,
+      timeBucket:timeBucket(candles[i].timestamp,cfg.market),weekday:wd,
       regime:regimeBucket(s.adx[i]),volatility:volatilityBucket(s.atrPct[i],s),phase:phaseBucket(i,candles.length)
     });
     lastExit=exitIndex;dailyCount++;i=exitIndex;
@@ -341,7 +360,7 @@ function simulate(strategy,candles,entryInterval,higherCandles,cfg={}){
   return {trades,series:s,htf};
 }
 
-function buildStrategyResult(strategy,trades,capital,riskPct){
+function buildStrategyResult(strategy,trades,capital,riskPct,market='EQUITY'){
   const base=summarizeSlice('ALL',trades),wins=trades.filter(t=>t.netR>0),losses=trades.filter(t=>t.netR<=0);
   let equity=capital,peak=capital,maxDdPct=0,lossStreak=0,maxLossStreak=0;
   const equityCurve=[];
@@ -367,7 +386,9 @@ function buildStrategyResult(strategy,trades,capital,riskPct){
     avgLossR:losses.length?round(losses.reduce((a,t)=>a+t.netR,0)/losses.length,2):0,
     diagnostics:{
       sides:groupSummaries(trades,'side',['CE','PE']),
-      times:groupSummaries(trades,'timeBucket',['09:25-10:30','10:30-12:00','12:00-13:30','13:30-15:00']),
+      times:groupSummaries(trades,'timeBucket',market==='MCX'
+        ? ['09:30-12:00','12:00-16:00','16:00-20:00','20:00-23:20']
+        : ['09:25-10:30','10:30-12:00','12:00-13:30','13:30-15:00']),
       weekdays:groupSummaries(trades,'weekday',['Mon','Tue','Wed','Thu','Fri']),
       regimes:groupSummaries(trades,'regime',['TRENDING','TRANSITION','RANGE']),
       volatility:groupSummaries(trades,'volatility',['LOW VOL','NORMAL VOL','HIGH VOL']),
@@ -379,12 +400,12 @@ function buildStrategyResult(strategy,trades,capital,riskPct){
   };
 }
 
-function robustnessSweep(candles,interval,higher,capital,baseSeries,baseHtf){
+function robustnessSweep(candles,interval,higher,capital,baseSeries,baseHtf,market='EQUITY'){
   const emaPairs=[['ema8','ema15','8/15'],['ema9','ema15','9/15'],['ema10','ema15','10/15'],['ema9','ema16','9/16']];
   const stops=[0.8,1.0,1.2],rows=[];
   for(const [fastKey,slowKey,label] of emaPairs){
     for(const stopAtr of stops){
-      const sim=simulate('TREND_PRO',candles,interval,higher,{series:baseSeries,htf:baseHtf,fastKey,slowKey,stopAtr,t1Atr:1.5,t2Atr:2,frictionR:0.05});
+      const sim=simulate('TREND_PRO',candles,interval,higher,{series:baseSeries,htf:baseHtf,fastKey,slowKey,stopAtr,t1Atr:1.5,t2Atr:2,frictionR:0.05,market});
       const s=summarizeSlice('x',sim.trades);
       rows.push({ema:label,stopAtr,profitFactor:s.profitFactor,expectancyR:s.expectancyR,netR:s.netR,trades:s.trades});
     }
@@ -496,7 +517,7 @@ function discoverForSimulation(trades,configName){
   return beam.slice(0,15).map(x=>({...x,configName,ruleText:candidateRuleText(x.filters)}));
 }
 
-function adaptiveResearch(candles,interval,higher,capital,baseSeries,baseHtf){
+function adaptiveResearch(candles,interval,higher,capital,baseSeries,baseHtf,market='EQUITY'){
   const configs=[
     {name:'EMA 9/15 • SL 1.0',fastKey:'ema9',slowKey:'ema15',stopAtr:1.0,t1Atr:1.5,t2Atr:2.0},
     {name:'EMA 9/15 • SL 1.2',fastKey:'ema9',slowKey:'ema15',stopAtr:1.2,t1Atr:1.5,t2Atr:2.0},
@@ -511,7 +532,7 @@ function adaptiveResearch(candles,interval,higher,capital,baseSeries,baseHtf){
   const simByConfig=new Map();
   for(const cfg of configs){
     const sim=simulate('TREND_PRO',candles,interval,higher,{
-      ...cfg,series:baseSeries,htf:baseHtf,frictionR:0.05
+      ...cfg,series:baseSeries,htf:baseHtf,frictionR:0.05,market
     });
     simByConfig.set(cfg.name,sim.trades);
     allCandidates.push(...discoverForSimulation(sim.trades,cfg.name));
@@ -567,7 +588,7 @@ function adaptiveResearch(candles,interval,higher,capital,baseSeries,baseHtf){
   const oosRows=filterByRule(all.filter(t=>t.phase==='OUT OF SAMPLE 20%'),selected.filters);
   const oos=summarizeSlice('OUT OF SAMPLE',oosRows);
   const allFiltered=filterByRule(all,selected.filters);
-  const combined=buildStrategyResult('ADAPTIVE_PRO',allFiltered,capital,0.5);
+  const combined=buildStrategyResult('ADAPTIVE_PRO',allFiltered,capital,0.5,market);
 
   const gatePassed=
     selected.dev.trades>=80 &&
@@ -643,15 +664,17 @@ function interpretationSummary(strategies,adaptive){
   };
 }
 
-export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE',years=3,capital=20000}={}){
+export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE',years=3,capital=20000,choice=null}={}){
   symbol=String(symbol).toUpperCase();interval=String(interval).toUpperCase();
   years=[1,3,5].includes(Number(years))?Number(years):3;
   capital=Math.max(1000,Math.min(10000000,Number(capital)||20000));
-  if(!['NIFTY','BANKNIFTY','SENSEX'].includes(symbol))throw new Error('Supported symbols: NIFTY, BANKNIFTY, SENSEX');
+  if(!choice && !['NIFTY','BANKNIFTY','SENSEX'].includes(symbol))throw new Error('Instrument must be selected from the current backtest catalogue');
   if(!MAX_DAYS[interval])throw new Error('Unsupported interval');
+  if(choice?.kind==='STOCK') return runStockBacktest(session,{symbol,interval,years,capital,choice});
+  const market=choice?.kind==='MCX_INDEX'?'MCX':'EQUITY';
 
-  const rawEntry=await historicalCandles(session,symbol,interval,years);
-  const rawHigher=interval==='FIFTEEN_MINUTE'?rawEntry:await historicalCandles(session,symbol,'FIFTEEN_MINUTE',years);
+  const rawEntry=await historicalCandles(session,symbol,interval,years,choice);
+  const rawHigher=interval==='FIFTEEN_MINUTE'?rawEntry:await historicalCandles(session,symbol,'FIFTEEN_MINUTE',years,choice);
   const weekendCandlesExcluded=rawEntry.filter(x=>!isStandardTradingDay(x.timestamp)).length;
   const weekendHigherExcluded=rawHigher.filter(x=>!isStandardTradingDay(x.timestamp)).length;
   const entry=rawEntry.filter(x=>isStandardTradingDay(x.timestamp));
@@ -661,15 +684,27 @@ export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE'
   const sharedSeries=seriesFor(entry),sharedHtf=higherContext(entry,higher,MINUTES[interval]||5),riskPct=1;
   const strategies=[];
   for(const name of ['CURRENT_CORE','TREND_PRO','REGIME_PRO']){
-    const sim=simulate(name,entry,interval,higher,{series:sharedSeries,htf:sharedHtf,frictionR:0.05});
-    strategies.push(buildStrategyResult(name,sim.trades,capital,riskPct));
+    const sim=simulate(name,entry,interval,higher,{series:sharedSeries,htf:sharedHtf,frictionR:0.05,market});
+    strategies.push(buildStrategyResult(name,sim.trades,capital,riskPct,market));
   }
-  const robustness=robustnessSweep(entry,interval,higher,capital,sharedSeries,sharedHtf);
-  const adaptive=adaptiveResearch(entry,interval,higher,capital,sharedSeries,sharedHtf);
+  const robustness=robustnessSweep(entry,interval,higher,capital,sharedSeries,sharedHtf,market);
+  const adaptive=adaptiveResearch(entry,interval,higher,capital,sharedSeries,sharedHtf,market);
+  if(market==='MCX'||choice?.kind==='INDEX'&&!['NIFTY','BANKNIFTY','SENSEX'].includes(symbol)){
+    adaptive.gatePassed=false;
+    adaptive.status='UNDERLYING_ONLY';
+    adaptive.message=market==='MCX'
+      ? 'MCX underlying index research cannot approve live option trading without historical option premiums, contract expiry and charges.'
+      : 'This additional index is available for underlying research. It is not a live Auto Trade symbol in this app.';
+  }
+  const interpretation=interpretationSummary(strategies,adaptive);
+  if(adaptive.status==='UNDERLYING_ONLY'){
+    interpretation.verdict='UNDERLYING RESEARCH ONLY';
+    interpretation.reason=adaptive.message;
+  }
 
   return {
     version:'CLARITY_V1_2',
-    symbol,interval,years,capital,
+    symbol,interval,years,capital,kind:choice?.kind||'INDEX',exchange:choice?.exchange||'NSE',
     period:{from:entry[0].timestamp,to:entry[entry.length-1].timestamp},
     candles:entry.length,higherTimeframe:'FIFTEEN_MINUTE',
     dataQuality:{
@@ -677,7 +712,7 @@ export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE'
       usedCandles:entry.length,
       weekendOrSpecialCandlesExcluded:weekendCandlesExcluded,
       higherTimeframeExcluded:weekendHigherExcluded,
-      note:'Standard backtest uses Monday-Friday sessions only. Weekend/special-session candles are excluded from strategy statistics and weekday diagnostics.'
+      note:'Standard backtest uses Monday-Friday sessions only. Weekend/special-session candles are excluded from strategy statistics and weekday diagnostics.'+coverageNote(entry,years,market)
     },
     assumptions:{
       entry:'Signal on candle close; entry at next candle open',
@@ -685,18 +720,147 @@ export async function runBacktest(session,{symbol='NIFTY',interval='FIVE_MINUTE'
       target1:'1.5 ATR, 50% booked',
       target2:'2 ATR, remaining 50%',
       afterTarget1:'Remaining stop moved to breakeven',
-      intradayExit:'Open positions closed around 15:20 IST',
+      intradayExit:market==='MCX'?'Model closes by 23:20 IST':'Open positions closed around 15:20 IST',
       maxTradesPerDay:3,riskPerTradePct:riskPct,executionFrictionR:0.05,
       equityModel:'1% of current equity risked per trade (compounding)'
     },
     strategies,robustness,adaptive,
-    interpretation:interpretationSummary(strategies,adaptive),
+    interpretation,
     limitations:[
       'This diagnostic test measures the underlying index signal engine, not historical option premium P&L.',
+      ...(market==='MCX'?['The MCX index session and early exit are modeled. Actual option expiry, liquidity and premium execution are not tested.']:[]),
       'Angel index candles do not provide usable volume, so true historical VWAP is not reconstructed; Trend Pro uses a session typical-price mean proxy.',
       'Historical PCR and complete expired option-chain snapshots are not included.',
       'Execution friction is modeled as 0.05R per trade; exact option brokerage, tax, spread and IV effects require Stage 2 option-contract data.'
     ],
     generatedAt:new Date().toISOString()
   };
+}
+
+// Cash shares have traded volume, unlike spot indices. This model tests only
+// the technical part of the live scanner; past Nifty and sector comparisons
+// are not reconstructed and can never pass an option Auto Trade gate.
+export function stockTechnicalModel(candles,higher,capital=20000){
+  const s=seriesFor(candles),htf=higherContext(candles,higher,5),trades=[];
+  const days=new Map();
+  for(let i=0;i<candles.length;i++){
+    if(!isStandardTradingDay(candles[i].timestamp))continue;
+    const key=dayKey(candles[i].timestamp),list=days.get(key)||[];
+    list.push(i);days.set(key,list);
+  }
+  const dates=[...days.keys()].sort(),cum=new Map();
+  for(const [key,positions] of days){
+    let total=0;
+    cum.set(key,positions.map(i=>{total+=Math.max(0,candles[i].volume||0);return [istHm(candles[i].timestamp),total];}));
+  }
+  let equity=capital,peak=capital,maxDrawdown=0,lossStreak=0,maxLossStreak=0;
+  const curve=[];
+  for(let d=5;d<dates.length;d++){
+    const date=dates[d],positions=days.get(date),previous=dates.slice(d-5,d);
+    const open=positions.filter(i=>[555,560,565].includes(istHm(candles[i].timestamp))).slice(0,3);
+    if(open.length!==3||open.some(i=>!(candles[i].volume>0)))continue;
+    const openingHigh=Math.max(...open.map(i=>candles[i].high)),openingLow=Math.min(...open.map(i=>candles[i].low));
+    const priorDay=days.get(dates[d-1])||[];
+    const priorHigh=Math.max(...priorDay.map(i=>candles[i].high)),priorLow=Math.min(...priorDay.map(i=>candles[i].low));
+    let volume=0,value=0,dailyTrades=0,dailyLosses=0,dailyPnl=0,positionUntil=-1,validVolume=true;
+    for(let p=0;p<positions.length-1;p++){
+      const i=positions[p],c=candles[i],minute=istHm(c.timestamp);
+      if(!(c.volume>0)){validVolume=false;continue;}
+      if(!validVolume)continue;
+      volume+=c.volume;value+=(c.high+c.low+c.close)/3*c.volume;
+      if(minute<575||minute>=880||p<4||i<=positionUntil||dailyTrades>=3||dailyLosses>=2||dailyPnl<=-200)continue;
+      const prev=candles[positions[p-1]],a=s.atr[i],trend=htf[i],vwap=value/volume;
+      if(!a||!trend||!Number.isFinite(vwap))continue;
+      const comparable=previous.map(key=>{
+        const volumes=cum.get(key)||[];
+        return volumes.filter(([m])=>m<=minute).at(-1)?.[1]||0;
+      }).filter(v=>v>0).sort((x,y)=>x-y);
+      if(comparable.length<5)continue;
+      const typical=comparable[2],relativeVolume=volume/typical;
+      const breakoutBuy=prev.close<=openingHigh&&c.close>openingHigh&&c.close-openingHigh<=a*0.35;
+      const breakoutSell=prev.close>=openingLow&&c.close<openingLow&&openingLow-c.close<=a*0.35;
+      const pullbackBuy=p>=6&&prev.low<=Math.max(vwap,s.ema9[positions[p-1]]||vwap)&&prev.close>=vwap&&c.close>prev.high;
+      const pullbackSell=p>=6&&prev.high>=Math.min(vwap,s.ema9[positions[p-1]]||vwap)&&prev.close<=vwap&&c.close<prev.low;
+      let side=null,stop=null,setup=null;
+      if(trend.bull&&c.close>vwap&&relativeVolume>=1.2&&breakoutBuy){side='BUY';setup='OPENING_RANGE';stop=Math.min(prev.low,c.low)-a*0.08;}
+      else if(trend.bear&&c.close<vwap&&relativeVolume>=1.2&&breakoutSell){side='SELL';setup='OPENING_RANGE';stop=Math.max(prev.high,c.high)+a*0.08;}
+      else if(trend.bull&&c.close>vwap&&relativeVolume>=1&&pullbackBuy){side='BUY';setup='FIRST_PULLBACK';stop=Math.min(prev.low,c.low)-a*0.08;}
+      else if(trend.bear&&c.close<vwap&&relativeVolume>=1&&pullbackSell){side='SELL';setup='FIRST_PULLBACK';stop=Math.max(prev.high,c.high)+a*0.08;}
+      if(!side)continue;
+      const next=positions[p+1],entry=candles[next].open,dir=side==='BUY'?1:-1,distance=Math.abs(entry-stop);
+      if(!Number.isFinite(entry)||entry<=0||dir*(entry-stop)<=0||distance<a*0.2||distance>a*1.5||
+        Math.abs(entry-c.close)>a*0.25)continue;
+      const obstacle=dir===1?priorHigh:priorLow;
+      if(Number.isFinite(obstacle)&&dir*(obstacle-entry)>0&&dir*(obstacle-entry)<distance*1.5)continue;
+      const size=sizeStockTrade({cash:equity,entry,stop});
+      if(!size||size.estimatedProfitAtTwoR<=size.estimatedLoss*1.25||dailyPnl-size.estimatedLoss< -200)continue;
+      const target=entry+dir*distance*2;
+      let exit=null,reason='EOD',exitIndex=next;
+      for(let q=p+1;q<positions.length;q++){
+        const j=positions[q],bar=candles[j];
+        const hitStop=dir===1?bar.low<=stop:bar.high>=stop;
+        const hitTarget=dir===1?bar.high>=target:bar.low<=target;
+        if(hitStop){exit=dir===1?Math.min(stop,bar.open):Math.max(stop,bar.open);reason='SL';exitIndex=j;break;}
+        if(hitTarget){exit=target;reason='T2';exitIndex=j;break;}
+        if(istHm(bar.timestamp)>=905||q===positions.length-1){exit=bar.close;exitIndex=j;break;}
+      }
+      if(exit==null)continue;
+      const pnl=dir*(exit-entry)*size.quantity-size.estimatedCosts;
+      const netR=pnl/size.estimatedLoss;
+      trades.push({date,side,setup,netR:round(netR,3),netPnl:round(pnl),reason,
+        weekday:istWeekday(c.timestamp),timeBucket:timeBucket(c.timestamp),
+        phase:phaseBucket(i,candles.length),entry:round(entry),exit:round(exit),quantity:size.quantity});
+      equity+=pnl;peak=Math.max(peak,equity);maxDrawdown=Math.max(maxDrawdown,peak>0?100*(peak-equity)/peak:0);
+      if(pnl<0){dailyLosses++;lossStreak++;maxLossStreak=Math.max(maxLossStreak,lossStreak);}else lossStreak=0;
+      dailyPnl+=pnl;dailyTrades++;positionUntil=exitIndex;
+      if(!curve.length||curve[curve.length-1].date!==date)curve.push({date,equity:round(equity,0)});
+      else curve[curve.length-1].equity=round(equity,0);
+    }
+  }
+  const base=summarizeSlice('ALL',trades),wins=trades.filter(t=>t.netPnl>0),losses=trades.filter(t=>t.netPnl<=0);
+  return {
+    strategy:'STOCK_TECHNICAL',label:'Cash stock technical setups',
+    totalTrades:trades.length,wins:wins.length,losses:losses.length,
+    winRate:base.winRate,profitFactor:base.profitFactor,expectancyR:base.expectancyR,netR:base.netR,
+    startingCapital:round(capital,0),endingCapital:round(equity,0),modelPnl:round(equity-capital,0),
+    modelReturnPct:round(100*(equity-capital)/capital,1),maxDrawdownPct:round(maxDrawdown,1),
+    maxConsecutiveLosses:maxLossStreak,
+    avgWinR:wins.length?round(wins.reduce((sum,t)=>sum+t.netR,0)/wins.length,2):0,
+    avgLossR:losses.length?round(losses.reduce((sum,t)=>sum+t.netR,0)/losses.length,2):0,
+    diagnostics:{sides:groupSummaries(trades,'side',['BUY','SELL']),
+      times:groupSummaries(trades,'timeBucket'),weekdays:groupSummaries(trades,'weekday',['Mon','Tue','Wed','Thu','Fri']),
+      regimes:[],volatility:[],exits:groupSummaries(trades,'reason',['SL','T2','EOD']),
+      phases:groupSummaries(trades,'phase'),years:groupSummaries(trades.map(t=>({...t,year:t.date.slice(0,4)})),'year')},
+    equityCurve:curve,trades
+  };
+}
+
+async function runStockBacktest(session,{symbol,interval,years,capital,choice}){
+  if(interval!=='FIVE_MINUTE')throw new Error('Stock scanner research uses completed five minute candles only');
+  const raw=await historicalCandles(session,symbol,interval,years,choice);
+  const rawHigher=await historicalCandles(session,symbol,'FIFTEEN_MINUTE',years,choice);
+  const entry=raw.filter(x=>isStandardTradingDay(x.timestamp));
+  const higher=rawHigher.filter(x=>isStandardTradingDay(x.timestamp));
+  if(entry.length<450||higher.length<100)throw new Error('Not enough stock history with traded volume for '+symbol+'; try a shorter period');
+  if(entry.filter(x=>x.volume>0).length<400)throw new Error('Broker stock candles have too little traded volume for a reliable VWAP test');
+  const result=stockTechnicalModel(entry,higher,capital);
+  const {trades,...strategy}=result;
+  return {version:'STOCK_CORE_V1',symbol,kind:'STOCK',exchange:'NSE',interval,years,capital,
+    period:{from:entry[0].timestamp,to:entry[entry.length-1].timestamp},candles:entry.length,
+    higherTimeframe:'FIFTEEN_MINUTE',
+    dataQuality:{rawCandles:raw.length,usedCandles:entry.length,
+      weekendOrSpecialCandlesExcluded:raw.length-entry.length,higherTimeframeExcluded:rawHigher.length-higher.length,
+      note:'Broker five minute stock volume is used for VWAP and same time relative volume. Missing volume cannot create a signal.'+coverageNote(entry,years)},
+    assumptions:{entry:'Next five minute candle open after a completed technical trigger',
+      stop:'Prior setup low or high with ATR buffer; stop wins when both stop and target touch a candle',
+      target1:'No partial exit modeled',target2:'Full exit at 2R',
+      intradayExit:'Close by 15:05 IST',maxTradesPerDay:3,riskPerTradePct:0.5,
+      equityModel:'Actual modeled share quantity and estimated cash charges; risk capped at Rs. 100 on Rs. 20,000'},
+    strategies:[strategy],robustness:{combinations:0,profitableCombinations:0,profitablePct:0,rows:[]},
+    adaptive:{status:'NOT_APPLICABLE',gatePassed:false,message:'This cash share model does not validate the complete live stock scanner or any live option order.',searchedConfigs:0,candidates:0},
+    interpretation:{verdict:'RESEARCH ONLY',reason:'This tests technical entries on a cash share. Historical Nifty and sector alignment, full quote depth and actual fills are not reproduced.',
+      focus:['Net result after estimated costs','Trade count','Drawdown','BUY and SELL results'],ignoreForDecision:['One profitable day','Raw win rate alone']},
+    limitations:['Historical sector and Nifty relative strength filters of the live scanner are not included.',
+      'Historical bid ask depth and exact execution costs are unavailable; charges and price friction are estimated.',
+      'Cash share backtest is not an options backtest and cannot enable live Auto Trade.'],generatedAt:new Date().toISOString()};
 }

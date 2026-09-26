@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -284,7 +285,8 @@ private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
                         Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (selected == key) Purple else Color.Transparent)
                     )
                 },
-                label = { Text(label, fontSize = 10.sp, fontWeight = if (selected == key) FontWeight.ExtraBold else FontWeight.Medium) },
+                label = { Text(label, fontSize = 8.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                    fontWeight = if (selected == key) FontWeight.ExtraBold else FontWeight.Medium) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedTextColor = Ink,
                     unselectedTextColor = Muted,
@@ -1085,6 +1087,7 @@ private fun PositionsSection(vm: DhanPulseViewModel) {
 @Composable
 private fun ResearchSection(vm: DhanPulseViewModel) {
     var researchTab by remember { mutableStateOf("CALLS") }
+    LaunchedEffect(researchTab) { if (researchTab == "BACKTEST") vm.fetchBacktestCatalog() }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -1134,9 +1137,91 @@ private fun ResearchSection(vm: DhanPulseViewModel) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item { SectionTitle("Backtest Lab", "Historical strategy validation and robustness") }
-                item { TradingContextBar(vm) }
+                item { BacktestContextBar(vm) }
                 item { BacktestLabCard(vm) }
             }
+        }
+    }
+}
+
+@Composable
+private fun BacktestContextBar(vm: DhanPulseViewModel) {
+    var symbolOpen by remember { mutableStateOf(false) }
+    var symbolQuery by remember { mutableStateOf("") }
+    var timeframeOpen by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("INDEX" to "Indices", "MCX_INDEX" to "MCX", "STOCK" to "Stocks").forEach { (group, label) ->
+                FilledTonalButton(
+                    onClick = { vm.selectBacktestGroup(group); symbolOpen = false },
+                    enabled = !vm.backtestBusy,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = if (vm.backtestGroup == group) Purple.copy(alpha = 0.25f) else Panel2,
+                        contentColor = if (vm.backtestGroup == group) Ink else Muted)
+                ) { Text(label, fontSize = 11.sp, maxLines = 1) }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.weight(1.4f)) {
+                Surface(onClick = { symbolQuery = ""; symbolOpen = true }, color = Panel, shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
+                        Text("BACKTEST SYMBOL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(vm.backtestChoice?.label ?: "Load symbols", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                DropdownMenu(expanded = symbolOpen, onDismissRequest = { symbolOpen = false }) {
+                    if (vm.backtestChoices.size > 15) OutlinedTextField(
+                        value = symbolQuery,
+                        onValueChange = { symbolQuery = it },
+                        label = { Text("Find symbol") },
+                        singleLine = true,
+                        modifier = Modifier.width(250.dp).padding(horizontal = 8.dp)
+                    )
+                    val matches = vm.backtestChoices.filter {
+                        symbolQuery.isBlank() || it.label.contains(symbolQuery, ignoreCase = true)
+                    }
+                    matches.take(40).forEach { choice ->
+                        DropdownMenuItem(text = { Text("${choice.label} • ${choice.exchange}") },
+                            enabled = !vm.backtestBusy,
+                            onClick = { vm.selectBacktestChoice(choice); symbolOpen = false })
+                    }
+                    if (matches.isEmpty()) DropdownMenuItem(text = { Text("No matching broker symbol") }, enabled = false, onClick = {})
+                    if (matches.size > 40) DropdownMenuItem(text = { Text("Type to narrow the list") }, enabled = false, onClick = {})
+                }
+            }
+            Box(Modifier.weight(1f)) {
+                Surface(onClick = { if (vm.backtestGroup != "STOCK") timeframeOpen = true }, color = Panel,
+                    shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
+                        Text("TIMEFRAME", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(timeframeShort(vm.backtestTimeframe), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                DropdownMenu(expanded = timeframeOpen, onDismissRequest = { timeframeOpen = false }) {
+                    listOf("ONE_MINUTE" to "1 minute", "THREE_MINUTE" to "3 minutes", "FIVE_MINUTE" to "5 minutes",
+                        "TEN_MINUTE" to "10 minutes", "FIFTEEN_MINUTE" to "15 minutes").forEach { (interval, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { vm.selectBacktestTimeframe(interval); timeframeOpen = false })
+                    }
+                }
+            }
+        }
+        if (vm.backtestCatalogBusy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Blue)
+        vm.backtestCatalogError?.let { ErrorStrip(it) }
+        if (vm.backtestChoices.isEmpty() && !vm.backtestCatalogBusy) {
+            InfoStrip("No instruments available", "Refresh the broker instrument list or choose another research group.")
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("${vm.backtestChoices.size} available • ${vm.backtestCatalog?.source ?: "Angel One list loading"}",
+                color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = { vm.fetchBacktestCatalog(force = true) }) { Text("Refresh list", color = Blue) }
+        }
+        if (vm.backtestGroup == "MCX_INDEX") InfoStrip("MCX research", "Index price history is tested with MCX hours. This does not calculate historical option premium profit.")
+        if (vm.backtestGroup == "INDEX") InfoStrip("Index research", "The broker's available index symbols are listed here. Extra indices test underlying prices and do not approve live Auto Trade.")
+        if (vm.backtestGroup == "STOCK") InfoStrip("Stock research", "The cash share model tests volume, VWAP and entry setups. Past Nifty and sector strength filters are not included.")
+        if (vm.backtestGroup == "MCX_INDEX" && vm.backtestCatalog?.energy?.isNotEmpty() == true) {
+            InfoStrip("Crude oil and natural gas", "Energy futures need an expiry by expiry history before a one to five year result can be trusted. These contracts are not offered as a continuous backtest yet.")
         }
     }
 }
@@ -1647,7 +1732,7 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val gatewayReady = vm.orderGateway?.executionReady == true
-                    val researchPassed = vm.backtestReport?.adaptive?.gatePassed == true
+                    val researchPassed = vm.researchPassedForTrading
                     Text("DhanPulse will place real BUY orders automatically when the same CE or PE signal is confirmed on two refreshes.")
                     Text("Order route: " + if (gatewayReady) "READY" else "BLOCKED", color = if (gatewayReady) Green else Red, fontWeight = FontWeight.Bold)
                     Text("Research validation: " + if (researchPassed) "PASSED" else "NOT PASSED — experimental live use", color = if (researchPassed) Green else Amber, style = MaterialTheme.typography.bodySmall)
@@ -1668,7 +1753,7 @@ fun AutoTradeCard(vm: DhanPulseViewModel) {
         )
     }
 
-    val researchPassed = vm.backtestReport?.adaptive?.gatePassed == true
+    val researchPassed = vm.researchPassedForTrading
     val gatewayReady = vm.orderGateway?.executionReady == true
     val activeColor = when {
         vm.autoTradeEnabled && researchPassed -> Green
@@ -1737,8 +1822,9 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
             Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("TEST SETUP", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    Text("${vm.selectedSymbol.replace("BANKNIFTY", "BANK NIFTY")} • ${timeframeShort(vm.selectedTimeframe)} entry • 15m trend", color = Ink, fontWeight = FontWeight.ExtraBold)
-                    Text("Model capital ${money(vm.backtestCapital)} • 1% current-equity risk model", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    Text("${vm.backtestChoice?.label ?: "Select symbol"} • ${timeframeShort(vm.backtestTimeframe)} entry • 15m trend", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text(if (vm.backtestGroup == "STOCK") "Model capital ${stockRs(vm.backtestCapital)} • 0.5% risk, capped at Rs. 100 per trade"
+                        else "Model capital ${stockRs(vm.backtestCapital)} • 1% current equity risk model", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
 
@@ -1759,7 +1845,7 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
 
             Button(
                 onClick = vm::runBacktest,
-                enabled = !vm.backtestBusy && !vm.autoTradeEnabled && vm.selectedMarket != "MCX",
+                enabled = !vm.backtestBusy && !vm.autoTradeEnabled && vm.backtestChoice != null,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Blue)
@@ -1768,16 +1854,16 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
                     Spacer(Modifier.width(10.dp))
                     Text("Pulling & testing history…", color = Color.White, fontWeight = FontWeight.Bold)
-                } else Text(if (vm.selectedMarket == "MCX") "MCX RESEARCH PENDING" else "RUN HISTORICAL BACKTEST", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                } else Text("RUN HISTORICAL BACKTEST", color = Color.White, fontWeight = FontWeight.ExtraBold)
             }
 
-            if (vm.selectedMarket == "MCX") InfoStrip("MCX strategy research", "The MCX option buying rules are being introduced without a historical validation result. Auto Trade stays off for MCX.")
             if (vm.autoTradeEnabled) InfoStrip("Backtest locked", "Switch Auto Trade OFF before historical testing.")
             vm.backtestError?.let { ErrorStrip(it) }
 
             if (report != null) {
                 HorizontalDivider(color = Line)
                 Text("${report.candles} weekday candles • ${report.years}Y • ${report.period.from?.take(10) ?: ""} to ${report.period.to?.take(10) ?: ""}", color = Muted, style = MaterialTheme.typography.labelSmall)
+                if (report.dataQuality.note.contains("Partial history")) InfoStrip("History coverage", report.dataQuality.note)
 
                 if (report.dataQuality.weekendOrSpecialCandlesExcluded > 0) {
                     InfoStrip(
@@ -1801,9 +1887,10 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     BacktestTab("Summary", "SUMMARY", resultTab, Modifier.weight(1f)) { resultTab = "SUMMARY" }
-                    BacktestTab("Adaptive", "ADAPTIVE", resultTab, Modifier.weight(1f)) { resultTab = "ADAPTIVE" }
+                    if (report.kind != "STOCK") BacktestTab("Adaptive", "ADAPTIVE", resultTab, Modifier.weight(1f)) { resultTab = "ADAPTIVE" }
+                    else BacktestTab("Diagnostics", "DIAGNOSTICS", resultTab, Modifier.weight(1f)) { resultTab = "DIAGNOSTICS" }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                if (report.kind != "STOCK") Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     BacktestTab("Diagnostics", "DIAGNOSTICS", resultTab, Modifier.weight(1f)) { resultTab = "DIAGNOSTICS" }
                     BacktestTab("Robustness", "ROBUSTNESS", resultTab, Modifier.weight(1f)) { resultTab = "ROBUSTNESS" }
                 }
@@ -1845,11 +1932,11 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
                     }
 
                     "DIAGNOSTICS" -> {
-                        val trend = report.strategies.firstOrNull { it.strategy == "TREND_PRO" }
+                        val trend = report.strategies.firstOrNull { it.strategy == "TREND_PRO" || it.strategy == "STOCK_TECHNICAL" }
                         if (trend != null) {
-                            Text("Trend Pro diagnostics", color = Ink, fontWeight = FontWeight.ExtraBold)
+                            Text(if (report.kind == "STOCK") "Cash stock setup diagnostics" else "Trend Pro diagnostics", color = Ink, fontWeight = FontWeight.ExtraBold)
                             Text("These explain the past. Do not choose a live rule from one green box alone.", color = Muted, style = MaterialTheme.typography.bodySmall)
-                            ExpandableDiagnostic("CE vs PE", trend.diagnostics.sides, false)
+                            ExpandableDiagnostic(if (report.kind == "STOCK") "BUY vs SELL" else "CE vs PE", trend.diagnostics.sides, false)
                             ExpandableDiagnostic("Time windows", trend.diagnostics.times, false)
                             ExpandableDiagnostic("Weekdays — Monday to Friday", trend.diagnostics.weekdays, false)
                             ExpandableDiagnostic("Market regime", trend.diagnostics.regimes, false)
@@ -1890,14 +1977,17 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
                                 Text("HOW TO READ", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                 Text("PF above 1.00 = gross winning R is greater than losing R.", color = Ink, style = MaterialTheme.typography.bodySmall)
                                 Text("Expectancy above 0 = average trade is positive after the model friction.", color = Ink, style = MaterialTheme.typography.bodySmall)
-                                Text("1R = the amount risked on one trade. With Rs. 20,000 and 1% risk, the first 1R is about Rs. 200.", color = Ink, style = MaterialTheme.typography.bodySmall)
+                                Text(if (report.kind == "STOCK") "1R is the planned share risk including estimated costs. At Rs. 20,000 the cap is Rs. 100."
+                                    else "1R = the amount risked on one trade. With Rs. 20,000 and 1% risk, the first 1R is about Rs. 200.", color = Ink, style = MaterialTheme.typography.bodySmall)
                                 Text("Max DD = biggest peak-to-trough fall in the model equity.", color = Ink, style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
                 }
 
-                InfoStrip("Important", "Green historical numbers are not a guarantee. The main decision is the Adaptive gate; Live Auto should remain blocked until a rule passes unseen-data testing and later option-premium validation.")
+                InfoStrip("Important", if (report.kind == "STOCK") "This is a partial cash stock test. Sector and Nifty filters and actual fills were not reconstructed. No live trade is approved."
+                    else "Green historical numbers are not a guarantee. The model tests the underlying index, not option premium fills.")
+                report.limitations.take(3).forEach { Text("• $it", color = Muted, style = MaterialTheme.typography.labelSmall) }
             } else {
                 Text("Run a backtest. The app will show one clear decision first, then you can open Summary, Adaptive, Diagnostics or Robustness separately.", color = Muted, style = MaterialTheme.typography.labelSmall)
             }
