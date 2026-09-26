@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs } from './angel.js';
 import { analyse } from './analysis.js';
 import { runBacktest } from './backtest.js';
+import { scanStocks } from './stock-scanner.js';
 
 const app = express();
 app.use(cors());
@@ -160,6 +161,17 @@ app.get('/api/markets/mcx', requireSession, async (_req, res) => {
     res.json({ indices: mcxIndexCatalog(rows), energy: mcxEnergyCatalog(rows), source: 'Angel One instrument master', updatedAt: new Date().toISOString() });
   } catch (e) {
     res.status(503).json({ error: e.message || 'MCX index list temporarily unavailable' });
+  }
+});
+
+app.get('/api/stocks/scanner', requireSession, async (req, res) => {
+  const trackedToken = String(req.query.trackedToken || '').trim();
+  if (trackedToken && !/^\d{1,12}$/.test(trackedToken)) return res.status(400).json({ error: 'Invalid tracked stock token' });
+  try {
+    res.json(await scanStocks(req.smartSession, trackedToken || null));
+  } catch (e) {
+    console.error('Stock scanner failed:', e?.message || e);
+    res.status(503).json({ error: 'Stock scanner data is temporarily unavailable. ' + (e?.message || 'Please retry.') });
   }
 });
 

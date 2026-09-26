@@ -38,6 +38,40 @@ data class TradeDecision(
 data class AnalysisResponse(val symbol: String, val segment: String = "EQUITY", val instrumentType: String = "INDEX", val timestamp: String? = null, val timeframe: String? = null, val signal: String = "WAIT", val dataFresh: Boolean? = null, val ruleScore: RuleScore = RuleScore(), val market: MarketMetrics = MarketMetrics(), val optionChain: OptionChainSummary = OptionChainSummary(), val suggestedContract: OptionContract? = null, val trackedContract: OptionContract? = null, val tradeDecision: TradeDecision = TradeDecision(), val levels: Levels? = null, val rules: List<SignalRule> = emptyList(), val notes: List<String> = emptyList())
 data class ErrorResponse(val error: String? = null)
 
+data class StockSector(val name: String = "", val changePct: Double = 0.0, val count: Int = 0)
+data class StockPlan(
+    val entry: Double = 0.0, val stop: Double = 0.0,
+    val target1: Double = 0.0, val target2: Double = 0.0, val target3: Double = 0.0,
+    val quantity: Int = 0, val riskBudget: Double = 0.0,
+    val estimatedCosts: Double = 0.0, val estimatedLoss: Double = 0.0,
+    val estimatedProfitAtTwoR: Double = 0.0, val estimated: Boolean = true
+)
+data class StockCandidate(
+    val symbol: String = "", val sector: String = "", val token: String = "",
+    val price: Double? = null, val quoteTime: String? = null,
+    val status: String = "WAIT", val side: String = "WAIT", val setup: String? = null,
+    val reason: String = "", val plan: StockPlan? = null,
+    val vwap: Double? = null, val volumeRatio: Double? = null, val trend: String? = null
+)
+data class StockQuote(val token: String = "", val price: Double = 0.0, val quoteTime: String? = null, val fresh: Boolean = false)
+data class StockScanResponse(
+    val marketStatus: String = "DATA_STALE", val timestamp: String = "",
+    val universeSource: String = "", val scanned: Int = 0, val evaluated: Int = 0,
+    val niftyChangePct: Double? = null,
+    val strongestSector: StockSector? = null, val weakestSector: StockSector? = null,
+    val bestBuy: StockCandidate? = null, val bestSell: StockCandidate? = null,
+    val candidates: List<StockCandidate> = emptyList(),
+    val trackedQuote: StockQuote? = null, val note: String = ""
+)
+data class PaperStockTrade(
+    val id: Long, val symbol: String, val token: String, val side: String,
+    val setup: String, val openedAt: Long, val entry: Double, val stop: Double,
+    val target1: Double, val target2: Double, val quantity: Int,
+    val estimatedCosts: Double, val estimatedLoss: Double,
+    val closedAt: Long? = null, val exit: Double? = null, val netPnl: Double? = null,
+    val exitReason: String? = null
+)
+
 data class PremiumTradePlan(
     val signal: String = "WAIT",
     val contract: OptionContract? = null,

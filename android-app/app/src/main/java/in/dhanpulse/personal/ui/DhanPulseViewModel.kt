@@ -19,6 +19,7 @@ import retrofit2.HttpException
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
+import java.time.LocalDate
 import kotlin.math.floor
 import kotlin.math.round
 
@@ -34,6 +35,20 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var selectedSymbol by mutableStateOf("NIFTY")
     var selectedMarket by mutableStateOf("EQUITY")
         private set
+    var stocksVisible by mutableStateOf(false)
+        private set
+    var stockScan by mutableStateOf<StockScanResponse?>(null)
+        private set
+    var stockScanLoading by mutableStateOf(false)
+        private set
+    var stockScanError by mutableStateOf<String?>(null)
+        private set
+    var stockPaperMessage by mutableStateOf<String?>(null)
+        private set
+    var paperStockTrades by mutableStateOf<List<PaperStockTrade>>(emptyList())
+        private set
+    val openPaperStock: PaperStockTrade?
+        get() = paperStockTrades.firstOrNull { it.closedAt == null }
     var mcxIndices by mutableStateOf<List<McxIndexInfo>>(emptyList())
         private set
     var mcxEnergy by mutableStateOf<List<McxIndexInfo>>(emptyList())
@@ -96,8 +111,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private var api: DhanPulseApi? = null
     private var refreshJob: Job? = null
     private var analysisRefreshInFlight = false
+    private var stockRefreshInFlight = false
 
     private val signalPrefs = app.getSharedPreferences("dhanpulse_signal_tracker", 0)
+    private val stockPrefs = app.getSharedPreferences("dhanpulse_stock_paper", 0)
     private var callPendingKey: String? = null
     private var callPendingCount = 0
     private var blockedCallBias: String? = null
@@ -105,6 +122,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         loadSignalHistory()
+        loadPaperStocks()
         restoreSession()
     }
 
@@ -150,7 +168,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             markUserActive()
             startAutoRefresh()
             if (selectedMarket == "MCX") fetchMcxCatalog()
-            fetchAnalysis()
+            if (stocksVisible) fetchStockScanner() else fetchAnalysis()
             fetchAccount()
         }
     }
@@ -937,6 +955,111 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         startAutoRefresh()
     }
 
+    fun showStocks(visible: Boolean) {
+        if (stocksVisible == visible) return
+        stocksVisible = visible
+        if (visible) fetchStockScanner() else fetchAnalysis()
+        startAutoRefresh()
+    }
+
+    fun fetchStockScanner() {
+        val s = sessionId ?: return
+        if (stockRefreshInFlight) return
+        stockRefreshInFlight = true
+        stockScanLoading = stockScan == null
+        viewModelScope.launch {
+            try {
+                val response = client().stockScanner(s, openPaperStock?.token)
+                stockScan = response
+                stockScanError = null
+                resolvePastPaperStock()
+            } catch (e: Exception) {
+                stockScanError = friendlyError(e, "Stock scanner unavailable")
+                stockScan = null
+            } finally {
+                stockScanLoading = false
+                stockRefreshInFlight = false
+            }
+        }
+    }
+
+    private fun indiaDate(ms: Long): LocalDate = Instant.ofEpochMilli(ms).atZone(indiaZone).toLocalDate()
+
+    private fun loadPaperStocks() {
+        paperStockTrades = runCatching {
+            Gson().fromJson(stockPrefs.getString("journal", "[]"), Array<PaperStockTrade>::class.java)?.toList() ?: emptyList()
+        }.getOrDefault(emptyList())
+        resolvePastPaperStock()
+    }
+
+    private fun persistPaperStocks() {
+        stockPrefs.edit().putString("journal", Gson().toJson(paperStockTrades.take(500))).apply()
+    }
+
+    private fun resolvePastPaperStock() {
+        val today = indiaDate(System.currentTimeMillis())
+        val old = openPaperStock ?: return
+        if (indiaDate(old.openedAt) >= today) return
+        paperStockTrades = paperStockTrades.map {
+            if (it.id == old.id) it.copy(closedAt = System.currentTimeMillis(), exitReason = "Unresolved after session; no fill inferred") else it
+        }
+        persistPaperStocks()
+    }
+
+    fun startPaperStock(candidate: StockCandidate) {
+        stockPaperMessage = null
+        val scan = stockScan
+        val plan = candidate.plan
+        val now = System.currentTimeMillis()
+        val scanAt = runCatching { scan?.timestamp?.let { Instant.parse(it).toEpochMilli() } }.getOrNull() ?: 0L
+        val today = indiaDate(now)
+        resolvePastPaperStock()
+        if (scan == null || scan.marketStatus != "SCANNING" || now - scanAt !in 0L..45_000L ||
+            scan.candidates.none { it.symbol == candidate.symbol && it.token == candidate.token && it.status == "READY" } ||
+            candidate.status != "READY" || candidate.side !in setOf("BUY", "SELL") ||
+            plan == null || plan.quantity < 1 || candidate.token.isBlank()) {
+            stockPaperMessage = "Refresh the live scanner before recording a paper entry."
+            return
+        }
+        val todayTrades = paperStockTrades.filter { indiaDate(it.openedAt) == today }
+        val losses = todayTrades.count { (it.netPnl ?: 0.0) < 0.0 }
+        val realized = todayTrades.sumOf { it.netPnl ?: 0.0 }
+        if (openPaperStock != null || todayTrades.size >= 3 || losses >= 2 ||
+            realized <= -200.0 || realized - plan.estimatedLoss < -200.0) {
+            stockPaperMessage = "Paper limit reached: one open position, three entries, two losses, or Rs. 200 daily loss."
+            return
+        }
+        paperStockTrades = listOf(PaperStockTrade(now, candidate.symbol, candidate.token,
+            candidate.side, candidate.setup ?: "SCANNER", now, plan.entry, plan.stop,
+            plan.target1, plan.target2, plan.quantity, plan.estimatedCosts,
+            plan.estimatedLoss)) + paperStockTrades
+        persistPaperStocks()
+        stockPaperMessage = "Paper entry recorded from a quote sample. This is not an order or fill."
+        fetchStockScanner()
+    }
+
+    fun closePaperStock(unresolved: Boolean = false) {
+        val open = openPaperStock ?: return
+        val now = System.currentTimeMillis()
+        val scanAt = runCatching { stockScan?.timestamp?.let { Instant.parse(it).toEpochMilli() } }.getOrNull() ?: 0L
+        val quote = stockScan?.trackedQuote
+        if (!unresolved && (quote?.token != open.token || quote?.fresh != true ||
+                    now - scanAt !in 0L..45_000L || (quote?.price ?: 0.0) <= 0)) {
+            stockPaperMessage = "A fresh tracked stock quote is required to estimate the paper exit."
+            return
+        }
+        val exit = if (unresolved) null else quote?.price
+        val sign = if (open.side == "BUY") 1 else -1
+        val net = exit?.let { (it - open.entry) * open.quantity * sign - open.estimatedCosts }
+        paperStockTrades = paperStockTrades.map {
+            if (it.id == open.id) it.copy(closedAt = now, exit = exit, netPnl = net,
+                exitReason = if (unresolved) "Unresolved; no fill inferred" else "Manual paper exit at sampled quote") else it
+        }
+        persistPaperStocks()
+        stockPaperMessage = if (unresolved) "Paper entry marked unresolved." else "Estimated paper exit recorded."
+        fetchStockScanner()
+    }
+
     fun fetchMcxCatalog() {
         val s = sessionId ?: return
         viewModelScope.launch {
@@ -964,8 +1087,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val time = indiaTime.toLocalTime()
                 val marketOpen = day in 1..5 && !time.isBefore(if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)) &&
                     time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
-                delay(if (marketOpen) 3_000 else 60_000)
-                fetchAnalysis()
+                delay(if (stocksVisible) { if (marketOpen) 30_000 else 60_000 } else { if (marketOpen) 3_000 else 60_000 })
+                if (stocksVisible) fetchStockScanner() else fetchAnalysis()
                 tick++
                 if (tick % 5 == 0) fetchAccount()
                 if (tick % 20 == 0) fetchOrderDiagnostics()
@@ -991,6 +1114,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         sessionId = null
         profile = null
         analysis = null
+        stockScan = null
+        stockScanError = null
+        stockPaperMessage = null
         account = null
         orderMessage = null
         orderBusy = false
