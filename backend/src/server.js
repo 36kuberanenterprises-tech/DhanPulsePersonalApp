@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
-import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs } from './angel.js';
+import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs } from './angel.js';
 import { analyse } from './analysis.js';
 import { runBacktest } from './backtest.js';
 
@@ -156,8 +156,8 @@ function requireSession(req, res, next) {
 
 app.get('/api/markets/mcx', requireSession, async (_req, res) => {
   try {
-    const indices = mcxIndexCatalog(await instrumentMaster());
-    res.json({ indices, source: 'Angel One instrument master', updatedAt: new Date().toISOString() });
+    const rows = await instrumentMaster();
+    res.json({ indices: mcxIndexCatalog(rows), energy: mcxEnergyCatalog(rows), source: 'Angel One instrument master', updatedAt: new Date().toISOString() });
   } catch (e) {
     res.status(503).json({ error: e.message || 'MCX index list temporarily unavailable' });
   }
@@ -216,11 +216,14 @@ function n(value) {
   return Number.isFinite(x) ? x : 0;
 }
 
-function summarizeAccount(rmsRaw, posRaw) {
+function summarizeAccount(rmsRaw, posRaw, master = []) {
   const rms = rmsRaw?.data || {};
   const rows = Array.isArray(posRaw?.data) ? posRaw.data : [];
+  const mcxOptionByToken = new Map(master.filter(r => r.exch_seg === 'MCX' && /OPT/.test(String(r.instrumenttype || '')))
+    .map(r => [String(r.token), r]));
 
   const positionRows = rows.map(p => {
+    const contract = String(p.exchange || '').toUpperCase() === 'MCX' ? mcxOptionByToken.get(String(p.symboltoken || p.token)) : null;
     const buyQty = n(p.buyqty);
     const sellQty = n(p.sellqty);
     const netQty = n(p.netqty ?? p.netquantity ?? (buyQty - sellQty));
@@ -232,6 +235,8 @@ function summarizeAccount(rmsRaw, posRaw) {
       token: String(p.symboltoken || p.token || ''),
       tradingSymbol: p.tradingsymbol || null,
       productType: p.producttype || null,
+      lotSize: contract ? n(contract.lotsize) : null,
+      optionExpiry: contract?.expiry || null,
       netQty,
       buyQty,
       sellQty,
@@ -305,11 +310,12 @@ app.get('/api/order/diagnostics', requireSession, async (req, res) => {
 
 app.get('/api/account', requireSession, async (req, res) => {
   try {
-    const [rms, pos] = await Promise.all([
+    const [rms, pos, master] = await Promise.all([
       rmsLimit(req.smartSession),
-      positions(req.smartSession)
+      positions(req.smartSession),
+      instrumentMaster().catch(() => [])
     ]);
-    res.json(summarizeAccount(rms, pos));
+    res.json(summarizeAccount(rms, pos, master));
   } catch (e) {
     console.error('Account refresh failed:', e?.message || e);
     res.status(503).json({ error: e.message || 'Account data temporarily unavailable' });
@@ -353,8 +359,9 @@ app.post('/api/order', requireSession, async (req, res) => {
     if (!contract) return res.status(400).json({ error: 'Selected option contract is not valid in the instrument master', traceId });
 
     if (exchange === 'MCX' && side === 'BUY') {
-      const supported = mcxIndexCatalog(rows).some(x => x.symbol === String(contract.name || '').toUpperCase() && x.hasOptions);
-      if (!supported) return res.status(400).json({ error: 'Only listed MCX index options are available for buying in this app.', traceId });
+      const supportedIndex = contract.instrumenttype === 'OPTIDX' && mcxIndexCatalog(rows).some(x => x.symbol === String(contract.name || '').toUpperCase() && x.hasOptions);
+      const supportedEnergy = contract.instrumenttype === 'OPTFUT' && mcxEnergyCatalog(rows).some(x => x.symbol === String(contract.name || '').toUpperCase() && x.hasOptions);
+      if (!supportedIndex && !supportedEnergy) return res.status(400).json({ error: 'Only listed MCX index and energy options are available for buying in this app.', traceId });
       const entry = mcxOptionEntryWindow(contract);
       if (!entry.allowed) return res.status(400).json({ error: entry.reason, traceId });
     }
@@ -363,21 +370,27 @@ app.post('/api/order', requireSession, async (req, res) => {
     const quantity = lotSize * lots;
 
     if (exchange === 'MCX' && side === 'BUY') {
-      const underlying = rows.find(r => r.exch_seg === 'MCX' && r.instrumenttype === 'AMXIDX' &&
-        String(r.symbol || '').toUpperCase() === String(contract.name || '').toUpperCase());
+      const underlying = contract.instrumenttype === 'OPTFUT' ? futureForEnergyOption(rows, contract) :
+        rows.find(r => r.exch_seg === 'MCX' && r.instrumenttype === 'AMXIDX' &&
+          String(r.symbol || '').toUpperCase() === String(contract.name || '').toUpperCase());
+      if (!underlying) return res.status(409).json({ error: 'Matching MCX underlying future or index is unavailable. Buy order paused.', traceId });
       const quotes = parseFetched(await marketData(req.smartSession, { MCX: [token, String(underlying.token)] }, 'FULL'));
       const optionQuote = quotes.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === token);
-      const indexQuote = quotes.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === String(underlying.token));
+      const underlyingQuote = quotes.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === String(underlying.token));
       const fresh = q => {
         const age = quoteFeedAgeMs(q);
         return age != null && age >= -30_000 && age <= 90_000 && quoteLtp(q) > 0;
       };
-      if (!fresh(optionQuote) || !fresh(indexQuote)) {
-        return res.status(409).json({ error: 'MCX index or option quote is unavailable or delayed. Buy order paused.', traceId });
+      if (!fresh(optionQuote) || !fresh(underlyingQuote)) {
+        return res.status(409).json({ error: 'MCX underlying or option quote is unavailable or delayed. Buy order paused.', traceId });
       }
       const funds = await rmsLimit(req.smartSession);
-      if (n(funds?.data?.availablecash) < quoteLtp(optionQuote) * quantity) {
-        return res.status(400).json({ error: 'Available cash is below the current premium cost for these lots.', traceId });
+      const cash = n(funds?.data?.availablecash);
+      const premiumCost = quoteLtp(optionQuote) * quantity;
+      if (cash < premiumCost || (contract.instrumenttype === 'OPTFUT' && premiumCost > cash * 0.90)) {
+        return res.status(400).json({ error: contract.instrumenttype === 'OPTFUT'
+          ? 'Energy option premium must stay within 90 percent of available cash. Reduce lots or choose a mini contract.'
+          : 'Available cash is below the current premium cost for these lots.', traceId });
       }
     }
 

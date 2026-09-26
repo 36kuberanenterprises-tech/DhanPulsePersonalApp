@@ -99,23 +99,33 @@ export async function orderBook(session) {
 }
 
 let masterCache = { at: 0, rows: [] };
+let masterLoading = null;
 export async function instrumentMaster(force = false) {
   const age = Date.now() - masterCache.at;
   if (!force && masterCache.rows.length && age < 6 * 60 * 60 * 1000) return masterCache.rows;
-  const r = await fetch(MASTER_URL);
-  if (!r.ok) throw new Error(`Instrument master: ${r.status}`);
-  const rows = await r.json();
-  masterCache = { at: Date.now(), rows };
-  return rows;
+  if (!force && masterLoading) return masterLoading;
+  masterLoading = (async () => {
+    const r = await fetch(MASTER_URL);
+    if (!r.ok) throw new Error(`Instrument master: ${r.status}`);
+    const rows = await r.json();
+    masterCache = { at: Date.now(), rows };
+    return rows;
+  })();
+  try { return await masterLoading; }
+  finally { masterLoading = null; }
 }
 
 export function normalizeStrike(raw) {
   const n = Number(raw || 0);
   if (!Number.isFinite(n)) return 0;
-  return n > 100000 ? n / 100 : n;
+  // Angel One stores every MCX and equity option strike in paise, including
+  // natural gas strikes such as 30500 for an actual strike of 305.
+  return n / 100;
 }
 
-function dateValue(s, exchange = 'NFO') {
+export const MCX_ENERGY_SYMBOLS = ['CRUDEOIL', 'CRUDEOILM', 'NATURALGAS', 'NATGASMINI'];
+
+function dateValue(s, exchange = 'NFO', instrumenttype = '') {
   const raw = String(s || '').trim();
   const m = raw.match(/^(\d{1,2})([A-Za-z]{3})(\d{4})$/);
   if (m) {
@@ -124,7 +134,9 @@ function dateValue(s, exchange = 'NFO') {
     // Index options on MCX stop trading at 17:00 IST on their expiry day.
     // Equity index options stop trading at 15:30 IST.
     if (month != null) return exchange === 'MCX'
-      ? Date.UTC(Number(m[3]), month, Number(m[1]), 11, 30)
+      ? instrumenttype === 'OPTFUT' || instrumenttype === 'FUTCOM'
+        ? Date.UTC(Number(m[3]), month, Number(m[1]) + 1) - 330 * 60_000
+        : Date.UTC(Number(m[3]), month, Number(m[1]), 11, 30)
       : Date.UTC(Number(m[3]), month, Number(m[1]), 10, 0);
   }
   const d = new Date(raw);
@@ -132,25 +144,86 @@ function dateValue(s, exchange = 'NFO') {
 }
 
 export function contractActive(row, now = Date.now()) {
-  return dateValue(row?.expiry, row?.exch_seg) > now;
+  return dateValue(row?.expiry, row?.exch_seg, row?.instrumenttype) > now;
+}
+
+export function energyOptionSafe(row, now = Date.now()) {
+  if (row?.exch_seg !== 'MCX' || row?.instrumenttype !== 'OPTFUT' ||
+      !MCX_ENERGY_SYMBOLS.includes(String(row.name || '').toUpperCase()) || !contractActive(row, now)) return false;
+  const m = String(row.expiry || '').toUpperCase().match(/^(\d{1,2})([A-Z]{3})(\d{4})$/);
+  const month = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 }[m?.[2]];
+  if (month == null) return false;
+  const today = new Date(now + 330 * 60_000);
+  const start = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const expiry = Date.UTC(Number(m[3]), month, Number(m[1]));
+  if (expiry - start < 4 * 86_400_000) return false;
+  let sessions = 0;
+  for (let t = start + 86_400_000; t <= expiry; t += 86_400_000) {
+    const day = new Date(t).getUTCDay();
+    if (day >= 1 && day <= 5) sessions++;
+  }
+  // These options can devolve into futures. Stop new entries at least two
+  // trading sessions before expiry, even if an earlier option still quotes.
+  return sessions >= 3;
 }
 
 export function mcxOptionEntryWindow(row, now = Date.now()) {
-  if (row?.exch_seg !== 'MCX' || row?.instrumenttype !== 'OPTIDX' || !contractActive(row, now)) {
-    return { allowed: false, reason: 'MCX index option contract has expired or is not valid.' };
+  const energy = row?.instrumenttype === 'OPTFUT';
+  if (row?.exch_seg !== 'MCX' || !['OPTIDX', 'OPTFUT'].includes(row?.instrumenttype) || !contractActive(row, now)) {
+    return { allowed: false, reason: 'MCX option contract has expired or is not valid.' };
+  }
+  if (energy && !energyOptionSafe(row, now)) {
+    return { allowed: false, reason: 'Energy option buys stop at least two trading sessions before expiry because an open option may become a futures position.' };
   }
   const india = new Date(now + 330 * 60_000);
   const day = india.getUTCDay();
   const mins = india.getUTCHours() * 60 + india.getUTCMinutes();
   if (day === 0 || day === 6 || mins < 9 * 60 + 30 || mins >= 23 * 60 + 15) {
-    return { allowed: false, reason: 'New MCX index option buys are available from 09:30 to 23:15 IST on trading days.' };
+    return { allowed: false, reason: 'New MCX option buys are available from 09:30 to 23:15 IST on trading days.' };
   }
   const expiry = String(row.expiry || '').toUpperCase();
   const date = `${String(india.getUTCDate()).padStart(2, '0')}${['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][india.getUTCMonth()]}${india.getUTCFullYear()}`;
-  if (expiry === date && mins >= 16 * 60 + 30) {
+  if (!energy && expiry === date && mins >= 16 * 60 + 30) {
     return { allowed: false, reason: 'New buys stop at 16:30 IST on the MCX index option expiry day.' };
   }
   return { allowed: true, reason: null };
+}
+
+export function resolveEnergyFuture(rows, symbol, now = Date.now()) {
+  if (!MCX_ENERGY_SYMBOLS.includes(symbol)) return null;
+  const futures = rows.filter(r => r.exch_seg === 'MCX' && r.instrumenttype === 'FUTCOM' &&
+    String(r.name || '').toUpperCase() === symbol && contractActive(r, now))
+    .sort((a,b) => dateValue(a.expiry, a.exch_seg, a.instrumenttype) - dateValue(b.expiry, b.exch_seg, b.instrumenttype));
+  const options = rows.filter(r => String(r.name || '').toUpperCase() === symbol && energyOptionSafe(r, now))
+    .sort((a,b) => dateValue(a.expiry, a.exch_seg, a.instrumenttype) - dateValue(b.expiry, b.exch_seg, b.instrumenttype));
+  if (!options.length) return futures[0] || null;
+  for (const option of options) {
+    const future = futures.find(r => dateValue(r.expiry, r.exch_seg, r.instrumenttype) >
+      dateValue(option.expiry, option.exch_seg, option.instrumenttype));
+    if (future) return future;
+  }
+  return null;
+}
+
+export function futureForEnergyOption(rows, option, now = Date.now()) {
+  if (!energyOptionSafe(option, now)) return null;
+  return rows.filter(r => r.exch_seg === 'MCX' && r.instrumenttype === 'FUTCOM' &&
+    String(r.name || '').toUpperCase() === String(option.name || '').toUpperCase() &&
+    contractActive(r, now) && dateValue(r.expiry, r.exch_seg, r.instrumenttype) >
+      dateValue(option.expiry, option.exch_seg, option.instrumenttype))
+    .sort((a,b) => dateValue(a.expiry, a.exch_seg, a.instrumenttype) -
+      dateValue(b.expiry, b.exch_seg, b.instrumenttype))[0] || null;
+}
+
+export function mcxEnergyCatalog(rows, now = Date.now()) {
+  return MCX_ENERGY_SYMBOLS.map(symbol => {
+    const futures = rows.filter(r => r.exch_seg === 'MCX' && r.instrumenttype === 'FUTCOM' &&
+      String(r.name || '').toUpperCase() === symbol && contractActive(r, now));
+    if (!futures.length) return null;
+    const optionContracts = rows.filter(r => String(r.name || '').toUpperCase() === symbol && energyOptionSafe(r, now) &&
+      futures.some(f => dateValue(f.expiry, f.exch_seg, f.instrumenttype) > dateValue(r.expiry, r.exch_seg, r.instrumenttype))).length;
+    return { symbol, optionContracts, hasOptions: optionContracts > 0, type: 'ENERGY' };
+  }).filter(Boolean);
 }
 
 export function mcxIndexCatalog(rows, now = Date.now()) {
@@ -180,6 +253,11 @@ function matchesUnderlying(row, symbol) {
 
 export function resolveUnderlying(rows, symbol) {
   const s = symbol.toUpperCase();
+  if (MCX_ENERGY_SYMBOLS.includes(s)) {
+    const future = resolveEnergyFuture(rows, s);
+    if (!future) throw new Error(`No matching ${s} MCX futures contract is available for the current option expiry.`);
+    return future;
+  }
   const mcxIndex = rows.find(r => r.exch_seg === 'MCX' && r.instrumenttype === 'AMXIDX' &&
     String(r.symbol || '').trim().toUpperCase() === s);
   if (mcxIndex) return mcxIndex;
@@ -197,26 +275,33 @@ export function resolveUnderlying(rows, symbol) {
 }
 
 export function resolveNearestFuture(rows, symbol, now = Date.now()) {
+  if (MCX_ENERGY_SYMBOLS.includes(symbol)) return resolveEnergyFuture(rows, symbol, now);
   const mcx = rows.some(r => r.exch_seg === 'MCX' && r.instrumenttype === 'AMXIDX' && r.symbol === symbol);
   return rows
     .filter(r => mcx
       ? r.exch_seg === 'MCX' && r.instrumenttype === 'FUTIDX' && String(r.name || '').toUpperCase() === symbol
       : /FUT/i.test(String(r.instrumenttype || '')) && matchesUnderlying(r, symbol))
     .filter(r => contractActive(r, now))
-    .sort((a, b) => dateValue(a.expiry, a.exch_seg) - dateValue(b.expiry, b.exch_seg))[0] || null;
+    .sort((a, b) => dateValue(a.expiry, a.exch_seg, a.instrumenttype) - dateValue(b.expiry, b.exch_seg, b.instrumenttype))[0] || null;
 }
 
 export function resolveOptionWindow(rows, symbol, spot, wing = 5, now = Date.now()) {
+  const energy = MCX_ENERGY_SYMBOLS.includes(symbol);
+  const energyFutures = energy ? rows.filter(r => r.exch_seg === 'MCX' && r.instrumenttype === 'FUTCOM' &&
+    String(r.name || '').toUpperCase() === symbol && contractActive(r, now)) : [];
   const mcx = rows.some(r => r.exch_seg === 'MCX' && r.instrumenttype === 'AMXIDX' && r.symbol === symbol);
-  const targetSeg = mcx ? 'MCX' : symbol === 'SENSEX' ? 'BFO' : 'NFO';
-  const opts = rows.filter(r => r.exch_seg === targetSeg && (mcx
+  const targetSeg = mcx || energy ? 'MCX' : symbol === 'SENSEX' ? 'BFO' : 'NFO';
+  const opts = rows.filter(r => r.exch_seg === targetSeg && (energy
+    ? r.instrumenttype === 'OPTFUT' && String(r.name || '').toUpperCase() === symbol && energyOptionSafe(r, now) &&
+      energyFutures.some(f => dateValue(f.expiry, f.exch_seg, f.instrumenttype) > dateValue(r.expiry, r.exch_seg, r.instrumenttype))
+    : mcx
     ? r.instrumenttype === 'OPTIDX' && String(r.name || '').toUpperCase() === symbol
     : /OPT/i.test(String(r.instrumenttype || '')) && matchesUnderlying(r, symbol)))
     .filter(r => contractActive(r, now))
     .map(r => ({ ...r, strikeN: normalizeStrike(r.strike) }))
     .filter(r => r.strikeN > 0);
   if (!opts.length) return { expiry: null, atm: null, contracts: [] };
-  const expiry = opts.slice().sort((a, b) => dateValue(a.expiry, a.exch_seg) - dateValue(b.expiry, b.exch_seg))[0].expiry;
+  const expiry = opts.slice().sort((a, b) => dateValue(a.expiry, a.exch_seg, a.instrumenttype) - dateValue(b.expiry, b.exch_seg, b.instrumenttype))[0].expiry;
   const e = opts.filter(r => r.expiry === expiry);
   const strikes = [...new Set(e.map(r => r.strikeN))].sort((a, b) => a - b);
   const atm = strikes.reduce((best, x) => Math.abs(x - spot) < Math.abs(best - spot) ? x : best, strikes[0]);

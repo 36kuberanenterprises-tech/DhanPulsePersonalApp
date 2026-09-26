@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveNearestFuture, resolveOptionWindow, resolveUnderlying, quoteFeedAgeMs, mcxIndexCatalog, mcxOptionEntryWindow } from '../src/angel.js';
+import { resolveNearestFuture, resolveOptionWindow, resolveUnderlying, quoteFeedAgeMs, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, normalizeStrike, mcxOptionEntryWindow } from '../src/angel.js';
 import { signalEngine, nearAtmOi, marketDataState } from '../src/analysis.js';
 
 const expiryRows = [
@@ -109,4 +109,39 @@ test('MCX option buying core can use four aligned checks but equity stays at fiv
   };
   assert.equal(signalEngine(inputs, 'MCX').signal, 'CE');
   assert.equal(signalEngine(inputs).signal, 'WAIT');
+});
+
+const energyRows = [
+  { token:'600', name:'NATGASMINI', symbol:'NATGASMINI25SEP26FUT', instrumenttype:'FUTCOM', exch_seg:'MCX', expiry:'25SEP2026' },
+  { token:'601', name:'NATGASMINI', symbol:'NATGASMINI27OCT26FUT', instrumenttype:'FUTCOM', exch_seg:'MCX', expiry:'27OCT2026' },
+  { token:'602', name:'NATGASMINI', symbol:'NATGASMINI24NOV26FUT', instrumenttype:'FUTCOM', exch_seg:'MCX', expiry:'24NOV2026' },
+  ...[300,305,310].flatMap((strike,i)=>['CE','PE'].map((side,j)=>({
+    token:String(700+i*2+j), name:'NATGASMINI', symbol:`NATGASMINI23OCT26${strike}${side}`,
+    instrumenttype:'OPTFUT', exch_seg:'MCX', expiry:'23OCT2026', strike:String(strike*100), lotsize:'250'
+  }))),
+  { token:'800', name:'NATGASMINI', symbol:'NATGASMINI20NOV26305CE', instrumenttype:'OPTFUT', exch_seg:'MCX', expiry:'20NOV2026', strike:'30500', lotsize:'250' }
+];
+
+test('energy options use the next matching futures month and correctly scale natural gas strikes', () => {
+  const now = Date.parse('2026-09-25T05:00:00Z');
+  assert.equal(normalizeStrike('30500.000000'), 305);
+  assert.equal(mcxEnergyCatalog(energyRows, now)[0].symbol, 'NATGASMINI');
+  assert.equal(mcxEnergyCatalog(energyRows, now)[0].hasOptions, true);
+  assert.equal(resolveNearestFuture(energyRows, 'NATGASMINI', now).token, '601');
+  const chain = resolveOptionWindow(energyRows, 'NATGASMINI', 305, 5, now);
+  assert.equal(chain.expiry, '23OCT2026');
+  assert.equal(chain.atm, 305);
+  assert.equal(chain.contracts.length, 6);
+  assert.equal(futureForEnergyOption(energyRows, energyRows[4], now).token, '601');
+});
+
+test('energy entries stop ahead of expiry and roll to the next eligible option month', () => {
+  const before = Date.parse('2026-10-19T05:00:00Z');
+  const near = energyRows[3];
+  assert.equal(mcxOptionEntryWindow(near, before).allowed, true);
+  const cutoff = Date.parse('2026-10-20T05:00:00Z');
+  assert.equal(mcxOptionEntryWindow(near, cutoff).allowed, false);
+  assert.equal(resolveOptionWindow(energyRows, 'NATGASMINI', 305, 5, cutoff).expiry, '20NOV2026');
+  assert.equal(resolveNearestFuture(energyRows, 'NATGASMINI', cutoff).token, '602');
+  assert.equal(mcxOptionEntryWindow(near, Date.parse('2026-10-26T05:00:00Z')).allowed, false);
 });

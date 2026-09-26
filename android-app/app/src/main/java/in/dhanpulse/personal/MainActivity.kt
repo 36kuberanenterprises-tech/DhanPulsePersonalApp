@@ -58,6 +58,14 @@ private val Green = Color(0xFF25D39A)
 private val Red = Color(0xFFFF6474)
 private val Amber = Color(0xFFFFBD5C)
 
+private fun mcxName(symbol: String): String = when (symbol) {
+    "CRUDEOIL" -> "Crude Oil"
+    "CRUDEOILM" -> "Crude Oil Mini"
+    "NATURALGAS" -> "Natural Gas"
+    "NATGASMINI" -> "Natural Gas Mini"
+    else -> symbol
+}
+
 private val AppColors = darkColorScheme(
     primary = Purple,
     secondary = Blue,
@@ -236,7 +244,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                         Spacer(Modifier.width(7.dp))
                         val status = vm.analysis?.tradeDecision?.status
                         StatusPill(
-                            if (status == "MARKET_CLOSED") "CLOSED" else if (status == "NO_OPTIONS") "INDEX ONLY" else if (vm.refreshWarning != null || vm.analysis == null) "DELAYED" else "LIVE",
+                            if (status == "MARKET_CLOSED") "CLOSED" else if (status == "NO_OPTIONS") "NO OPTIONS" else if (vm.refreshWarning != null || vm.analysis == null) "DELAYED" else "LIVE",
                             if (status == "NO_OPTIONS" || vm.refreshWarning != null || vm.analysis == null) Amber else Green
                         )
                     }
@@ -295,16 +303,24 @@ private fun TradingContextBar(vm: DhanPulseViewModel) {
                 border = BorderStroke(1.dp, Line)
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
-                    Text(if (vm.selectedMarket == "MCX") "MCX INDEX" else "SYMBOL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                    Text(vm.selectedSymbol.replace("BANKNIFTY", "BANK NIFTY"), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(if (vm.selectedMarket == "MCX") "MCX MARKET" else "SYMBOL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    Text(if (vm.selectedMarket == "MCX") mcxName(vm.selectedSymbol) else vm.selectedSymbol.replace("BANKNIFTY", "BANK NIFTY"), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
             DropdownMenu(expanded = symbolOpen, onDismissRequest = { symbolOpen = false }) {
                 if (vm.selectedMarket == "MCX") {
+                    DropdownMenuItem(text = { Text("MCX INDICES", color = Muted, fontWeight = FontWeight.Bold) }, enabled = false, onClick = {})
                     vm.mcxIndices.forEach { index ->
                         DropdownMenuItem(
                             text = { Text("${index.symbol} • ${if (index.hasOptions) "Options available" else "Index only"}") },
                             onClick = { vm.selectSymbol(index.symbol); symbolOpen = false }
+                        )
+                    }
+                    DropdownMenuItem(text = { Text("MCX ENERGY", color = Muted, fontWeight = FontWeight.Bold) }, enabled = false, onClick = {})
+                    vm.mcxEnergy.forEach { item ->
+                        DropdownMenuItem(
+                            text = { Text("${mcxName(item.symbol)} • ${if (item.hasOptions) "Options available" else "No safe option expiry"}") },
+                            onClick = { vm.selectSymbol(item.symbol); symbolOpen = false }
                         )
                     }
                     if (vm.mcxIndices.isEmpty()) DropdownMenuItem(
@@ -370,32 +386,60 @@ private fun MarketSection(vm: DhanPulseViewModel) {
 private fun McxSection(vm: DhanPulseViewModel, onTrade: () -> Unit) {
     val a = vm.analysis?.takeIf { it.symbol == vm.selectedSymbol && it.segment == "MCX" }
     val index = vm.mcxIndices.firstOrNull { it.symbol == vm.selectedSymbol }
+    val energy = vm.mcxEnergy.firstOrNull { it.symbol == vm.selectedSymbol }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { SectionTitle("MCX indices", "Angel One index list • option buying where a current index option exists") }
+        item { SectionTitle("MCX indices and energy", "Select an index or crude oil and natural gas options from Angel One") }
+        if (vm.mcxEnergy.isNotEmpty()) item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("ENERGY OPTIONS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                vm.mcxEnergy.chunked(2).forEach { pair ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        pair.forEach { item ->
+                            val selected = vm.selectedSymbol == item.symbol
+                            Surface(
+                                onClick = { vm.selectSymbol(item.symbol) },
+                                modifier = Modifier.weight(1f),
+                                color = if (selected) Purple.copy(alpha = 0.22f) else Panel,
+                                border = BorderStroke(1.dp, if (selected) Purple else Line),
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text(mcxName(item.symbol), modifier = Modifier.padding(12.dp), color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                        }
+                    }
+                }
+            }
+        }
         item { TradingContextBar(vm) }
         if (vm.mcxIndices.isNotEmpty()) item {
             InfoStrip("Connected MCX list", "${vm.mcxIndices.size} indices • ${vm.mcxIndices.count { it.hasOptions }} with current index options. Select an index above to see its availability.")
+        }
+        if (vm.mcxEnergy.isNotEmpty()) item {
+            InfoStrip("MCX energy", "Crude Oil, Crude Oil Mini, Natural Gas and Natural Gas Mini are listed separately under MCX Energy. Choose one from the market menu.")
+        }
+        if (energy != null) item {
+            InfoStrip("Energy expiry safety", "Options use the matching commodity futures contract. New buys stop ahead of expiry because an open option may turn into a futures position. Check Positions and exit an open option yourself before expiry.")
         }
         vm.mcxCatalogError?.let { item { InfoStrip("MCX list", it) } }
         vm.error?.let { item { ErrorStrip(it) } }
         vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
         if (vm.loading && a == null) item { LoadingMarketCard() }
-        if (index?.hasOptions == false || a?.tradeDecision?.status == "NO_OPTIONS") item {
-            InfoStrip("Index only", "${vm.selectedSymbol} has no current index option contract in Angel One. Market information is shown where available. No option call or buy is offered.")
+        if (index?.hasOptions == false || energy?.hasOptions == false || a?.tradeDecision?.status == "NO_OPTIONS") item {
+            InfoStrip(if (energy != null) "No safe option expiry" else "Index only", if (energy != null)
+                "${mcxName(vm.selectedSymbol)} has no suitable option expiry with a matching futures contract for new buys. An open position still needs your attention before expiry."
+                else "${vm.selectedSymbol} has no current index option contract in Angel One. Market information is shown where available. No option call or buy is offered.")
         }
         if (a != null) {
-            if (index?.hasOptions != false) item { SignalCard(a, vm::fetchAnalysis) }
+            if (index?.hasOptions != false && energy?.hasOptions != false) item { SignalCard(a, vm::fetchAnalysis) }
             item { MarketCard(a) }
-            if (index?.hasOptions != false && a.tradeDecision.status != "NO_OPTIONS") {
+            if (index?.hasOptions != false && energy?.hasOptions != false && a.tradeDecision.status != "NO_OPTIONS") {
                 item { OptionCard(a) }
                 item { SignalRulesPanel(a) }
                 item {
                     Button(onClick = onTrade, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                        Text("OPEN MCX OPTION TRADE", fontWeight = FontWeight.Bold)
+                        Text(if (energy != null) "OPEN ENERGY OPTION TRADE" else "OPEN MCX OPTION TRADE", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -415,7 +459,9 @@ private fun TradeSection(vm: DhanPulseViewModel) {
         vm.error?.let { item { ErrorStrip(it) } }
         vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
         if (vm.selectedMarket == "MCX") item {
-            InfoStrip("MCX option buying", "Only index options shown in Angel One can be bought. Entry needs fresh index and option quotes. MCX Auto Trade remains off while this strategy is untested with live orders.")
+            InfoStrip("MCX option buying", if (a?.instrumentType == "ENERGY")
+                "Crude oil and natural gas options use the matching futures quote. Entry needs fresh futures and option quotes, sufficient cash and a ready order route. Exit open options before expiry to avoid futures devolvement. MCX Auto Trade is off."
+                else "Only index options shown in Angel One can be bought. Entry needs fresh index and option quotes. MCX Auto Trade remains off while this strategy is untested with live orders.")
         }
         if (a != null) {
             item { TradeDeskHero(a, vm) }
@@ -441,7 +487,7 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
         p.callId != null && p.stage.startsWith("TARGET_") -> p.stage.replace("_", " ")
         p.callId != null && p.stage == "STOP_LOSS_HIT" -> "STOP LOSS HIT"
         d.status == "MARKET_CLOSED" -> "MARKET CLOSED"
-        d.status == "NO_OPTIONS" -> "INDEX ONLY"
+        d.status == "NO_OPTIONS" -> "NO OPTIONS"
         d.status == "DATA_STALE" -> "DATA DELAYED"
         d.direction == "WAIT" -> "WATCHING"
         !d.setupAllowed && d.status == "REJECTED_CONFLICT" -> "REJECTED • CONFLICT"
@@ -917,7 +963,7 @@ private fun PositionsSection(vm: DhanPulseViewModel) {
             item { AccountCard(account, vm::fetchAccount) }
             val open = account.positions.filter { it.netQty != 0.0 }
             if (open.isEmpty()) item { EmptyStateCard("No open positions", "Your open F&O positions will appear here with live P&L.") }
-            items(open) { pos -> PositionCard(pos) }
+            items(open) { pos -> PositionCard(pos, vm) }
         }
     }
 }
@@ -1050,7 +1096,7 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 StatusPill(a.signal, c)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Index ${n(a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
+                Text("${if (a.instrumentType == "ENERGY") "Futures" else "Index"} ${n(a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
                 val d = a.tradeDecision
                 val heroText = when {
                     d.status == "MARKET_CLOSED" -> "CLOSED"
@@ -1109,8 +1155,18 @@ private fun SignalRulesPanel(a: AnalysisResponse) {
 }
 
 @Composable
-private fun PositionCard(pos: `in`.dhanpulse.personal.model.PositionSummary) {
+private fun PositionCard(pos: `in`.dhanpulse.personal.model.PositionSummary, vm: DhanPulseViewModel) {
     val pnlColor = if (pos.pnl >= 0) Green else Red
+    val energyLong = pos.exchange == "MCX" && pos.netQty > 0 && (pos.lotSize ?: 0) > 0 &&
+        listOf("CRUDEOIL", "NATURALGAS", "NATGASMINI").any { pos.tradingSymbol?.startsWith(it) == true }
+    var confirmExit by remember(pos.token) { mutableStateOf(false) }
+    if (confirmExit) AlertDialog(
+        onDismissRequest = { confirmExit = false },
+        title = { Text("Exit open energy option") },
+        text = { Text("Exit ${(pos.netQty / (pos.lotSize ?: 1)).toInt().coerceAtMost(20)} lot(s) of ${pos.tradingSymbol}? Confirm current quantity and price before placing a market order.") },
+        confirmButton = { Button(onClick = { vm.exitEnergyPosition(pos); confirmExit = false }, enabled = !vm.orderBusy) { Text("SELL TO EXIT") } },
+        dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("Cancel") } }
+    )
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1123,6 +1179,12 @@ private fun PositionCard(pos: `in`.dhanpulse.personal.model.PositionSummary) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Avg ${n(if (pos.netQty >= 0) pos.buyAvgPrice else pos.sellAvgPrice)}", color = Muted, fontSize = 10.sp)
                 Text("LTP ${n(pos.ltp)}", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            if (energyLong) {
+                Text("Option expires ${pos.optionExpiry ?: "as per broker"}. Open energy options may become futures positions at expiry. Exit before then.", color = Amber, fontSize = 10.sp)
+                Button(onClick = { confirmExit = true }, enabled = !vm.orderBusy && vm.orderGateway?.executionReady == true) {
+                    Text(if (vm.orderGateway?.executionReady == true) "EXIT ENERGY OPTION" else "EXIT THROUGH ANGEL ONE")
+                }
             }
         }
     }
@@ -1366,6 +1428,7 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                     Text(contract?.tradingSymbol ?: "Selected option")
                     Text("Side: $side   Lots: $lots   Qty: ${(contract?.lotSize ?: 0) * lots}")
                     Text(if (a.segment == "MCX") "MARKET • CARRYFORWARD" else "MARKET • INTRADAY", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    if (a.instrumentType == "ENERGY") Text("This option can become a futures position at expiry. Exit before expiry; this app does not close it automatically.", color = Amber, style = MaterialTheme.typography.bodySmall)
                     if (vm.autoTradeEnabled) Text("Manual order will switch Auto Trade OFF to avoid duplicate orders.", color = Amber, style = MaterialTheme.typography.bodySmall)
                 }
             },
@@ -1405,6 +1468,7 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             if (contract == null) {
                 InfoStrip("Manual contract unavailable", "Refresh analysis to load the near ATM option contracts.")
             } else {
+                if (a.instrumentType == "ENERGY") InfoStrip("Energy option expiry", "Selected option expiry: ${a.optionChain.expiry ?: "Unknown"}. Exit open positions before expiry. New buys stop ahead of expiry to reduce futures settlement risk.")
                 Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
                     Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -1889,9 +1953,10 @@ fun MarketCard(a: AnalysisResponse) {
             Text("Market structure", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
             Text("Price trend and momentum", color = Muted, style = MaterialTheme.typography.bodySmall)
             if (a.dataFresh == false) {
-                Text("Index quote time: ${m.feedTime ?: "Not supplied by broker"}", color = Amber, fontSize = 10.sp)
+                Text("Market quote time: ${m.feedTime ?: "Not supplied by broker"}", color = Amber, fontSize = 10.sp)
                 m.lastCandleTime?.let { Text("Last candle: $it", color = Muted, fontSize = 10.sp) }
             }
+            m.instrumentLabel?.let { Text("Underlying futures: $it", color = Muted, fontSize = 10.sp) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricTile("LTP", n(m.ltp), Modifier.weight(1f))
                 MetricTile("FUT AVG", n(m.vwap), Modifier.weight(1f))

@@ -36,6 +36,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var mcxIndices by mutableStateOf<List<McxIndexInfo>>(emptyList())
         private set
+    var mcxEnergy by mutableStateOf<List<McxIndexInfo>>(emptyList())
+        private set
     var mcxCatalogError by mutableStateOf<String?>(null)
         private set
     private var lastEquitySymbol = "NIFTY"
@@ -219,8 +221,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 error = null
                 refreshWarning = when {
                     result.tradeDecision.status == "MARKET_CLOSED" -> "Market closed. Showing the last available broker prices. New calls and Auto Trade are paused until fresh session data returns."
-                    result.tradeDecision.status == "HISTORY_UNAVAILABLE" -> "Broker index quote is visible, but historical candles are unavailable. Calls are paused until history loads."
-                    result.dataFresh == false -> "Index feed is delayed or its time is unavailable. Showing the last available prices; new calls and Auto Trade are paused."
+                    result.tradeDecision.status == "HISTORY_UNAVAILABLE" -> "Broker market quote is visible, but historical candles are unavailable. Calls are paused until history loads."
+                    result.dataFresh == false -> "Market feed is delayed or its time is unavailable. Showing the last available prices; new calls and Auto Trade are paused."
                     else -> null
                 }
                 if (result.dataFresh != false) {
@@ -290,10 +292,26 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         if (a.segment == "MCX") {
             if (c.exchange != "MCX" || !freshForNewCall(a) || a.tradeDecision.status == "NO_OPTIONS") return false
             val indiaNow = Instant.now().atZone(indiaZone)
-            val expiryToday = indiaNow.format(java.time.format.DateTimeFormatter.ofPattern("ddMMMyyyy", java.util.Locale.ENGLISH)).uppercase()
-            if (a.optionChain.expiry?.uppercase() == expiryToday && !indiaNow.toLocalTime().isBefore(LocalTime.of(16, 30))) return false
+            val expiry = a.optionChain.expiry?.uppercase() ?: return false
+            if (a.instrumentType == "ENERGY") {
+                val expiryFormat = java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+                    .appendPattern("ddMMMyyyy").toFormatter(java.util.Locale.ENGLISH)
+                val expires = runCatching { java.time.LocalDate.parse(expiry, expiryFormat) }.getOrNull() ?: return false
+                if (java.time.temporal.ChronoUnit.DAYS.between(indiaNow.toLocalDate(), expires) < 4) return false
+                var sessions = 0
+                var day = indiaNow.toLocalDate().plusDays(1)
+                while (!day.isAfter(expires)) {
+                    if (day.dayOfWeek.value in 1..5) sessions++
+                    day = day.plusDays(1)
+                }
+                if (sessions < 3) return false
+            } else {
+                val expiryToday = indiaNow.format(java.time.format.DateTimeFormatter.ofPattern("ddMMMyyyy", java.util.Locale.ENGLISH)).uppercase()
+                if (expiry == expiryToday && !indiaNow.toLocalTime().isBefore(LocalTime.of(16, 30))) return false
+            }
             val premiumCost = (c.ltp ?: return false) * (c.lotSize ?: return false) * lots
-            if (premiumCost <= 0 || (account?.availableCash ?: return false) < premiumCost) return false
+            val cash = account?.availableCash ?: return false
+            if (premiumCost <= 0 || premiumCost > cash * (if (a.instrumentType == "ENERGY") 0.90 else 1.0)) return false
         }
         return a.optionChain.contracts.any { it.token == c.token && (it.ltp ?: 0.0) > 0.0 }
     }
@@ -670,7 +688,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (selectedMarket == "MCX") {
             autoTradeEnabled = false
-            autoStatus = "MCX Auto Trade is off until the new strategy has been tested with live broker data. Manual index option buys remain available after quote and order checks."
+            autoStatus = "MCX Auto Trade is off until the strategy has been tested with live broker data. Manual option buys remain available after quote and order checks."
             return
         }
 
@@ -737,6 +755,16 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             }
             orderBusy = false
         }
+    }
+
+    fun exitEnergyPosition(pos: PositionSummary) {
+        val root = listOf("CRUDEOILM", "CRUDEOIL", "NATGASMINI", "NATURALGAS")
+            .firstOrNull { pos.tradingSymbol?.startsWith(it) == true } ?: return
+        if (root.isBlank() || pos.exchange != "MCX" || pos.netQty <= 0) return
+        val lotSize = pos.lotSize?.takeIf { it > 0 } ?: return
+        val lots = (pos.netQty / lotSize).toInt().coerceAtMost(20)
+        if (lots < 1) return
+        placeOrder("SELL", OptionContract(token = pos.token, tradingSymbol = pos.tradingSymbol, exchange = "MCX", lotSize = lotSize), lots)
     }
 
     private suspend fun evaluateAutoTrade(result: AnalysisResponse) {
@@ -872,7 +900,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectSymbol(symbol: String) {
         if (selectedMarket == "MCX") {
-            if (symbol != "MCXBULLDEX" && mcxIndices.none { it.symbol == symbol }) return
+            if (symbol != "MCXBULLDEX" && mcxIndices.none { it.symbol == symbol } && mcxEnergy.none { it.symbol == symbol }) return
             lastMcxSymbol = symbol
         } else {
             if (symbol !in setOf("NIFTY", "BANKNIFTY", "SENSEX")) return
@@ -913,9 +941,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         val s = sessionId ?: return
         viewModelScope.launch {
             try {
-                mcxIndices = client().mcxMarkets(s).indices
-                mcxCatalogError = if (mcxIndices.isEmpty()) "No MCX index instruments were returned by Angel One." else null
-                if (selectedMarket == "MCX" && mcxIndices.isNotEmpty() && mcxIndices.none { it.symbol == selectedSymbol }) {
+                val catalog = client().mcxMarkets(s)
+                mcxIndices = catalog.indices
+                mcxEnergy = catalog.energy
+                mcxCatalogError = if (mcxIndices.isEmpty() && mcxEnergy.isEmpty()) "No MCX instruments were returned by Angel One." else null
+                if (selectedMarket == "MCX" && mcxIndices.isNotEmpty() && (mcxIndices + mcxEnergy).none { it.symbol == selectedSymbol }) {
                     selectSymbol(mcxIndices.first().symbol)
                 }
             } catch (e: Exception) {
