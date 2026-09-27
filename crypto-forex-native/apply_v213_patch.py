@@ -21,7 +21,8 @@ m = m.replace(needle, replacement, 1)
 MANIFEST.write_text(m, encoding="utf-8")
 
 # Replace the old blue DP block inside the app with the real DhanPulse logo.
-h = INDEX.read_text(encoding="utf-8")nh = re.sub(r'<div class="logo">DP</div>', '<img class="logo" src="dhanpulse_logo.jpg" alt="DhanPulse">', h, count=1)
+h = INDEX.read_text(encoding="utf-8")
+h = re.sub(r'<div class="logo">DP</div>', '<img class="logo" src="dhanpulse_logo.jpg" alt="DhanPulse">', h, count=1)
 h = h.replace(
     '.logo{width:44px;height:44px;border-radius:13px;background:linear-gradient(135deg,#176bcc,#36c5d8);display:grid;place-items:center;font-weight:900;color:#04111c}',
     '.logo{width:58px;height:58px;border-radius:14px;object-fit:contain;background:#fff;padding:3px;display:block}'
