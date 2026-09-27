@@ -70,9 +70,10 @@ jobs:
 
       - name: Install verified DhanPulse V2.1.4 artwork
         run: |
-          base64 -d crypto-forex-native/logo_icon_256.b64 > crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg
+          cat crypto-forex-native/logo128.part0 crypto-forex-native/logo128.part1 | base64 -d > crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg
           cp crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg crypto-forex-native/app/src/main/assets/dhanpulse_logo_v214.jpg
           test "$(xxd -p -l 2 crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg)" = "ffd8"
+          file crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg | grep -q JPEG
           test -s crypto-forex-native/app/src/main/assets/dhanpulse_logo_v214.jpg
 
       - name: Apply native authority and branding V2.1.4
