@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex Adaptive Ensemble APK
+name: Build DhanPulse Crypto Forex Clean Algorithm V2.1 APK
 
 on:
   push:
-    branches: [ adaptive-ensemble-v2.0 ]
+    branches: [ clean-algo-v2.1 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -47,8 +47,11 @@ jobs:
           sed -i 's/Version 1.8.0/Version 2.0.0 Adaptive Ensemble/g' crypto-forex-native/app/src/main/assets/index.html
           sed -i 's/Version 1.8.0./Version 2.0.0 Adaptive Ensemble./g' crypto-forex-native/app/src/main/assets/index.html || true
 
-      - name: Apply adaptive ensemble engine
+      - name: Apply adaptive ensemble base
         run: python3 crypto-forex-native/apply_v2_patch.py
+
+      - name: Apply clean algorithm V2.1
+        run: python3 crypto-forex-native/apply_v21_patch.py
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -72,12 +75,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.0.0_Adaptive_Ensemble.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.0_Clean_Algorithm.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.0.0-Adaptive-Ensemble
-          path: DhanPulse_Crypto_Forex_v2.0.0_Adaptive_Ensemble.apk
+          name: DhanPulse-Crypto-Forex-v2.1.0-Clean-Algorithm
+          path: DhanPulse_Crypto_Forex_v2.1.0_Clean_Algorithm.apk
           if-no-files-found: error
           retention-days: 30
