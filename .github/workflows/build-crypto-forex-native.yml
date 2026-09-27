@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex V2.1.4 Native Authority APK
+name: Build DhanPulse Crypto Forex V2.1.5 WS Recovery APK
 
 on:
   push:
-    branches: [ clean-algo-v2.1.4 ]
+    branches: [ clean-algo-v2.1.5 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -79,15 +79,18 @@ jobs:
       - name: Apply native authority and branding V2.1.4
         run: python3 crypto-forex-native/apply_v214_patch.py
 
-      - name: Verify V2.1.4 wiring
+      - name: Apply WebSocket recovery V2.1.5
+        run: python3 crypto-forex-native/apply_v215_patch.py
+
+      - name: Verify V2.1.5 wiring
         run: |
+          grep -q 'versionName = "2.1.5"' crypto-forex-native/app/build.gradle.kts
+          grep -q 'lastWsTradeReceived' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'RAW SUBSCRIBE' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'wss://fstream.binance.com/ws' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'wsAgeMs' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
+          grep -q 'Version 2.1.5 WS Recovery' crypto-forex-native/app/src/main/assets/index.html
           grep -q 'android:icon="@drawable/dhanpulse_launcher_v214"' crypto-forex-native/app/src/main/AndroidManifest.xml
-          grep -q 'android:roundIcon="@drawable/dhanpulse_launcher_v214"' crypto-forex-native/app/src/main/AndroidManifest.xml
-          grep -q 'android:theme="@style/AppTheme"' crypto-forex-native/app/src/main/AndroidManifest.xml
-          grep -q 'dhanpulse_logo_v214.jpg' crypto-forex-native/app/src/main/assets/index.html
-          grep -q 'Native Decision' crypto-forex-native/app/src/main/assets/index.html
-          grep -q 'versionName = "2.1.4"' crypto-forex-native/app/build.gradle.kts
-          grep -q '__nativeDecisionAuthority' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -111,12 +114,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.4_Native_Authority.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.5_WS_Recovery.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.1.4-Native-Authority
-          path: DhanPulse_Crypto_Forex_v2.1.4_Native_Authority.apk
+          name: DhanPulse-Crypto-Forex-v2.1.5-WS-Recovery
+          path: DhanPulse_Crypto_Forex_v2.1.5_WS_Recovery.apk
           if-no-files-found: error
           retention-days: 30
