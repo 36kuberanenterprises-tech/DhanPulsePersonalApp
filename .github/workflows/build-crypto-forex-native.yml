@@ -59,10 +59,10 @@ jobs:
       - name: Apply active signal and branding V2.1.2
         run: python3 crypto-forex-native/apply_v212_patch.py
 
-      - name: Install exact DhanPulse logo asset
+      - name: Install DhanPulse logo asset
         run: |
           mkdir -p crypto-forex-native/app/src/main/res/drawable
-          cat crypto-forex-native/logo.part00 crypto-forex-native/logo.part01 crypto-forex-native/logo.part02 | base64 -d > crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg
+          base64 -d crypto-forex-native/logo_small.b64 > crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg
           cp crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg crypto-forex-native/app/src/main/assets/dhanpulse_logo.jpg
           test -s crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg
 
