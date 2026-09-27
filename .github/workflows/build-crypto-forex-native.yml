@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex V2.1.2 Active Signal APK
+name: Build DhanPulse Crypto Forex V2.1.3 Icon Fix APK
 
 on:
   push:
-    branches: [ clean-algo-v2.1.2 ]
+    branches: [ clean-algo-v2.1.3 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -56,7 +56,7 @@ jobs:
       - name: Apply balanced trigger V2.1.1
         run: python3 crypto-forex-native/apply_v211_patch.py
 
-      - name: Apply active signal and branding V2.1.2
+      - name: Apply active signal V2.1.2
         run: python3 crypto-forex-native/apply_v212_patch.py
 
       - name: Install DhanPulse logo asset
@@ -65,6 +65,16 @@ jobs:
           base64 -d crypto-forex-native/logo_small.b64 > crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg
           cp crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg crypto-forex-native/app/src/main/assets/dhanpulse_logo.jpg
           test -s crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg
+
+      - name: Apply launcher and in-app icon fix V2.1.3
+        run: python3 crypto-forex-native/apply_v213_patch.py
+
+      - name: Verify icon wiring
+        run: |
+          grep -q 'android:icon="@drawable/dhanpulse_logo"' crypto-forex-native/app/src/main/AndroidManifest.xml
+          grep -q 'android:roundIcon="@drawable/dhanpulse_logo"' crypto-forex-native/app/src/main/AndroidManifest.xml
+          grep -q 'src="dhanpulse_logo.jpg"' crypto-forex-native/app/src/main/assets/index.html
+          grep -q 'versionName = "2.1.3"' crypto-forex-native/app/build.gradle.kts
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -88,12 +98,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.2_Active_Signal.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.3_Icon_Fix.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.1.2-Active-Signal
-          path: DhanPulse_Crypto_Forex_v2.1.2_Active_Signal.apk
+          name: DhanPulse-Crypto-Forex-v2.1.3-Icon-Fix
+          path: DhanPulse_Crypto_Forex_v2.1.3_Icon_Fix.apk
           if-no-files-found: error
           retention-days: 30
