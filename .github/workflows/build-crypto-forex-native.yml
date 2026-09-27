@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex Clean Algorithm V2.1 APK
+name: Build DhanPulse Crypto Forex V2.1.1 Balanced Trigger APK
 
 on:
   push:
-    branches: [ clean-algo-v2.1 ]
+    branches: [ clean-algo-v2.1.1 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -53,6 +53,9 @@ jobs:
       - name: Apply clean algorithm V2.1
         run: python3 crypto-forex-native/apply_v21_patch.py
 
+      - name: Apply balanced trigger V2.1.1
+        run: python3 crypto-forex-native/apply_v211_patch.py
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
@@ -75,12 +78,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.0_Clean_Algorithm.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.1_Balanced_Trigger.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.1.0-Clean-Algorithm
-          path: DhanPulse_Crypto_Forex_v2.1.0_Clean_Algorithm.apk
+          name: DhanPulse-Crypto-Forex-v2.1.1-Balanced-Trigger
+          path: DhanPulse_Crypto_Forex_v2.1.1_Balanced_Trigger.apk
           if-no-files-found: error
           retention-days: 30
