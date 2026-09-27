@@ -1,0 +1,80 @@
+name: Build DhanPulse Crypto Forex Native Background APK
+
+on:
+  push:
+    branches: [ native-background-v1.9 ]
+    paths:
+      - 'crypto-forex-native/**'
+      - '.github/workflows/build-crypto-forex-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Reconstruct current DhanPulse web UI asset
+        run: |
+          cat \
+            crypto-forex-app/project.part00 \
+            crypto-forex-app/project.part01 \
+            crypto-forex-app/project.part02 \
+            crypto-forex-app/project.part03 \
+            crypto-forex-app/project.part04a \
+            crypto-forex-app/project.part04b0 \
+            crypto-forex-app/project.part04b1 \
+            crypto-forex-app/project.part04c \
+            crypto-forex-app/project.part04d \
+            crypto-forex-app/project.part04e \
+            crypto-forex-app/project.part04f \
+            crypto-forex-app/project.part05 \
+            crypto-forex-app/project.part06 \
+            | base64 -d > /tmp/dhanpulse-project.zip
+          mkdir -p /tmp/dhanpulse-old
+          unzip -q /tmp/dhanpulse-project.zip -d /tmp/dhanpulse-old
+          mkdir -p crypto-forex-native/app/src/main/assets
+          cp /tmp/dhanpulse-old/app/src/main/assets/index.html crypto-forex-native/app/src/main/assets/index.html
+          sed -i 's/Version 1.8.0/Version 1.9.0 Native Background/g' crypto-forex-native/app/src/main/assets/index.html
+          sed -i 's/Version 1.8.0./Version 1.9.0 Native Background./g' crypto-forex-native/app/src/main/assets/index.html || true
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "sdk.dir=$ANDROID_HOME" > crypto-forex-native/local.properties
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build installable debug APK
+        working-directory: crypto-forex-native
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Prepare APK artifact
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v1.9.0_Native_Background.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DhanPulse-Crypto-Forex-v1.9.0-Native-Background
+          path: DhanPulse_Crypto_Forex_v1.9.0_Native_Background.apk
+          if-no-files-found: error
+          retention-days: 30
