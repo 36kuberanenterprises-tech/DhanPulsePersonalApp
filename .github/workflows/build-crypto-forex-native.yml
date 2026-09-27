@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex V2.1.1 Balanced Trigger APK
+name: Build DhanPulse Crypto Forex V2.1.2 Active Signal APK
 
 on:
   push:
-    branches: [ clean-algo-v2.1.1 ]
+    branches: [ clean-algo-v2.1.2 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -56,6 +56,16 @@ jobs:
       - name: Apply balanced trigger V2.1.1
         run: python3 crypto-forex-native/apply_v211_patch.py
 
+      - name: Apply active signal and branding V2.1.2
+        run: python3 crypto-forex-native/apply_v212_patch.py
+
+      - name: Install exact DhanPulse logo asset
+        run: |
+          mkdir -p crypto-forex-native/app/src/main/res/drawable
+          cat crypto-forex-native/logo.part00 crypto-forex-native/logo.part01 crypto-forex-native/logo.part02 | base64 -d > crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg
+          cp crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg crypto-forex-native/app/src/main/assets/dhanpulse_logo.jpg
+          test -s crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
@@ -78,12 +88,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.1_Balanced_Trigger.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.2_Active_Signal.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.1.1-Balanced-Trigger
-          path: DhanPulse_Crypto_Forex_v2.1.1_Balanced_Trigger.apk
+          name: DhanPulse-Crypto-Forex-v2.1.2-Active-Signal
+          path: DhanPulse_Crypto_Forex_v2.1.2_Active_Signal.apk
           if-no-files-found: error
           retention-days: 30
