@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#071018</item>
+        <item name="android:statusBarColor">#071018</item>
+        <item name="android:navigationBarColor">#071018</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#19C76B</item>
+        <item name="android:windowSplashScreenBackground">#071018</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/dhanpulse_launcher_v214</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#FFFFFF</item>
+    </style>
+</resources>
