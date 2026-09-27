@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex Native Background APK
+name: Build DhanPulse Crypto Forex Adaptive Ensemble APK
 
 on:
   push:
-    branches: [ native-background-v1.9 ]
+    branches: [ adaptive-ensemble-v2.0 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -44,8 +44,11 @@ jobs:
           unzip -q /tmp/dhanpulse-project.zip -d /tmp/dhanpulse-old
           mkdir -p crypto-forex-native/app/src/main/assets
           cp /tmp/dhanpulse-old/app/src/main/assets/index.html crypto-forex-native/app/src/main/assets/index.html
-          sed -i 's/Version 1.8.0/Version 1.9.0 Native Background/g' crypto-forex-native/app/src/main/assets/index.html
-          sed -i 's/Version 1.8.0./Version 1.9.0 Native Background./g' crypto-forex-native/app/src/main/assets/index.html || true
+          sed -i 's/Version 1.8.0/Version 2.0.0 Adaptive Ensemble/g' crypto-forex-native/app/src/main/assets/index.html
+          sed -i 's/Version 1.8.0./Version 2.0.0 Adaptive Ensemble./g' crypto-forex-native/app/src/main/assets/index.html || true
+
+      - name: Apply adaptive ensemble engine
+        run: python3 crypto-forex-native/apply_v2_patch.py
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -69,12 +72,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v1.9.0_Native_Background.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.0.0_Adaptive_Ensemble.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v1.9.0-Native-Background
-          path: DhanPulse_Crypto_Forex_v1.9.0_Native_Background.apk
+          name: DhanPulse-Crypto-Forex-v2.0.0-Adaptive-Ensemble
+          path: DhanPulse_Crypto_Forex_v2.0.0_Adaptive_Ensemble.apk
           if-no-files-found: error
           retention-days: 30
