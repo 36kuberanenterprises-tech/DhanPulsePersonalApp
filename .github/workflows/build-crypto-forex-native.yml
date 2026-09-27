@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex V2.1.5 WS Recovery APK
+name: Build DhanPulse Crypto Forex V2.1.6 Hybrid Micro Feed APK
 
 on:
   push:
-    branches: [ clean-algo-v2.1.5 ]
+    branches: [ clean-algo-v2.1.6 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -82,14 +82,19 @@ jobs:
       - name: Apply WebSocket recovery V2.1.5
         run: python3 crypto-forex-native/apply_v215_patch.py
 
-      - name: Verify V2.1.5 wiring
+      - name: Apply hybrid microstructure fallback V2.1.6
+        run: python3 crypto-forex-native/apply_v216_patch.py
+
+      - name: Verify V2.1.6 wiring
         run: |
-          grep -q 'versionName = "2.1.5"' crypto-forex-native/app/build.gradle.kts
-          grep -q 'lastWsTradeReceived' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'RAW SUBSCRIBE' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'wss://fstream.binance.com/ws' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'wsAgeMs' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
-          grep -q 'Version 2.1.5 WS Recovery' crypto-forex-native/app/src/main/assets/index.html
+          grep -q 'versionName = "2.1.6"' crypto-forex-native/app/build.gradle.kts
+          grep -q 'fetchRestMicrostructure' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'aggTrades?symbol=' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'REST MICRO' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'native_turn_state' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'turnState' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
+          grep -q 'Version 2.1.6 Hybrid Micro Feed' crypto-forex-native/app/src/main/assets/index.html
+          grep -q '__nativeChartPlan' crypto-forex-native/app/src/main/assets/index.html
           grep -q 'android:icon="@drawable/dhanpulse_launcher_v214"' crypto-forex-native/app/src/main/AndroidManifest.xml
 
       - name: Set up Java 17
@@ -114,12 +119,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.5_WS_Recovery.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.6_Hybrid_Micro_Feed.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.1.5-WS-Recovery
-          path: DhanPulse_Crypto_Forex_v2.1.5_WS_Recovery.apk
+          name: DhanPulse-Crypto-Forex-v2.1.6-Hybrid-Micro-Feed
+          path: DhanPulse_Crypto_Forex_v2.1.6_Hybrid_Micro_Feed.apk
           if-no-files-found: error
           retention-days: 30
