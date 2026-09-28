@@ -69,7 +69,12 @@ object ApiFactory {
             .writeTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(logging)
             .addInterceptor(Interceptor { chain ->
-                chain.proceed(chain.request().newBuilder().header("Accept", "application/json").build())
+                val request = chain.request()
+                val builder = request.newBuilder().header("Accept", "application/json")
+                if (request.url.encodedPath.startsWith("/api/analysis/")) {
+                    builder.header("X-DhanPulse-Analysis-Policy", "oi-caution-v1")
+                }
+                chain.proceed(builder.build())
             })
             .build()
         return Retrofit.Builder()

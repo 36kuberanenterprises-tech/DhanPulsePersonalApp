@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveNearestFuture, resolveOptionWindow, resolveUnderlying, quoteFeedAgeMs, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, normalizeStrike, mcxOptionEntryWindow } from '../src/angel.js';
-import { signalEngine, nearAtmOi, marketDataState } from '../src/analysis.js';
+import { signalEngine, nearAtmOi, marketDataState, buildTradeDecision } from '../src/analysis.js';
 
 const expiryRows = [
   { token: '100', name: 'NIFTY', symbol: 'NIFTY24SEP26FUT', exch_seg: 'NFO', instrumenttype: 'FUTIDX', expiry: '24SEP2026' },
@@ -62,6 +62,54 @@ test('PCR excludes unpaired strikes and pauses its vote with too little coverage
   const missingPut = paired.map(x => x.strike === 23250 && x.optionType === 'PE' ? { ...x, ltp: null } : x);
   assert.equal(nearAtmOi(missingPut, 23200).pcr, null);
   assert.equal(nearAtmOi(missingPut, 23200).coverage, '2/3 paired strikes');
+});
+
+const bearishDecision = {
+  engine: { signal: 'PE', bullRules: 1, bearRules: 6 },
+  trend: { vote: 'PE', detail: '5 bearish checks' },
+  htf: { vote: 'PE', detail: 'EMA and Supertrend bearish' },
+  oi: { vote: 'CE', detail: 'PCR 1.23 supports bullish bias' },
+  pcr: 1.23, regime: { name: 'TRENDING', suitable: true },
+  sr: { support: 55000, resistance: 55500 }, spot: 55180,
+  atrValue: 100, selected: { contract: { token: '123', ltp: 50 }, reason: 'liquid option', score: 90 },
+  now: new Date('2026-09-28T04:19:00Z')
+};
+
+test('moderately opposing PCR yields a manual review call only for an opted in app', () => {
+  const strict = buildTradeDecision(bearishDecision);
+  assert.equal(strict.status, 'REJECTED_CONFLICT');
+  assert.equal(strict.setupAllowed, false);
+  assert.equal(strict.autoEntryAllowed, false);
+  const cautious = buildTradeDecision({ ...bearishDecision, allowOiCaution: true });
+  assert.equal(cautious.status, 'OI_CAUTION');
+  assert.equal(cautious.setupAllowed, true);
+  assert.equal(cautious.autoEntryAllowed, false);
+  assert.equal(cautious.supportingVotes, 3);
+  assert.equal(cautious.cautions.length, 1);
+  assert.deepEqual(cautious.conflicts, []);
+});
+
+test('strong OI opposition, nearby support and weak price evidence still block calls', () => {
+  const base = { ...bearishDecision, allowOiCaution: true };
+  assert.equal(buildTradeDecision({ ...base, pcr: 1.55 }).setupAllowed, false);
+  assert.equal(buildTradeDecision({ ...base, sr: { ...base.sr, support: 55150 } }).setupAllowed, false);
+  assert.equal(buildTradeDecision({ ...base, htf: { vote: 'CE', detail: 'opposite' } }).setupAllowed, false);
+  assert.equal(buildTradeDecision({ ...base, regime: { name: 'TRANSITION', suitable: true } }).setupAllowed, false);
+  assert.equal(buildTradeDecision({ ...base, engine: { signal: 'PE', bullRules: 2, bearRules: 5 } }).setupAllowed, false);
+  assert.equal(buildTradeDecision({ ...base, selected: { contract: null, reason: 'no quote' } }).setupAllowed, false);
+  assert.equal(buildTradeDecision({ ...base, now: new Date('2026-09-28T03:59:00Z') }).setupAllowed, false);
+  assert.equal(buildTradeDecision({ ...base, segment: 'MCX' }).setupAllowed, false);
+});
+
+test('the narrow caution rule also works for a bullish price trend against moderate bearish PCR', () => {
+  const bullish = buildTradeDecision({
+    ...bearishDecision, allowOiCaution: true,
+    engine: { signal: 'CE', bullRules: 6, bearRules: 1 },
+    trend: { vote: 'CE', detail: 'bullish' }, htf: { vote: 'CE', detail: 'bullish' },
+    oi: { vote: 'PE', detail: 'bearish OI' }, pcr: 0.82
+  });
+  assert.equal(bullish.status, 'OI_CAUTION');
+  assert.equal(bullish.autoEntryAllowed, false);
 });
 
 const mcxRows = [

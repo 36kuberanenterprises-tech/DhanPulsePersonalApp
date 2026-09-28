@@ -23,6 +23,7 @@ data class TradeDecision(
     val direction: String = "WAIT",
     val status: String = "WATCHING",
     val setupAllowed: Boolean = false,
+    val autoEntryAllowed: Boolean = false,
     val supportingVotes: Int = 0,
     val totalVotes: Int = 0,
     val alignmentPct: Double = 0.0,
@@ -30,6 +31,7 @@ data class TradeDecision(
     val regimeSuitable: Boolean = false,
     val strategyVotes: List<StrategyVote> = emptyList(),
     val conflicts: List<String> = emptyList(),
+    val cautions: List<String> = emptyList(),
     val selectedContractReason: String? = null,
     val selectedContractScore: Double? = null,
     val message: String = ""

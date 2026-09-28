@@ -499,6 +499,9 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
         d.direction == "WAIT" -> "WATCHING"
         !d.setupAllowed && d.status == "REJECTED_CONFLICT" -> "REJECTED • CONFLICT"
         !d.setupAllowed -> "SETUP FORMING"
+        d.status == "OI_CAUTION" && p.confirmationCount <= 0 -> "OI CAUTION • SCAN 0/2"
+        d.status == "OI_CAUTION" && p.confirmationCount == 1 -> "OI CAUTION • SCAN 1/2"
+        d.status == "OI_CAUTION" -> "OI CAUTION • MANUAL REVIEW"
         p.confirmationCount <= 0 -> "SETUP PASSED • SCAN 0/2"
         p.confirmationCount == 1 -> "CONFIRMING • SCAN 1/2"
         else -> "PREMIUM CONFIRMATION"
@@ -506,6 +509,7 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     val stageColor = when {
         p.callId != null && p.stage == "STOP_LOSS_HIT" -> Red
         p.callId != null && p.stage.startsWith("TARGET_") -> Green
+        d.status == "OI_CAUTION" -> Amber
         d.setupAllowed -> Blue
         d.status == "REJECTED_CONFLICT" -> Red
         else -> Amber
@@ -537,7 +541,7 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DecisionMetric("ALIGNMENT", "${d.supportingVotes}/${d.totalVotes}", if (d.setupAllowed) Green else Amber, Modifier.weight(1f))
+                DecisionMetric("ALIGNMENT", "${d.supportingVotes}/${d.totalVotes}", if (d.setupAllowed && d.cautions.isEmpty()) Green else Amber, Modifier.weight(1f))
                 DecisionMetric("REGIME", d.regime, if (d.regimeSuitable) Green else Red, Modifier.weight(1f))
                 DecisionMetric("SCAN", "${p.confirmationCount}/${p.confirmationRequired}", Blue, Modifier.weight(1f))
             }
@@ -565,6 +569,15 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                     Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("WHY NO CALL", color = Red, fontWeight = FontWeight.ExtraBold, fontSize = 9.sp)
                         d.conflicts.forEach { Text("• $it", color = Muted, fontSize = 9.sp) }
+                    }
+                }
+            }
+
+            if (d.cautions.isNotEmpty()) {
+                Surface(color = Amber.copy(alpha = 0.08f), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.18f))) {
+                    Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("MANUAL REVIEW • AUTO ENTRY PAUSED", color = Amber, fontWeight = FontWeight.ExtraBold, fontSize = 9.sp)
+                        d.cautions.forEach { Text("• $it", color = Muted, fontSize = 9.sp) }
                     }
                 }
             }
@@ -1301,12 +1314,14 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
                     d.status == "MARKET_CLOSED" -> "CLOSED"
                     d.status == "DATA_STALE" -> "DELAYED"
                     d.direction == "WAIT" -> "WATCHING"
+                    d.status == "OI_CAUTION" -> "OI CAUTION"
                     d.setupAllowed -> "SETUP PASSED"
                     d.status == "REJECTED_CONFLICT" -> "FILTERED"
                     else -> "CONFIRMING"
                 }
                 val heroColor = when {
                     d.direction == "WAIT" -> Amber
+                    d.status == "OI_CAUTION" -> Amber
                     d.setupAllowed -> Green
                     d.status == "REJECTED_CONFLICT" -> Red
                     else -> Blue
