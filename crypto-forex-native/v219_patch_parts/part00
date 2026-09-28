@@ -1,0 +1,160 @@
+from pathlib import Path
+import re
+
+ROOT = Path(__file__).resolve().parent
+SERVICE = ROOT / "app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java"
+ENSEMBLE = ROOT / "app/src/main/java/com/dhanpulse/cryptofxnative/AdaptiveEnsemble.java"
+ACTIVITY = ROOT / "app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java"
+GRADLE = ROOT / "app/build.gradle.kts"
+INDEX = ROOT / "app/src/main/assets/index.html"
+
+
+def replace_method(text, signature, new_method):
+    start = text.find(signature)
+    if start < 0:
+        raise SystemExit(f"Method not found: {signature}")
+    brace = text.find("{", start)
+    if brace < 0:
+        raise SystemExit(f"Opening brace not found: {signature}")
+    depth = 0
+    in_str = None
+    esc = False
+    end = None
+    for i in range(brace, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == in_str:
+                in_str = None
+            continue
+        if ch in ('"', "'"):
+            in_str = ch
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end is None:
+        raise SystemExit(f"Method end not found: {signature}")
+    return text[:start] + new_method.rstrip() + text[end:]
+
+
+e = ENSEMBLE.read_text(encoding="utf-8")
+
+new_evaluate = r'''    public static Result evaluate(
+            double[] o, double[] h, double[] l, double[] c, double[] v, double[] takerBuy,
+            double flow, double book, double fundingRate, double oiChangePct, double spreadBps,
+            int bias15, int bias60, int turningDir, int turningScore, boolean turningTrigger) {
+
+        int n = c == null ? 0 : c.length;
+        if (n < 60) return Result.waitResult("WARMING UP", 0, "Need more candle history");
+
+        int i = n - 1;
+        double price = c[i];
+        double atr = atrLast(h, l, c, 14);
+        if (!finite(atr) || atr <= 0) return Result.waitResult("DATA CHECK", 0, "ATR unavailable");
+
+        double ema5 = emaLast(c, 5);
+        double ema9 = emaLast(c, 9);
+        double ema21 = emaLast(c, 21);
+        double ema50 = emaLast(c, 50);
+        double ema21Prev = emaAt(c, 21, Math.max(21, n - 4));
+        double slope21 = finite(ema21Prev) ? ema21 - ema21Prev : 0.0;
+        double rsi = rsiLast(c, 14);
+        double adx = adxLast(h, l, c, 14);
+        double sma20 = mean(c, Math.max(0, n - 20), n);
+        double sd20 = std(c, Math.max(0, n - 20), n, sma20);
+        double z20 = sd20 > 0 ? (price - sma20) / sd20 : 0.0;
+        double priorHigh20 = max(h, Math.max(0, n - 21), n - 1);
+        double priorLow20 = min(l, Math.max(0, n - 21), n - 1);
+        double priorHigh50 = max(h, Math.max(0, n - 51), n - 1);
+        double priorLow50 = min(l, Math.max(0, n - 51), n - 1);
+        double volumeRatio = volumeRatio(v, n);
+        double takerRatio = takerRatio(v, takerBuy, n);
+        double atrRatio = atrRegimeRatio(h, l, c, atr);
+        double momentum3 = n >= 4 ? (price - c[n - 4]) / Math.max(atr, 1e-9) : 0.0;
+        double candleRange = Math.max(h[i] - l[i], 1e-9);
+        double body = Math.abs(c[i] - o[i]);
+        double upperWick = h[i] - Math.max(o[i], c[i]);
+        double lowerWick = Math.min(o[i], c[i]) - l[i];
+
+        boolean bullishReject = lowerWick / candleRange > 0.34 && c[i] > l[i] + candleRange * 0.52;
+        boolean bearishReject = upperWick / candleRange > 0.34 && c[i] < l[i] + candleRange * 0.48;
+        boolean displacementUp = c[i] > o[i] && body > atr * 0.52 && c[i] > l[i] + candleRange * 0.66;
+        boolean displacementDown = c[i] < o[i] && body > atr * 0.52 && c[i] < l[i] + candleRange * 0.34;
+
+        boolean trendUp = ema9 > ema21 && ema21 > ema50 && slope21 > 0 && price > ema21;
+        boolean trendDown = ema9 < ema21 && ema21 < ema50 && slope21 < 0 && price < ema21;
+        boolean breakoutUp = price > priorHigh20 + atr * 0.015;
+        boolean breakoutDown = price < priorLow20 - atr * 0.015;
+        boolean sweepLow = l[i] < priorLow20 - atr * 0.01 && price > priorLow20;
+        boolean sweepHigh = h[i] > priorHigh20 + atr * 0.01 && price < priorHigh20;
+        boolean rangeLike = adx < 19.5 && atrRatio < 1.45;
+        boolean extremeVol = atrRatio > 2.10 || candleRange > atr * 2.70;
+        boolean deadMarket = atrRatio < 0.45 && adx < 12.0 && volumeRatio < 0.65;
+        double vwap = vwap(h, l, c, v);
+
+        String regime;
+        if (extremeVol) regime = "EXTREME VOLATILITY";
+        else if (breakoutUp && volumeRatio > 1.02) regime = "BREAKOUT UP";
+        else if (breakoutDown && volumeRatio > 1.02) regime = "BREAKOUT DOWN";
+        else if (trendUp && adx >= 17.0) regime = "TREND UP";
+        else if (trendDown && adx >= 17.0) regime = "TREND DOWN";
+        else if (rangeLike) regime = "RANGE";
+        else regime = "TRANSITION";
+
+        if (finite(spreadBps) && spreadBps > 15.0) {
+            return Result.waitResult(regime, 0, "Spread too wide for reliable execution");
+        }
+        if (deadMarket) return Result.waitResult("LOW ACTIVITY", 0, "Low volatility and weak participation");
+
+        Candidate bestLong = null;
+        Candidate bestShort = null;
+
+        if (trendUp && adx >= 16.0 && price >= ema9) {
+            int s = 58;
+            if (ema5 >= ema9) s += 5;
+            if (adx >= 21.0) s += 6;
+            if (momentum3 > 0.18) s += 5;
+            if (rsi >= 50 && rsi <= 72) s += 4;
+            if (finite(vwap) && price > vwap) s += 4;
+            if (volumeRatio > 0.95) s += 3;
+            s += flowScore(flow, 1, 6) + bookScore(book, 1, 4) + htfScore(bias15, bias60, 1);
+            if (takerRatio > 0.52) s += 3;
+            if (oiChangePct > 0.02) s += 3;
+            if (fundingRate > 0.0010) s -= 4;
+            bestLong = choose(bestLong, new Candidate(1, "TREND CONTINUATION", s, 72, 1.00,
+                    metrics("trend continuation", adx, volumeRatio, flow, book, bias15, bias60)));
+        }
+        if (trendDown && adx >= 16.0 && price <= ema9) {
+            int s = 58;
+            if (ema5 <= ema9) s += 5;
+            if (adx >= 21.0) s += 6;
+            if (momentum3 < -0.18) s += 5;
+            if (rsi >= 28 && rsi <= 50) s += 4;
+            if (finite(vwap) && price < vwap) s += 4;
+            if (volumeRatio > 0.95) s += 3;
+            s += flowScore(flow, -1, 6) + bookScore(book, -1, 4) + htfScore(bias15, bias60, -1);
+            if (takerRatio < 0.48) s += 3;
+            if (oiChangePct > 0.02) s += 3;
+            if (fundingRate < -0.0010) s -= 4;
+            bestShort = choose(bestShort, new Candidate(-1, "TREND CONTINUATION", s, 72, 1.00,
+                    metrics("trend continuation", adx, volumeRatio, flow, book, bias15, bias60)));
+        }
+
+        if (breakoutUp && (volumeRatio > 0.95 || flow > 0.05 || takerRatio > 0.52)) {
+            int s = 60;
+            if (volumeRatio > 1.10) s += 6;
+            if (atrRatio > 0.95) s += 4;
+            if (displacementUp) s += 6;
+            s += flowScore(flow, 1, 8) + bookScore(book, 1, 5) + htfScore(bias15, bias60, 1);
+            if (oiChangePct > 0.02) s += 4;
+            if (takerRatio > 0.54) s += 4;
+            if (z20 > 3.2) s -= 7;
+            bestLong = choose(bestLong, new Candidate(1, "BREAKOUT", s, 74, 1.18,
