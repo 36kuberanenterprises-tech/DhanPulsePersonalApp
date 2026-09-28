@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { completedCandles, estimatedRoundTrip, evaluateStock, scannerSession, sessionVwap, sizeStockTrade } from '../src/stock-scanner.js';
+import { completedCandles, estimatedRoundTrip, evaluateStock, latestCompletedCandleStart, scannerSession, sessionVwap, sizeStockTrade, stockHistory } from '../src/stock-scanner.js';
 
 const india = (date, hour, minute) => new Date(Date.UTC(2026, 8, date, hour - 5, minute - 30));
 const candle = (date, hour, minute, open, high, low, close, volume) => ({
@@ -25,6 +25,37 @@ test('VWAP needs completed traded volume and weights a heavy candle', () => {
   assert.equal(verified.length, 2);
   assert.equal(sessionVwap(rows.slice(0, 3), india(25, 9, 30)), 103.4);
   assert.equal(sessionVwap([rows[0], { ...rows[1], volume: 0 }, rows[2]], india(25, 9, 30)), null);
+});
+
+test('a completed candle stays current until the next candle has settled', () => {
+  const start = latestCompletedCandleStart(india(28, 12, 17));
+  assert.equal(start, india(28, 12, 10).getTime());
+  assert.equal(latestCompletedCandleStart(new Date(india(28, 12, 20).getTime() + 19_000)), start);
+  assert.equal(latestCompletedCandleStart(new Date(india(28, 12, 20).getTime() + 20_000)), india(28, 12, 15).getTime());
+});
+
+test('a delayed broker candle is retried within the same slot using a short request', async () => {
+  const calls = [];
+  const first = candle(28, 12, 5, 100, 101, 99, 100, 10_000);
+  const second = candle(28, 12, 10, 100, 102, 100, 101, 12_000);
+  const fetchHistory = async (_, payload) => {
+    calls.push(payload);
+    const row = calls.length === 1 ? first : second;
+    return { data: [[row.timestamp, row.open, row.high, row.low, row.close, row.volume]] };
+  };
+  const session = { clientCode: 'SCANNER_REFRESH_TEST' };
+  const at = india(28, 12, 16);
+  const initial = await stockHistory(session, 'token-unique-1', at, fetchHistory);
+  assert.equal(initial.length, 1);
+  await stockHistory(session, 'token-unique-1', new Date(at.getTime() + 10_000), fetchHistory);
+  assert.equal(calls.length, 1);
+  const updated = await stockHistory(session, 'token-unique-1', new Date(at.getTime() + 20_000), fetchHistory);
+  assert.equal(calls.length, 2);
+  assert.equal(updated.length, 2);
+  assert.match(calls[0].fromdate, /^2026-09-07/);
+  assert.match(calls[1].fromdate, /^2026-09-26/);
+  await stockHistory(session, 'token-unique-1', new Date(at.getTime() + 25_000), fetchHistory);
+  assert.equal(calls.length, 2);
 });
 
 test('position risk includes costs and respects cash, including high priced shares', () => {
