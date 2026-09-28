@@ -69,12 +69,16 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Rename APK
-        run: cp android-app/app/build/outputs/apk/debug/app-debug.apk DhanPulse-Personal-v2.7.2-Live-Stream-Preview.apk
+        run: |
+          version=$(sed -nE 's/.*versionName = "([^"]+)".*/\1/p' android-app/app/build.gradle.kts)
+          test -n "$version"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-Personal-v${version}-Preview.apk"
+          echo "APK_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Personal-v2.7.2-Live-Stream-Preview-APK
-          path: DhanPulse-Personal-v2.7.2-Live-Stream-Preview.apk
+          name: DhanPulse-Personal-v${{ env.APK_VERSION }}-Preview-APK
+          path: DhanPulse-Personal-v${{ env.APK_VERSION }}-Preview.apk
           if-no-files-found: error
           retention-days: 30
