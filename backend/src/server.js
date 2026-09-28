@@ -254,8 +254,9 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   if (trackedToken && !/^\d{1,12}$/.test(trackedToken)) return res.status(400).json({ error: 'Invalid tracked option token' });
 
   const sessionId = req.header('X-Session-Id');
-  // Only clients that show OI caution and suppress auto entry opt into the new policy.
-  const analysisPolicy = req.header('X-DhanPulse-Analysis-Policy') === 'oi-caution-v1' ? 'oi-caution-v1' : null;
+  // Keep prior clients on their existing policy; the SENSEX model requires an explicit client opt in.
+  const requestedPolicy = req.header('X-DhanPulse-Analysis-Policy');
+  const analysisPolicy = ['oi-caution-v1', 'sensex-families-v1'].includes(requestedPolicy) ? requestedPolicy : null;
   const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval + '|' + trackedToken + '|' + (analysisPolicy || 'strict');
 
   const recent = analysisCache.get(key);
