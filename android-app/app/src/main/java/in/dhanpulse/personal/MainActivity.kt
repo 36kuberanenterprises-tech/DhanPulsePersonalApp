@@ -993,7 +993,7 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         Text("${scan.marketStatus.replace('_', ' ')} • ${stockTime(scan.timestamp)}", color = if (scan.marketStatus == "SCANNING") Green else Amber, fontWeight = FontWeight.Bold)
-                        Text("${scan.scanned} watchlist stocks • ${scan.evaluated} evaluated • Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"}", color = Ink)
+                        Text("${scan.scanned} stock quotes screened • ${scan.evaluated} detailed checks • Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"}", color = Ink)
                         Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
                         if (scan.strongestSector != null && scan.weakestSector != null) {

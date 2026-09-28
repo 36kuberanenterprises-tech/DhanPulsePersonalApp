@@ -3,6 +3,9 @@ import { atr, ema } from './indicators.js';
 
 const IST = 330 * 60_000;
 const FIVE_MINUTES = 300_000;
+const CANDLE_SETTLE_MS = 20_000;
+const HISTORY_RETRY_MS = 15_000;
+const HISTORY_GAP_MS = 700;
 const NIFTY_CSV = 'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv';
 // Used only when the official constituent file cannot be reached. Never
 // describe this fallback as a current Nifty 50 constituent list.
@@ -106,9 +109,13 @@ export function quoteSpread(quote) {
 export function completedCandles(candles, now = new Date()) {
   return candles.filter(c => {
     const t = candleDate(c);
-    return t && t.getTime() + FIVE_MINUTES + 20_000 <= now.getTime() &&
+    return t && t.getTime() + FIVE_MINUTES + CANDLE_SETTLE_MS <= now.getTime() &&
       [c.open, c.high, c.low, c.close, c.volume].every(Number.isFinite) && c.volume >= 0;
   }).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+}
+
+export function latestCompletedCandleStart(now) {
+  return Math.floor((now.getTime() - CANDLE_SETTLE_MS) / FIVE_MINUTES) * FIVE_MINUTES - FIVE_MINUTES;
 }
 
 export function sessionVwap(candles, now = new Date()) {
@@ -210,7 +217,7 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
   if (current.length < 4 || current.slice(0, 3).some(c => c.volume <= 0)) return refuse('Completed stock candles with traded volume are still preparing');
   const last = current[current.length - 1];
   const prior = current[current.length - 2];
-  if (now.getTime() - candleDate(last).getTime() > 7 * 60_000) return refuse('Latest completed five minute candle is delayed');
+  if (candleDate(last).getTime() < latestCompletedCandleStart(now)) return refuse('Latest completed five minute candle is delayed');
   const vwap = sessionVwap(verified, now);
   const a = atr(verified.slice(-80), 14);
   const trend = fifteenMinuteTrend(verified);
@@ -264,27 +271,51 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
 const historyCache = new Map();
 const scanCache = new Map();
 const scanLocks = new Map();
-async function stockHistory(session, token, now) {
+let nextHistoryRequestAt = 0;
+async function pacedCandleData(session, payload) {
+  const startAt = Math.max(Date.now(), nextHistoryRequestAt);
+  nextHistoryRequestAt = startAt + HISTORY_GAP_MS;
+  if (startAt > Date.now()) await wait(startAt - Date.now());
+  return candleData(session, payload);
+}
+
+export async function stockHistory(session, token, now, fetchHistory = pacedCandleData) {
   const key = session.clientCode + ':' + token;
   const entry = historyCache.get(key);
   const slot = Math.floor(now.getTime() / FIVE_MINUTES);
-  if (entry && entry.slot === slot) return entry.candles;
-  const from = new Date(now.getTime() - 45 * 86_400_000);
+  const last = entry && completedCandles(entry.candles, now).at(-1);
+  const current = last && Date.parse(last.timestamp) >= latestCompletedCandleStart(now);
+  if (entry && entry.slot === slot && (current || now.getTime() - entry.checkedAt < HISTORY_RETRY_MS)) return entry.candles;
+  // The first request needs prior sessions for comparable volume. Later
+  // requests fetch a short overlap and merge it with that history.
+  const from = new Date(now.getTime() - (entry ? 2 : 21) * 86_400_000);
   const format = date => {
     const d = ist(date);
     return d.toISOString().slice(0, 10) + ' ' + d.toISOString().slice(11, 16);
   };
-  const raw = await candleData(session, { exchange: 'NSE', symboltoken: token, interval: 'FIVE_MINUTE',
+  const raw = await fetchHistory(session, { exchange: 'NSE', symboltoken: token, interval: 'FIVE_MINUTE',
     fromdate: format(from), todate: format(now) });
-  const candles = parseCandles(raw);
-  historyCache.set(key, { slot, candles });
+  const fetched = parseCandles(raw).filter(c => Number.isFinite(Date.parse(c.timestamp)) &&
+    [c.open, c.high, c.low, c.close, c.volume].every(Number.isFinite));
+  if (!fetched.length) {
+    if (entry) {
+      historyCache.set(key, { ...entry, slot, checkedAt: now.getTime() });
+      return entry.candles;
+    }
+    throw new Error('Broker returned no five minute candles');
+  }
+  const merged = new Map([...(entry?.candles || []), ...fetched].map(c => [Date.parse(c.timestamp), c]));
+  const cutoff = now.getTime() - 21 * 86_400_000;
+  const candles = [...merged.entries()].filter(([time]) => time >= cutoff && time <= now.getTime())
+    .sort(([a], [b]) => a - b).map(([, c]) => c);
+  historyCache.set(key, { slot, checkedAt: now.getTime(), candles });
   return candles;
 }
 
 export async function scanStocks(session, trackedToken = null, now = new Date()) {
   const key = session.clientCode + ':' + (trackedToken || '');
   const cached = scanCache.get(key);
-  if (cached && Date.now() - cached.at < 30_000) return cached.data;
+  if (cached && Date.now() - cached.at < 12_000) return cached.data;
   if (scanLocks.has(key)) return scanLocks.get(key);
   const pending = (async () => {
     const list = await universe();
@@ -337,21 +368,27 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
     if (selected.length) {
       try { cash = Number((await rmsLimit(session))?.data?.availablecash || 0); } catch {}
     }
-    const analysed = [];
-    for (const stock of selected) {
-      try {
-        const candles = await stockHistory(session, String(stock.instrument.token), now);
-        analysed.push(evaluateStock({ symbol: stock.symbol, sector: stock.sector, quote: stock.quote,
-          candles, now, cash, niftyReturn,
-          sectorReturn: sectorMap.get(stock.sector)?.changePct,
-          sectorCount: sectorMap.get(stock.sector)?.count || 0 }));
-      } catch {
-        analysed.push({ symbol: stock.symbol, sector: stock.sector, token: String(stock.instrument.token),
-          price: round(stock.price), quoteTime: stock.quote?.exchFeedTime || null, status: 'WAIT', side: 'WAIT',
-          reason: 'Broker five minute history unavailable; retrying later', setup: null, plan: null });
+    const analysed = new Array(selected.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(2, selected.length) }, async () => {
+      while (next < selected.length) {
+        const i = next++;
+        const stock = selected[i];
+        try {
+          const candles = await stockHistory(session, String(stock.instrument.token), now);
+          analysed[i] = evaluateStock({ symbol: stock.symbol, sector: stock.sector, quote: stock.quote,
+            candles, now, cash, niftyReturn,
+            sectorReturn: sectorMap.get(stock.sector)?.changePct,
+            sectorCount: sectorMap.get(stock.sector)?.count || 0 });
+        } catch (error) {
+          const blocked = /403|rate|timeout/i.test(String(error?.message || ''));
+          analysed[i] = { symbol: stock.symbol, sector: stock.sector, token: String(stock.instrument.token),
+            price: round(stock.price), quoteTime: stock.quote?.exchFeedTime || null, status: 'WAIT', side: 'WAIT',
+            reason: blocked ? 'Broker restricted five minute history; retrying later' : 'Broker five minute history unavailable; retrying later',
+            setup: null, plan: null };
+        }
       }
-      await wait(1200);
-    }
+    }));
     const sideRank = side => analysed.filter(x => x.side === side && x.status === 'READY')
       .sort((a, b) => (b.plan?.estimatedProfitAtTwoR / b.plan?.estimatedLoss) -
         (a.plan?.estimatedProfitAtTwoR / a.plan?.estimatedLoss))[0] || null;

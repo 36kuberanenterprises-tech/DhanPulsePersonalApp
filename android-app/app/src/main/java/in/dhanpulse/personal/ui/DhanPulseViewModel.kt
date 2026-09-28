@@ -1181,7 +1181,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
                 if (!stocksVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
                 if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
-                delay(if (stocksVisible) { if (marketOpen) 30_000 else 60_000 } else { if (marketOpen) 3_000 else 60_000 })
+                delay(if (stocksVisible) { if (marketOpen) 15_000 else 60_000 } else { if (marketOpen) 3_000 else 60_000 })
                 if (stocksVisible) fetchStockScanner() else fetchAnalysis()
                 tick++
                 if (tick % 5 == 0) fetchAccount()
