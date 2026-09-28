@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex V2.1.7 Feed Authority Fix APK
+name: Build DhanPulse Crypto Forex V2.1.8 Signal Sync Fast APK
 
 on:
   push:
-    branches: [ clean-algo-v2.1.7 ]
+    branches: [ clean-algo-v2.1.8 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -88,16 +88,19 @@ jobs:
       - name: Apply feed authority fix V2.1.7
         run: python3 crypto-forex-native/apply_v217_patch.py
 
-      - name: Verify V2.1.7 wiring
+      - name: Apply signal sync and fast decision V2.1.8
+        run: python3 crypto-forex-native/apply_v218_patch.py
+
+      - name: Verify V2.1.8 wiring
         run: |
-          grep -q 'versionName = "2.1.7"' crypto-forex-native/app/build.gradle.kts
-          grep -q 'openDedicatedTradeSocket' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'ws/" + lower + "@aggTrade' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'candidate_side' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'feed_block_reason' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'fapi1.binance.com' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'tradeWsStatus' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
-          grep -q 'Version 2.1.7 Feed Authority Fix' crypto-forex-native/app/src/main/assets/index.html
+          grep -q 'versionName = "2.1.8"' crypto-forex-native/app/build.gradle.kts
+          grep -q 'native_trades_v21_json' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'native_trade_count' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'last_signal_recorded_id' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'commit();' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'dhanpulse_cf_android_trades_v211' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
+          grep -q 'Version 2.1.8 Signal Sync Fast' crypto-forex-native/app/src/main/assets/index.html
+          grep -q 'V2.1.8 Signals' crypto-forex-native/app/src/main/assets/index.html
           grep -q 'android:icon="@drawable/dhanpulse_launcher_v214"' crypto-forex-native/app/src/main/AndroidManifest.xml
 
       - name: Set up Java 17
@@ -122,12 +125,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.7_Feed_Authority_Fix.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.8_Signal_Sync_Fast.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.1.7-Feed-Authority-Fix
-          path: DhanPulse_Crypto_Forex_v2.1.7_Feed_Authority_Fix.apk
+          name: DhanPulse-Crypto-Forex-v2.1.8-Signal-Sync-Fast
+          path: DhanPulse_Crypto_Forex_v2.1.8_Signal_Sync_Fast.apk
           if-no-files-found: error
           retention-days: 30
