@@ -308,6 +308,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                             levels = null,
                             tradeDecision = old.tradeDecision.copy(
                                 setupAllowed = false,
+                                autoEntryAllowed = false,
                                 status = "DATA_STALE",
                                 message = "Broker refresh failed. Calls are paused until fresh quotes arrive."
                             )
@@ -481,7 +482,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             stage = if (callPendingCount <= 0) "SETUP_FORMING" else "CONFIRMING",
             confirmationCount = callPendingCount.coerceAtMost(2),
             confirmationRequired = 2,
-            decisionNote = "Meta decision passed. Confirming the same direction and strike on two live scans before the call is recorded."
+            decisionNote = if (decision.status == "OI_CAUTION")
+                "Price trend is strong but PCR disagrees. Manual review only. Confirming the same direction and strike on two live scans before the call is recorded."
+            else "Meta decision passed. Confirming the same direction and strike on two live scans before the call is recorded."
         )
     }
 
@@ -921,11 +924,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
-            if (!freshForNewCall(result) || !result.tradeDecision.setupAllowed || result.tradeDecision.direction != result.signal || result.signal !in setOf("CE", "PE")) {
+            if (!freshForNewCall(result) || !result.tradeDecision.setupAllowed || !result.tradeDecision.autoEntryAllowed || result.tradeDecision.direction != result.signal || result.signal !in setOf("CE", "PE")) {
                 blockedSignal = null
                 pendingSignalKey = null
                 pendingSignalCount = 0
-                autoStatus = "WAIT • Fresh, confirmed trade decision required for auto entry."
+                autoStatus = if (result.tradeDecision.status == "OI_CAUTION")
+                    "Auto entry paused: PCR opposes the trend. Review this call manually."
+                else "WAIT • Fresh, confirmed trade decision required for auto entry."
                 return
             }
 

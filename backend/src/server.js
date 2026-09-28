@@ -254,7 +254,9 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   if (trackedToken && !/^\d{1,12}$/.test(trackedToken)) return res.status(400).json({ error: 'Invalid tracked option token' });
 
   const sessionId = req.header('X-Session-Id');
-  const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval + '|' + trackedToken;
+  // Only clients that show OI caution and suppress auto entry opt into the new policy.
+  const analysisPolicy = req.header('X-DhanPulse-Analysis-Policy') === 'oi-caution-v1' ? 'oi-caution-v1' : null;
+  const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval + '|' + trackedToken + '|' + (analysisPolicy || 'strict');
 
   const recent = analysisCache.get(key);
   if (recent && Date.now() - recent.at < (recent.value.dataFresh === false ? 60_000 : LIVE_ANALYSIS_MIN_MS)) {
@@ -262,7 +264,7 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   }
 
   try {
-    const result = await analyse(req.smartSession, req.params.symbol, interval, trackedToken || null);
+    const result = await analyse(req.smartSession, req.params.symbol, interval, trackedToken || null, analysisPolicy);
     analysisCache.set(key, { at: Date.now(), value: result });
     res.json(result);
   } catch (e) {
@@ -279,6 +281,7 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
           ...cached.value.tradeDecision,
           direction: 'WAIT',
           setupAllowed: false,
+          autoEntryAllowed: false,
           status: 'DATA_STALE',
           message: 'Broker refresh failed. Calls are paused until fresh quotes arrive.'
         },

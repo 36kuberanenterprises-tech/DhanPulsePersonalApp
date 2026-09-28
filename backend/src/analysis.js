@@ -320,7 +320,7 @@ function selectBestContract(chain, optionType, spot) {
   };
 }
 
-function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue, selected, segment = 'EQUITY', energy = false, now = new Date(), expiry = null }) {
+export function buildTradeDecision({ engine, trend, htf, oi, pcr = null, regime, sr, spot, atrValue, selected, segment = 'EQUITY', energy = false, now = new Date(), expiry = null, allowOiCaution = false }) {
   const direction = engine.signal;
   const votes = [
     { name: 'Core Direction', vote: direction, detail: `${engine.bullRules} bull / ${engine.bearRules} bear confirmations` },
@@ -334,6 +334,7 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
       direction: 'WAIT',
       status: 'WATCHING',
       setupAllowed: false,
+      autoEntryAllowed: false,
       supportingVotes: 0,
       totalVotes: votes.length,
       alignmentPct: 0,
@@ -341,6 +342,7 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
       regimeSuitable: regime.suitable,
       strategyVotes: votes,
       conflicts: [],
+      cautions: [],
       selectedContractReason: selected.reason,
       selectedContractScore: selected.score,
       message: `No call: core has ${engine.bullRules} bullish and ${engine.bearRules} bearish checks. A direction needs at least ${segment === 'MCX' ? '4 checks with a lead of 2' : '5 checks with a lead of 3'}; a large candle alone is not enough.`
@@ -348,10 +350,25 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
   }
 
   const supporting = votes.filter(v => v.vote === direction).length;
+  // A moderate, static OI imbalance is context, not proof of the next price move.
+  // The exception is opt-in by a client that understands the caution and blocks
+  // automatic orders. Older clients continue to receive the strict veto.
+  const dominant = direction === 'CE' ? engine.bullRules : engine.bearRules;
+  const opposite = direction === 'CE' ? engine.bearRules : engine.bullRules;
+  const moderateOpposingPcr = direction === 'PE'
+    ? pcr >= 1.1 && pcr <= 1.35
+    : pcr >= 0.75 && pcr <= 0.9;
+  const oiCaution = allowOiCaution && segment === 'EQUITY' && oi.vote !== 'WAIT' && oi.vote !== direction &&
+    moderateOpposingPcr && dominant >= 6 && dominant - opposite >= 4 &&
+    trend.vote === direction && htf.vote === direction && regime.name === 'TRENDING';
   const conflicts = [];
+  const cautions = [];
   if (trend.vote !== 'WAIT' && trend.vote !== direction) conflicts.push('Trend alignment is opposite to the core direction.');
   if (htf.vote !== 'WAIT' && htf.vote !== direction) conflicts.push('15-minute higher timeframe is opposite.');
-  if (oi.vote !== 'WAIT' && oi.vote !== direction) conflicts.push('OI/PCR structure is opposite.');
+  if (oi.vote !== 'WAIT' && oi.vote !== direction) {
+    if (oiCaution) cautions.push(`OI/PCR ${round(pcr)} opposes the price trend. Review the nearby support and resistance before any manual entry.`);
+    else conflicts.push('OI/PCR structure is opposite.');
+  }
   if (!regime.suitable) conflicts.push('Market regime is range-like; directional option buying is filtered.');
   if (!selected.contract) conflicts.push('A current option premium is required before an option buying call.');
   if (segment === 'MCX') {
@@ -383,8 +400,9 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
   const alignmentPct = round(100 * supporting / votes.length, 0);
   return {
     direction,
-    status: setupAllowed ? 'READY_FOR_PREMIUM' : (conflicts.length ? 'REJECTED_CONFLICT' : 'CONFIRMING'),
+    status: setupAllowed ? (oiCaution ? 'OI_CAUTION' : 'READY_FOR_PREMIUM') : (conflicts.length ? 'REJECTED_CONFLICT' : 'CONFIRMING'),
     setupAllowed,
+    autoEntryAllowed: setupAllowed && !oiCaution,
     supportingVotes: supporting,
     totalVotes: votes.length,
     alignmentPct,
@@ -392,16 +410,19 @@ function buildTradeDecision({ engine, trend, htf, oi, regime, sr, spot, atrValue
     regimeSuitable: regime.suitable,
     strategyVotes: votes,
     conflicts,
+    cautions,
     selectedContractReason: selected.reason,
     selectedContractScore: selected.score,
     message: setupAllowed
-      ? `${direction} setup passed meta confirmation. Waiting for two live scans and premium breakout.`
+      ? (oiCaution
+        ? `${direction} price trend is strong, but PCR ${round(pcr)} is opposite. Manual review only; wait for two live scans and premium breakout. Auto Trade is paused for this call.`
+        : `${direction} setup passed meta confirmation. Waiting for two live scans and premium breakout.`)
       : (conflicts[0] || `Only ${supporting}/${votes.length} strategy layers support ${direction}; waiting for stronger agreement.`)
   };
 }
 
 
-export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE', trackedToken = null) {
+export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE', trackedToken = null, analysisPolicy = null) {
   symbol = symbol.toUpperCase();
   const rows = await instrumentMaster();
   const mcxIndex = mcxIndexCatalog(rows).find(x => x.symbol === symbol);
@@ -462,9 +483,9 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       optionChain: { expiry: null, atm: null, nearAtmPcr: null, pcrCoverage: '0/0 paired strikes',
         totalCeOi: null, totalPeOi: null, support: null, resistance: null, contracts: [] },
       suggestedContract: null, trackedContract: null,
-      tradeDecision: { direction: 'WAIT', status: 'HISTORY_UNAVAILABLE', setupAllowed: false,
+      tradeDecision: { direction: 'WAIT', status: 'HISTORY_UNAVAILABLE', setupAllowed: false, autoEntryAllowed: false,
         supportingVotes: 0, totalVotes: 0, alignmentPct: 0, regime: 'UNKNOWN', regimeSuitable: false,
-        strategyVotes: [], conflicts: [], selectedContractReason: null, selectedContractScore: null,
+        strategyVotes: [], conflicts: [], cautions: [], selectedContractReason: null, selectedContractScore: null,
         message: `${energy ? 'Futures' : 'Index'} quote is visible, but broker candles for ${symbol} are unavailable. Calls are paused until history is available. ${e.message}` },
       levels: null, rules: [], notes: ['No directional option buying call is generated without historical market candles.']
     };
@@ -547,17 +568,18 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
   } : null;
   const computedDecision = buildTradeDecision({
-    engine, trend, htf, oi, regime, sr, spot, atrValue: a, selected: selection, segment, energy, now, expiry: window.expiry
+    engine, trend, htf, oi, pcr, regime, sr, spot, atrValue: a, selected: selection, segment, energy, now, expiry: window.expiry,
+    allowOiCaution: analysisPolicy === 'oi-caution-v1'
   });
   const tradeDecision = segment === 'MCX' && (!mcxInstrument.hasOptions || !window.expiry) ? {
     ...computedDecision,
-    direction: 'WAIT', setupAllowed: false, status: 'NO_OPTIONS', conflicts: [],
+    direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: 'NO_OPTIONS', conflicts: [], cautions: [],
     message: energy
       ? `${symbol} has no suitable futures option expiry with a matching underlying futures contract. New option buys stop well before expiry to avoid futures devolvement.`
       : `${symbol} is in the connected MCX index list, but Angel One has no current index option contracts for it. Option buying calls are unavailable.`
   } : marketStatus === 'LIVE' ? computedDecision : {
     ...computedDecision,
-    direction: 'WAIT', setupAllowed: false, status: marketStatus, conflicts: [],
+    direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: marketStatus, conflicts: [], cautions: [],
     message: marketStatus === 'MARKET_CLOSED'
       ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
       : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
@@ -583,7 +605,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     rules: engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
-      'The meta decision requires Core Direction plus agreement from Trend, 15m higher timeframe and OI/PCR layers, with a non-range regime.',
+      'An opt-in client may show a manual-review call with moderately opposing PCR only when the core, trend, 15m trend and regime strongly agree. All other conflicts still block calls. Auto orders remain paused for OI caution calls.',
       'Live quotes refresh frequently while historical candles are fetched once, cached, and rolled forward locally to avoid broker historical-API rate limits.',
       'Futures traded average comes from the broker FULL quote; the signal compares that futures contract with its own average. The cash index has no traded volume.',
       'PCR uses fresh, matched CE and PE quotes around ATM. Fewer than three complete strike pairs means PCR is unavailable.',
