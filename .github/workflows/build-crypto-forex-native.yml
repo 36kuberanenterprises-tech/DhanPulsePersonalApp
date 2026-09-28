@@ -1,8 +1,8 @@
-name: Build DhanPulse Crypto Forex V2.1.8 Signal Sync Fast APK
+name: Build DhanPulse Crypto Forex V2.1.9 Multi Strategy Active APK
 
 on:
   push:
-    branches: [ clean-algo-v2.1.8 ]
+    branches: [ clean-algo-v2.1.9 ]
     paths:
       - 'crypto-forex-native/**'
       - '.github/workflows/build-crypto-forex-native.yml'
@@ -94,17 +94,36 @@ jobs:
       - name: Apply V2.1.8 compile annotation fix
         run: python3 crypto-forex-native/apply_v218_compile_fix.py
 
-      - name: Verify V2.1.8 wiring
+      - name: Reconstruct and apply V2.1.9 multi strategy patch
         run: |
-          grep -q 'versionName = "2.1.8"' crypto-forex-native/app/build.gradle.kts
+          cat \
+            crypto-forex-native/v219_patch_parts/part00 \
+            crypto-forex-native/v219_patch_parts/part01 \
+            crypto-forex-native/v219_patch_parts/part02 \
+            crypto-forex-native/v219_patch_parts/part03 \
+            > crypto-forex-native/apply_v219_patch.py
+          python3 -m py_compile crypto-forex-native/apply_v219_patch.py
+          python3 crypto-forex-native/apply_v219_patch.py
+
+      - name: Verify V2.1.9 wiring
+        run: |
+          grep -q 'versionName = "2.1.9"' crypto-forex-native/app/build.gradle.kts
           grep -q 'native_trades_v21_json' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
           grep -q 'native_trade_count' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
           grep -q 'last_signal_recorded_id' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
-          grep -q 'commit();' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'engineVersion", "2.1.9"' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'native multi strategy v2.1.9' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'TREND CONTINUATION' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/AdaptiveEnsemble.java
+          grep -q 'BREAKOUT' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/AdaptiveEnsemble.java
+          grep -q 'PULLBACK' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/AdaptiveEnsemble.java
+          grep -q 'LIQUIDITY REVERSAL' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/AdaptiveEnsemble.java
+          grep -q 'MEAN REVERSION' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/AdaptiveEnsemble.java
+          grep -q 'MOMENTUM IGNITION' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/AdaptiveEnsemble.java
+          grep -q 'Conflict veto' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/AdaptiveEnsemble.java
           grep -q 'dhanpulse_cf_android_trades_v211' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
           ! grep -q '@JavascriptInterface[[:space:]]*@JavascriptInterface' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
-          grep -q 'Version 2.1.8 Signal Sync Fast' crypto-forex-native/app/src/main/assets/index.html
-          grep -q 'V2.1.8 Signals' crypto-forex-native/app/src/main/assets/index.html
+          grep -q 'Version 2.1.9 Multi Strategy Active' crypto-forex-native/app/src/main/assets/index.html
+          grep -q 'V2.1.9 Signals' crypto-forex-native/app/src/main/assets/index.html
           grep -q 'android:icon="@drawable/dhanpulse_launcher_v214"' crypto-forex-native/app/src/main/AndroidManifest.xml
 
       - name: Set up Java 17
@@ -129,12 +148,12 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK artifact
-        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.8_Signal_Sync_Fast.apk
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.1.9_Multi_Strategy_Active.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.1.8-Signal-Sync-Fast
-          path: DhanPulse_Crypto_Forex_v2.1.8_Signal_Sync_Fast.apk
+          name: DhanPulse-Crypto-Forex-v2.1.9-Multi-Strategy-Active
+          path: DhanPulse_Crypto_Forex_v2.1.9_Multi_Strategy_Active.apk
           if-no-files-found: error
           retention-days: 30
