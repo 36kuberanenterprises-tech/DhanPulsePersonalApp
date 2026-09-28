@@ -1,0 +1,160 @@
+
+new_record = r'''    private boolean recordSignal(String side, String stage, int score, Plan plan, String source) {
+        reloadTradesFromPrefs();
+        long now = System.currentTimeMillis();
+        long duplicateWindow = Math.max(8_000L, Math.min(60_000L, tfMillis(tf) / 2L));
+
+        for (int i = trades.size() - 1; i >= 0; i--) {
+            JSONObject t = trades.get(i);
+            if (!symbol.equals(t.optString("symbol"))) continue;
+            if (!tf.equals(t.optString("tf"))) continue;
+            if (!side.equals(t.optString("side"))) continue;
+            if (!stage.equals(t.optString("stage"))) continue;
+            long created = t.optLong("createdAt", 0L);
+            if (created > 0L && now - created < duplicateWindow) return false;
+            break;
+        }
+
+        try {
+            JSONObject t = new JSONObject();
+            String slot = "crypto|" + symbol + "|" + tf + "|" + stage + "|" + (now / 1000L);
+            t.put("id", "native-" + now + "-" + Math.abs(slot.hashCode()));
+            t.put("slot", slot);
+            t.put("key", slot);
+            t.put("source", source);
+            t.put("engineVersion", "2.1.9");
+            t.put("entryFeed", feedMode);
+            t.put("flow3s", flow3s);
+            t.put("flow30s", flow30s);
+            t.put("flow180s", flow180s);
+            t.put("depth1s", depth1s);
+            t.put("depth10s", depth10s);
+            t.put("oi1m", oi1m);
+            t.put("oi5m", oi5m);
+            t.put("oi15m", oi15m);
+            t.put("stage", stage);
+            t.put("strategy", stage.replace(" BUY", "").replace(" SELL", ""));
+            t.put("score", score);
+            t.put("shiftScore", 0);
+            t.put("createdAt", now);
+            t.put("signalCandleTime", mainCandles.isEmpty() ? now : mainCandles.get(mainCandles.size() - 1).t);
+            t.put("market", "crypto");
+            t.put("symbol", symbol);
+            t.put("tf", tf);
+            t.put("side", side);
+            t.put("entry", plan.entry);
+            t.put("sl", plan.sl);
+            t.put("t1", plan.t1);
+            t.put("t2", plan.t2);
+            t.put("t3", plan.t3);
+            t.put("status", "OPEN");
+            t.put("result", "OPEN");
+            t.put("h1", false);
+            t.put("h2", false);
+            t.put("h3", false);
+            t.put("closedAt", JSONObject.NULL);
+            t.put("updatedAt", now);
+            trades.add(t);
+            while (trades.size() > 1500) trades.remove(0);
+            persistTrades();
+            prefs.edit()
+                    .putLong("last_signal_recorded_at", now)
+                    .putString("last_signal_recorded_id", t.optString("id", ""))
+                    .putString("last_signal_recorded_side", side)
+                    .putString("last_signal_recorded_stage", stage)
+                    .apply();
+            return true;
+        } catch (Exception ex) {
+            return false;
+        }
+    }'''
+s = replace_method(s, "    private boolean recordSignal(String side, String stage, int score, Plan plan, String source)", new_record)
+
+new_analyse = r'''    private void analyseMainAndMaybeRecord() {
+        if (mainCandles.size() < 60) return;
+        int n = mainCandles.size();
+        double[] o = new double[n], h = new double[n], l = new double[n], c = new double[n], v = new double[n], tb = new double[n];
+        for (int j = 0; j < n; j++) {
+            Candle z = mainCandles.get(j);
+            o[j] = z.o; h[j] = z.h; l[j] = z.l; c[j] = z.c; v[j] = z.v; tb[j] = z.tb;
+        }
+
+        long now = System.currentTimeMillis();
+        double px = Double.isFinite(lastPrice) ? lastPrice : c[n - 1];
+
+        Candle liveBar = mainCandles.get(n - 1);
+        long tfMs = tfMillis(tf);
+        double progress = tfMs > 0 ? (now - liveBar.t) / (double) tfMs : 1.0;
+        progress = Math.max(0.20, Math.min(1.0, progress));
+        if (!liveBar.closed && progress < 0.98) {
+            double scale = Math.min(3.0, 1.0 / progress);
+            v[n - 1] *= scale;
+            tb[n - 1] *= scale;
+        }
+
+        Turning turn = detectTurningFast(px);
+        int b15 = trendBias(context15Candles);
+        int b60 = trendBias(context60Candles);
+        double stableFlow = ensembleFlow();
+        double stableDepth = depthComposite();
+        double stableOi = oiComposite();
+
+        AdaptiveEnsemble.Result result = AdaptiveEnsemble.evaluate(
+                o, h, l, c, v, tb,
+                stableFlow, stableDepth, fundingRate, stableOi, spreadBps,
+                b15, b60,
+                turn == null ? 0 : turn.dir,
+                turn == null ? 0 : turn.score,
+                turn != null && turn.trigger
+        );
+
+        marketRegime = result.regime;
+        activeStrategy = result.strategy;
+        ensembleConfidence = result.confidence;
+        ensembleReason = result.reason + String.format(Locale.US,
+                " · F3 %.2f F30 %.2f F180 %.2f · D1 %.2f D10 %.2f · OI1 %.3f OI5 %.3f OI15 %.3f · bar %.0f%%",
+                flow3s, flow30s, flow180s, depth1s, depth10s, oi1m, oi5m, oi15m, progress * 100.0);
+
+        if (!result.trade) {
+            candidateSide = "WAIT";
+            candidateQuality = result.confidence;
+            candidateStrategy = result.strategy;
+            candidateReason = result.reason;
+            feedBlockReason = entryFeedAllowedNow ? "" : currentFeedBlockReason(now);
+            resetArmedSetup();
+            signalState = "WAIT · " + result.regime + " · " + result.reason;
+            return;
+        }
+
+        String side = result.dir > 0 ? "BUY" : "SELL";
+        int performanceAdj = strategyPerformanceAdjustment(result.strategy, side);
+        int effectiveConfidence = Math.max(0, Math.min(99, result.confidence + performanceAdj));
+        ensembleConfidence = effectiveConfidence;
+        candidateSide = side;
+        candidateQuality = effectiveConfidence;
+        candidateStrategy = result.strategy;
+        candidateReason = result.reason;
+
+        if (!entryFeedAllowedNow) {
+            resetArmedSetup();
+            feedBlockReason = currentFeedBlockReason(now);
+            signalState = "CANDIDATE " + side + " Q" + effectiveConfidence + " · BLOCKED · " + feedBlockReason;
+            return;
+        }
+
+        if (degradedEntryFeedNow && effectiveConfidence < 78 && Math.abs(stableFlow) < 0.14) {
+            resetArmedSetup();
+            feedBlockReason = "DEPTH DEGRADED · Q78 OR STRONG TRADE FLOW REQUIRED";
+            signalState = "CANDIDATE " + side + " Q" + effectiveConfidence + " · BLOCKED · " + feedBlockReason;
+            return;
+        }
+        feedBlockReason = "";
+
+        if (performanceAdj <= -6 && effectiveConfidence < 72) {
+            resetArmedSetup();
+            signalState = result.strategy + " " + side + " · PERFORMANCE VETO";
+            return;
+        }
+
+        double dirFlow = result.dir * stableFlow;
+        double dirDepth = result.dir * stableDepth;
