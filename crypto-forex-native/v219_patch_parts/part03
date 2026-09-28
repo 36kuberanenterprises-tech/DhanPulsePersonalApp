@@ -1,0 +1,100 @@
+        boolean hardFlowVeto = (dirFlow < -0.20 && dirDepth < -0.18)
+                || dirFlow < -0.45 || dirDepth < -0.42;
+        if (hardFlowVeto) {
+            resetArmedSetup();
+            signalState = result.strategy + " " + side + " · ORDER FLOW VETO";
+            return;
+        }
+
+        double av = atrLast(mainCandles, 14);
+        if (!Double.isFinite(av) || av <= 0) av = Math.abs(px) * 0.004;
+
+        String armKey = symbol + "|" + tf + "|" + result.strategy + "|" + side;
+        if (!armKey.equals(armedSetupKey)) {
+            armedSetupKey = armKey;
+            armedSetupAt = now;
+            armedSetupCount = 1;
+            armedSetupPrice = px;
+            armedSetupDir = result.dir;
+            signalState = "ARMED " + side + " · " + result.strategy + " · 1/3 · Q" + effectiveConfidence;
+            return;
+        }
+
+        if (now - armedSetupAt > 4_000L ||
+                (armedSetupDir > 0 && px < armedSetupPrice - av * 0.32) ||
+                (armedSetupDir < 0 && px > armedSetupPrice + av * 0.32)) {
+            resetArmedSetup();
+            signalState = "WAIT · SETUP INVALIDATED";
+            return;
+        }
+
+        armedSetupCount++;
+        int requiredCount = effectiveConfidence >= 82 ? 2 : 3;
+        long requiredMs = effectiveConfidence >= 82 ? 110L : 240L;
+        if (armedSetupCount < requiredCount || now - armedSetupAt < requiredMs) {
+            signalState = "ARMED " + side + " · " + result.strategy + " · " + armedSetupCount + "/" + requiredCount + " · Q" + effectiveConfidence;
+            return;
+        }
+
+        long candleTime = mainCandles.get(n - 1).t;
+        String key = symbol + "|" + tf + "|" + result.strategy + "|" + side + "|" + candleTime;
+        if (key.equals(lastEnsembleKey) && now - lastEnsembleSignalAt < 45_000L) {
+            resetArmedSetup();
+            return;
+        }
+        if (now - lastEnsembleSignalAt < 8_000L) {
+            signalState = "WAIT · SIGNAL COOLDOWN";
+            resetArmedSetup();
+            return;
+        }
+
+        double baseRisk = av * result.riskAtrMult;
+        double structureLow = minLow(mainCandles, Math.max(0, n - 7), n);
+        double structureHigh = maxHigh(mainCandles, Math.max(0, n - 7), n);
+        Plan plan;
+        if (result.dir > 0) {
+            double structureStop = structureLow - av * 0.08;
+            double sl = Math.min(px - baseRisk, structureStop);
+            double risk = px - sl;
+            if (risk > av * 2.10) { risk = av * 2.10; sl = px - risk; }
+            plan = new Plan(px, sl, px + risk, px + risk * 1.55, px + risk * 2.20);
+        } else {
+            double structureStop = structureHigh + av * 0.08;
+            double sl = Math.max(px + baseRisk, structureStop);
+            double risk = sl - px;
+            if (risk > av * 2.10) { risk = av * 2.10; sl = px + risk; }
+            plan = new Plan(px, sl, px - risk, px - risk * 1.55, px - risk * 2.20);
+        }
+
+        String stage = result.strategy + " " + side;
+        if (recordSignal(side, stage, effectiveConfidence, plan, "native multi strategy v2.1.9 · " + feedMode)) {
+            lastEnsembleKey = key;
+            lastEnsembleSignalAt = now;
+            signalState = "TRIGGERED " + stage + " · Q" + effectiveConfidence;
+            feedBlockReason = "";
+            notifySignal(side, result.strategy + " Q" + effectiveConfidence, px);
+        } else {
+            signalState = "WAIT · DUPLICATE " + result.strategy + " " + side;
+        }
+        resetArmedSetup();
+    }'''
+s = replace_method(s, "    private void analyseMainAndMaybeRecord()", new_analyse)
+SERVICE.write_text(s, encoding="utf-8")
+
+a = ACTIVITY.read_text(encoding="utf-8")
+a = a.replace("Native V2.1.8 · ", "Native V2.1.9 · ")
+ACTIVITY.write_text(a, encoding="utf-8")
+
+h = INDEX.read_text(encoding="utf-8")
+h = h.replace("Version 2.1.8 Signal Sync Fast", "Version 2.1.9 Multi Strategy Active")
+h = h.replace("V2.1.8 Signals", "V2.1.9 Signals")
+h = h.replace("No V2.1.8 signals recorded yet.", "No V2.1.9 signals recorded yet.")
+h = h.replace("NATIVE V2.1.8", "NATIVE V2.1.9")
+INDEX.write_text(h, encoding="utf-8")
+
+g = GRADLE.read_text(encoding="utf-8")
+g = re.sub(r'versionCode\s*=\s*\d+', 'versionCode = 30', g)
+g = re.sub(r'versionName\s*=\s*"[^"]+"', 'versionName = "2.1.9"', g)
+GRADLE.write_text(g, encoding="utf-8")
+
+print("DhanPulse V2.1.9 six-family multi-strategy engine and non-blocking signal recording applied")
