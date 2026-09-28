@@ -496,9 +496,12 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
         d.status == "MARKET_CLOSED" -> "MARKET CLOSED"
         d.status == "NO_OPTIONS" -> "NO OPTIONS"
         d.status == "DATA_STALE" -> "DATA DELAYED"
-        d.direction == "WAIT" -> "WATCHING"
         !d.setupAllowed && d.status == "REJECTED_CONFLICT" -> "REJECTED • CONFLICT"
+        d.direction == "WAIT" -> "WATCHING"
         !d.setupAllowed -> "SETUP FORMING"
+        d.status == "FAMILY_CONFIRMED" && p.confirmationCount <= 0 -> "FAMILY SETUP • SCAN 0/2"
+        d.status == "FAMILY_CONFIRMED" && p.confirmationCount == 1 -> "FAMILY SETUP • SCAN 1/2"
+        d.status == "FAMILY_CONFIRMED" -> "FAMILY SETUP • MANUAL REVIEW"
         d.status == "OI_CAUTION" && p.confirmationCount <= 0 -> "OI CAUTION • SCAN 0/2"
         d.status == "OI_CAUTION" && p.confirmationCount == 1 -> "OI CAUTION • SCAN 1/2"
         d.status == "OI_CAUTION" -> "OI CAUTION • MANUAL REVIEW"
@@ -545,8 +548,10 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 DecisionMetric("REGIME", d.regime, if (d.regimeSuitable) Green else Red, Modifier.weight(1f))
                 DecisionMetric("SCAN", "${p.confirmationCount}/${p.confirmationRequired}", Blue, Modifier.weight(1f))
             }
+            d.regimeDetail?.let { Text(it, color = Muted, fontSize = 10.sp) }
+            d.strategyFamily?.let { Text("Active setup: $it", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
 
-            Text("STRATEGY CONSENSUS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            Text(if (d.contextChecks.isNotEmpty()) "INDEPENDENT STRATEGIES" else "STRATEGY CONSENSUS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
             d.strategyVotes.forEach { vote ->
                 val vc = when (vote.vote) { "CE" -> Green; "PE" -> Red; else -> Muted }
                 Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
@@ -560,6 +565,23 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                             vote.detail?.let { Text(it, color = Muted, fontSize = 8.sp) }
                         }
                         StatusPill(vote.vote, vc)
+                    }
+                }
+            }
+
+            if (d.contextChecks.isNotEmpty()) {
+                Text("MARKET AND EXECUTION CHECKS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                d.contextChecks.forEach { check ->
+                    val checkColor = when (check.vote) { "OK" -> Green; "BLOCK" -> Red; else -> Amber }
+                    Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(check.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                check.detail?.let { Text(it, color = Muted, fontSize = 9.sp) }
+                            }
+                            StatusPill(check.vote, checkColor)
+                        }
                     }
                 }
             }
@@ -588,6 +610,10 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                         Text("SELECTED CANDIDATE", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         Text(contract.tradingSymbol ?: "Option", color = Ink, fontWeight = FontWeight.ExtraBold)
                         Text(d.selectedContractReason ?: "Near-ATM contract selected.", color = Muted, fontSize = 9.sp)
+                        if (contract.bid != null && contract.ask != null) {
+                            Text("Bid ${n(contract.bid)} • Ask ${n(contract.ask)} • Depth ${contract.bidQty ?: 0}/${contract.askQty ?: 0}",
+                                color = Muted, fontSize = 9.sp)
+                        }
                     }
                 }
             }
@@ -1313,17 +1339,17 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 val heroText = when {
                     d.status == "MARKET_CLOSED" -> "CLOSED"
                     d.status == "DATA_STALE" -> "DELAYED"
+                    d.status == "REJECTED_CONFLICT" -> "FILTERED"
                     d.direction == "WAIT" -> "WATCHING"
                     d.status == "OI_CAUTION" -> "OI CAUTION"
                     d.setupAllowed -> "SETUP PASSED"
-                    d.status == "REJECTED_CONFLICT" -> "FILTERED"
                     else -> "CONFIRMING"
                 }
                 val heroColor = when {
+                    d.status == "REJECTED_CONFLICT" -> Red
                     d.direction == "WAIT" -> Amber
                     d.status == "OI_CAUTION" -> Amber
                     d.setupAllowed -> Green
-                    d.status == "REJECTED_CONFLICT" -> Red
                     else -> Blue
                 }
                 Text(heroText, color = heroColor, fontWeight = FontWeight.ExtraBold)

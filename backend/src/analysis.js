@@ -1,5 +1,6 @@
 import { ema, rsi, macd, supertrend, atr } from './indicators.js';
 import { instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs } from './angel.js';
+import { evaluateSensexFamilies, buildSensexDecision } from './sensex-strategies.js';
 
 const round = (n, d = 2) => Number.isFinite(n) ? Number(n.toFixed(d)) : null;
 const IST_OFFSET_MS = 330 * 60 * 1000;
@@ -50,6 +51,24 @@ const liveCandleCache = new Map();
 const candleLoadLocks = new Map();
 const candleRetryAfter = new Map();
 const optionWindowCache = new Map();
+const premiumSnapshots = new Map();
+
+function sampledPremiumMove(contract, now) {
+  if (!contract?.token || !(contract.ltp > 0)) return null;
+  const day = fmtDate(now).slice(0, 10);
+  const key = day + '|' + contract.token;
+  const previous = premiumSnapshots.get(key);
+  const age = previous ? now.getTime() - previous.at : null;
+  if (age == null || age < 0 || age > 60_000) {
+    premiumSnapshots.set(key, { at: now.getTime(), price: contract.ltp });
+    if (premiumSnapshots.size > 500) premiumSnapshots.clear();
+    return null;
+  }
+  if (age < 15_000) return null;
+  const change = contract.ltp / previous.price - 1;
+  if (age >= 45_000) premiumSnapshots.set(key, { at: now.getTime(), price: contract.ltp });
+  return change;
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -159,6 +178,25 @@ async function liveCandles(session, exchange, token, interval, livePrice, now, a
 
   if (state.candles.length < 35) {
     throw new Error('Market history is still preparing. Waiting for enough prior-session candles.');
+  }
+  return state.candles;
+}
+
+async function confirmedBrokerCandles(session, exchange, token, interval, now, segment = 'EQUITY') {
+  const key = [exchange, token, interval, 'confirmed'].join('|');
+  const duration = (INTERVAL_MINUTES[interval] || 5) * 60_000;
+  const expected = bucketStartFor(new Date(now.getTime() - 20_000), interval, segment).getTime() - duration;
+  let state = liveCandleCache.get(key);
+  const latestCompleted = state?.candles.filter(c => Date.parse(c.timestamp) + duration + 20_000 <= now.getTime()).at(-1);
+  if (!state || (Date.parse(latestCompleted?.timestamp) < expected && Date.now() - state.loadedAt >= 20_000) ||
+      (!latestCompleted && Date.now() - (state?.loadedAt || 0) >= 20_000)) {
+    let lock = candleLoadLocks.get(key);
+    if (!lock) {
+      lock = loadHistoricalBase(session, exchange, token, interval, now, key, segment)
+        .finally(() => candleLoadLocks.delete(key));
+      candleLoadLocks.set(key, lock);
+    }
+    state = await lock;
   }
   return state.candles;
 }
@@ -298,10 +336,12 @@ export function nearAtmOi(chain, spot) {
   };
 }
 
-function selectBestContract(chain, optionType, spot) {
+function selectBestContract(chain, optionType, spot, requireDepth = false) {
   if (!optionType) return { contract: null, reason: 'No directional bias', score: null };
-  const candidates = chain.filter(x => x.optionType === optionType && Number(x.ltp) > 0);
-  if (!candidates.length) return { contract: null, reason: `No live ${optionType} premium available`, score: null };
+  const candidates = chain.filter(x => x.optionType === optionType && Number(x.ltp) > 0 && (!requireDepth ||
+    (x.bid > 0 && x.ask >= x.bid && 100 * (x.ask - x.bid) / x.ltp <= 3 && x.oi > 0 &&
+      x.lotSize > 0 && x.bidQty >= x.lotSize && x.askQty >= x.lotSize && x.ltp >= 15)));
+  if (!candidates.length) return { contract: null, reason: requireDepth ? `No spread-qualified live ${optionType} premium and depth available` : `No live ${optionType} premium available`, score: null };
   const step = Math.max(1, inferStrikeStep(chain));
   const maxOi = Math.max(1, ...candidates.map(x => Number(x.oi || 0)));
   const ranked = candidates.map(x => {
@@ -424,6 +464,7 @@ export function buildTradeDecision({ engine, trend, htf, oi, pcr = null, regime,
 
 export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE', trackedToken = null, analysisPolicy = null) {
   symbol = symbol.toUpperCase();
+  const sensexFamiliesEnabled = symbol === 'SENSEX' && analysisPolicy === 'sensex-families-v1';
   const rows = await instrumentMaster();
   const mcxIndex = mcxIndexCatalog(rows).find(x => x.symbol === symbol);
   const mcxEnergy = mcxEnergyCatalog(rows).find(x => x.symbol === symbol);
@@ -468,7 +509,9 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const marketStatus = marketDataState(now, indexFeedAge, Number.isFinite(spot) && spot > 0, segment);
   let candles;
   try {
-    candles = await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE', segment);
+    candles = sensexFamiliesEnabled
+      ? await confirmedBrokerCandles(session, uExchange, String(underlying.token), interval, now, segment)
+      : await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE', segment);
   } catch (e) {
     if (segment !== 'MCX') throw e;
     // Some broker index tokens supply a quote but reject historical candles.
@@ -496,7 +539,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
 
   const e9 = ema(closes, 9), e15 = ema(closes, 15), rv = rsi(closes, 14), mv = macd(closes), st = supertrend(candles, 10, 3), a = atr(candles, 14);
 
-  let vw = null, futuresPrice = null, vwapSource = future
+  let vw = null, futuresPrice = null, basisFuturePrice = null, vwapSource = future
     ? `Futures quote missing for ${future.symbol || future.name}`
     : 'No unexpired futures contract found';
   if (future) {
@@ -504,6 +547,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     const avgPrice = Number(fq.avgPrice ?? fq.averagePrice ?? 0);
     const fp = quoteLtp(fq);
     const futureAge = quoteFeedAgeMs(fq, now.getTime());
+    if (Number.isFinite(fp) && fp > 0 && futureAge != null && futureAge >= -30_000 && futureAge <= 90_000) basisFuturePrice = fp;
     if (Number.isFinite(avgPrice) && avgPrice > 0 && Number.isFinite(fp) && fp > 0 &&
         (marketStatus !== 'LIVE' || (futureAge != null && futureAge >= -30_000 && futureAge <= 90_000))) {
       vw = avgPrice;
@@ -543,7 +587,12 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       const age = quoteFeedAgeMs(z, now.getTime());
       const usable = marketStatus !== 'LIVE' || (age != null && age >= -30_000 && age <= 90_000);
       const optionPrice = quoteLtp(z);
-      return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType, ltp: usable && optionPrice > 0 ? round(optionPrice) : null, oi: usable ? quoteOi(z) : 0, lotSize: Number(c.lotsize || 0) };
+      const bid = Number(z.depth?.buy?.[0]?.price);
+      const ask = Number(z.depth?.sell?.[0]?.price);
+      return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN, optionType,
+        ltp: usable && optionPrice > 0 ? round(optionPrice) : null, oi: usable ? quoteOi(z) : 0, lotSize: Number(c.lotsize || 0),
+        bid: usable && bid > 0 ? round(bid) : null, ask: usable && ask > 0 ? round(ask) : null,
+        bidQty: usable ? Number(z.depth?.buy?.[0]?.quantity || 0) : 0, askQty: usable ? Number(z.depth?.sell?.[0]?.quantity || 0) : 0 };
     }).sort((a,b) => a.strike - b.strike || a.optionType.localeCompare(b.optionType));
   }
   // Calculate PCR from matched, freshly quoted CE/PE pairs near ATM. Missing
@@ -553,24 +602,36 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const engine = signalEngine({ spot, ema9: e9, ema15: e15, futuresPrice, vwapValue: vw, vwapSource, rsiValue: rv, macdValue: mv, st, pcr }, segment);
   const sr = pickSupportResistance(chain, spot);
   const atm = window.atm || null;
-  const optionType = engine.signal === 'CE' ? 'CE' : engine.signal === 'PE' ? 'PE' : null;
+  let sensexFamily = null;
+  let sensexCe = null, sensexPe = null;
+  if (sensexFamiliesEnabled) {
+    let higherCandles = [];
+    try { higherCandles = await confirmedBrokerCandles(session, uExchange, String(underlying.token), 'FIFTEEN_MINUTE', now, segment); }
+    catch { /* The family evaluator reports missing higher timeframe history as WAIT. */ }
+    sensexCe = selectBestContract(chain, 'CE', spot, true);
+    sensexPe = selectBestContract(chain, 'PE', spot, true);
+    sensexFamily = evaluateSensexFamilies({ candles, higherCandles, interval, spot, now,
+      premiumMove: { CE: sampledPremiumMove(sensexCe.contract, now), PE: sampledPremiumMove(sensexPe.contract, now) } });
+  }
+  const optionType = sensexFamiliesEnabled ? sensexFamily.direction : engine.signal;
 
   const trend = directionFromTrend({ spot, ema9: e9, ema15: e15, macdValue: mv, st, futuresPrice, vwapValue: vw });
   const htf = higherTimeframeVote(candles);
   const oi = oiVote(pcr, sr, spot);
   const regime = regimeState({ spot, ema9: e9, ema15: e15, atrValue: a, st });
-  const selection = selectBestContract(chain, optionType, spot);
-  const suggested = selection.contract;
+  const selection = sensexFamiliesEnabled ? optionType === 'CE' ? sensexCe : optionType === 'PE' ? sensexPe :
+    { contract: null, reason: 'Independent SENSEX families did not agree on a direction', score: null } :
+    selectBestContract(chain, optionType, spot);
   const trackedQuote = trackedRow ? byTokenQuote.get(String(trackedRow.token)) : null;
   const trackedAge = quoteFeedAgeMs(trackedQuote, now.getTime());
   const trackedContract = trackedQuote && quoteLtp(trackedQuote) > 0 && trackedAge != null && trackedAge >= -30_000 && trackedAge <= 90_000 ? {
     token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
     exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
   } : null;
-  const computedDecision = buildTradeDecision({
-    engine, trend, htf, oi, pcr, regime, sr, spot, atrValue: a, selected: selection, segment, energy, now, expiry: window.expiry,
-    allowOiCaution: analysisPolicy === 'oi-caution-v1'
-  });
+  const computedDecision = sensexFamiliesEnabled ? buildSensexDecision({ family: sensexFamily, pcr, oiCoverage: coverage,
+    support: sr.support, resistance: sr.resistance, spot, futurePrice: basisFuturePrice, selected: selection, now }) :
+    buildTradeDecision({ engine, trend, htf, oi, pcr, regime, sr, spot, atrValue: a, selected: selection, segment, energy,
+      now, expiry: window.expiry, allowOiCaution: analysisPolicy === 'oi-caution-v1' });
   const tradeDecision = segment === 'MCX' && (!mcxInstrument.hasOptions || !window.expiry) ? {
     ...computedDecision,
     direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: 'NO_OPTIONS', conflicts: [], cautions: [],
@@ -584,28 +645,37 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
       : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
   };
+  const suggested = sensexFamiliesEnabled && !tradeDecision.setupAllowed ? null : selection.contract;
+  const finalDirection = sensexFamiliesEnabled ? tradeDecision.direction : engine.signal;
 
-  const levels = a ? {
+  const levelAtr = sensexFamiliesEnabled ? sensexFamily.atrValue : a;
+  const levels = levelAtr ? {
     underlyingEntry: round(spot),
-    stop: round(engine.signal === 'CE' ? spot - a : engine.signal === 'PE' ? spot + a : spot),
-    target1: round(engine.signal === 'CE' ? spot + 1.5*a : engine.signal === 'PE' ? spot - 1.5*a : spot),
-    target2: round(engine.signal === 'CE' ? spot + 2*a : engine.signal === 'PE' ? spot - 2*a : spot),
+    stop: round(finalDirection === 'CE' ? spot - levelAtr : finalDirection === 'PE' ? spot + levelAtr : spot),
+    target1: round(finalDirection === 'CE' ? spot + 1.5*levelAtr : finalDirection === 'PE' ? spot - 1.5*levelAtr : spot),
+    target2: round(finalDirection === 'CE' ? spot + 2*levelAtr : finalDirection === 'PE' ? spot - 2*levelAtr : spot),
     basis: 'ATR based reference levels on underlying index'
   } : null;
 
   return {
     symbol, segment, instrumentType: energy ? 'ENERGY' : 'INDEX', timestamp: new Date().toISOString(), timeframe: interval,
-    signal: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? engine.signal : 'WAIT', dataFresh: marketStatus === 'LIVE',
-    ruleScore: { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
+    signal: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? finalDirection : 'WAIT', dataFresh: marketStatus === 'LIVE',
+    ruleScore: sensexFamiliesEnabled ? { bullish: sensexFamily.votes.filter(v => v.vote === 'CE').length,
+      bearish: sensexFamily.votes.filter(v => v.vote === 'PE').length, considered: 6 } :
+      { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
     market: { ltp: round(spot), instrumentLabel, feedTime: uq.exchFeedTime || null, lastCandleTime: candles[candles.length - 1]?.timestamp || null, ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
     optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), pcrCoverage: coverage, totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
     suggestedContract: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? suggested : null, trackedContract,
     tradeDecision,
-    levels: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? levels : null,
-    rules: engine.rules,
+    levels: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) && (!sensexFamiliesEnabled || tradeDecision.setupAllowed) ? levels : null,
+    rules: sensexFamiliesEnabled ? sensexFamily.votes.map(v => ({ name: v.name, state: v.vote === 'CE' ? 'BULLISH' : v.vote === 'PE' ? 'BEARISH' : 'NEUTRAL', detail: v.detail })) : engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
-      'An opt-in client may show a manual-review call with moderately opposing PCR only when the core, trend, 15m trend and regime strongly agree. All other conflicts still block calls. Auto orders remain paused for OI caution calls.',
+      ...(sensexFamiliesEnabled ? ['SENSEX uses six independent price strategy families. Any opposing active family or OI vote returns WAIT.',
+        'SENSEX futures basis is a cost of carry proxy, not a perpetual funding rate. No funding rate is inferred.',
+        'SENSEX family calls are manual research only. Auto orders are disabled until the model and actual option execution are validated.',
+        'The current Backtest Lab uses a separate CLARITY model and does not validate this SENSEX family model.'] :
+        ['An opt-in client may show a manual-review call with moderately opposing PCR only when the core, trend, 15m trend and regime strongly agree. All other conflicts still block calls. Auto orders remain paused for OI caution calls.']),
       'Live quotes refresh frequently while historical candles are fetched once, cached, and rolled forward locally to avoid broker historical-API rate limits.',
       'Futures traded average comes from the broker FULL quote; the signal compares that futures contract with its own average. The cash index has no traded volume.',
       'PCR uses fresh, matched CE and PE quotes around ATM. Fewer than three complete strike pairs means PCR is unavailable.',
