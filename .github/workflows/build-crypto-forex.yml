@@ -45,6 +45,14 @@ jobs:
           unzip -q /tmp/dhanpulse-project.zip -d crypto-forex-app/buildsrc
           sed -i 's/applicationId = "com.dhanpulse.cryptofxv11"/applicationId = "com.dhanpulse.cryptofxbg"/' crypto-forex-app/buildsrc/app/build.gradle.kts
 
+      - name: Upload reconstructed source
+        uses: actions/upload-artifact@v4
+        with:
+          name: DhanPulse-Crypto-Forex-Reconstructed-Source
+          path: /tmp/dhanpulse-project.zip
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
