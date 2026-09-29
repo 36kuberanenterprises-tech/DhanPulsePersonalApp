@@ -57,7 +57,7 @@ test('a supported SENSEX setup stays manual even when all market checks pass', (
   assert.ok(result.contextChecks.every(x => x.vote === 'OK'));
 });
 
-test('independent opposing families and opposite OI veto a call', () => {
+test('independent opposing families veto a call while raw PCR remains context', () => {
   const family = trendingFamily();
   const opposing = { ...family, direction: 'WAIT', conflict: true,
     active: [...family.active, { name: 'Liquidity reversal', vote: 'PE' }],
@@ -68,10 +68,18 @@ test('independent opposing families and opposite OI veto a call', () => {
   assert.equal(disagreement.setupAllowed, false);
   assert.match(disagreement.message, /families disagree/i);
 
-  const oiOpposite = decide(family, { pcr: 0.82 });
-  assert.equal(oiOpposite.direction, 'WAIT');
-  assert.equal(oiOpposite.status, 'REJECTED_CONFLICT');
-  assert.match(oiOpposite.message, /PCR.*opposite/i);
+  const putFamily = { ...family, direction: 'PE', higherVote: 'PE',
+    active: [{ name: 'Breakout', vote: 'PE' }] };
+  const highPcr = decide(putFamily, { pcr: 3.45 });
+  assert.equal(highPcr.direction, 'PE');
+  assert.equal(highPcr.setupAllowed, true);
+  assert.equal(highPcr.autoEntryAllowed, false);
+  assert.match(highPcr.cautions[0], /PCR 3.45/);
+  const nearbyPutSupport = decide(putFamily, { pcr: 3.45, support: 54_995 });
+  assert.equal(nearbyPutSupport.direction, 'WAIT');
+  assert.equal(nearbyPutSupport.status, 'REJECTED_CONFLICT');
+  assert.match(nearbyPutSupport.message, /support or resistance/i);
+  assert.equal(decide({ ...putFamily, higherVote: 'CE' }).direction, 'WAIT');
 });
 
 test('unknown OI, stale higher candle, missing futures basis and illiquid option cause WAIT', () => {

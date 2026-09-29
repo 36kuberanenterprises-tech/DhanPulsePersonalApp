@@ -269,6 +269,7 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
 }
 
 const historyCache = new Map();
+const historyLocks = new Map();
 const scanCache = new Map();
 const scanLocks = new Map();
 let nextHistoryRequestAt = 0;
@@ -286,6 +287,8 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
   const last = entry && completedCandles(entry.candles, now).at(-1);
   const current = last && Date.parse(last.timestamp) >= latestCompletedCandleStart(now);
   if (entry && entry.slot === slot && (current || now.getTime() - entry.checkedAt < HISTORY_RETRY_MS)) return entry.candles;
+  if (historyLocks.has(key)) return historyLocks.get(key);
+  const pending = (async () => {
   // The first request needs prior sessions for comparable volume. Later
   // requests fetch a short overlap and merge it with that history.
   const from = new Date(now.getTime() - (entry ? 2 : 21) * 86_400_000);
@@ -310,6 +313,9 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
     .sort(([a], [b]) => a - b).map(([, c]) => c);
   historyCache.set(key, { slot, checkedAt: now.getTime(), candles });
   return candles;
+  })().finally(() => historyLocks.delete(key));
+  historyLocks.set(key, pending);
+  return pending;
 }
 
 export async function scanStocks(session, trackedToken = null, now = new Date()) {
@@ -338,14 +344,15 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
     await wait(1100);
     const indexQuote = parseFetched(await marketData(session, { NSE: [String(nifty.token)] }, 'FULL'))[0];
     const quoteByToken = new Map(quotes.map(q => [String(q.symbolToken ?? q.symboltoken ?? q.token), q]));
-    const market = scannerSession(now);
-    const indexAge = quoteFeedAgeMs(indexQuote, now.getTime());
+    const snapshotTime = new Date(Math.max(now.getTime(), Date.now()));
+    const market = scannerSession(snapshotTime);
+    const indexAge = quoteFeedAgeMs(indexQuote, snapshotTime.getTime());
     const niftyReturn = Number(indexQuote?.percentChange);
     const indexFresh = indexAge != null && indexAge >= -30_000 && indexAge <= 45_000 && Number.isFinite(niftyReturn);
     const ranked = stocks.map(stock => {
       const quote = quoteByToken.get(String(stock.instrument.token));
       const price = quoteLtp(quote);
-      const age = quoteFeedAgeMs(quote, now.getTime());
+      const age = quoteFeedAgeMs(quote, snapshotTime.getTime());
       const pct = Number(quote?.percentChange);
       return { ...stock, quote, price, pct,
         turnover: price * Number(quote?.tradeVolume || 0),
@@ -363,21 +370,30 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
     const sectorMap = new Map(sectorRows.map(x => [x.name, x]));
     const selected = ranked.filter(x => x.fresh && x.turnover >= 10_000_000 && quoteSpread(x.quote) != null)
       .sort((a, b) => b.turnover * Math.abs(b.pct) - a.turnover * Math.abs(a.pct))
-      .slice(0, market === 'SCANNING' && indexFresh ? 8 : 0);
+      .slice(0, (market === 'SCANNING' || market === 'OPENING_RANGE') && indexFresh ? 8 : 0);
+    if (market === 'OPENING_RANGE') {
+      for (const stock of selected) {
+        void stockHistory(session, String(stock.instrument.token), snapshotTime).catch(() => {});
+      }
+    }
     let cash = 0;
-    if (selected.length) {
+    if (market === 'SCANNING' && selected.length) {
       try { cash = Number((await rmsLimit(session))?.data?.availablecash || 0); } catch {}
     }
-    const analysed = new Array(selected.length);
+    const analysed = market === 'SCANNING' ? selected.map(stock => ({
+      symbol: stock.symbol, sector: stock.sector, token: String(stock.instrument.token),
+      price: round(stock.price), quoteTime: stock.quote?.exchFeedTime || null,
+      status: 'WAIT', side: 'WAIT', reason: 'Broker candle history is loading; checking shortly', setup: null, plan: null
+    })) : [];
     let next = 0;
-    await Promise.all(Array.from({ length: Math.min(2, selected.length) }, async () => {
-      while (next < selected.length) {
+    const workers = Promise.all(Array.from({ length: Math.min(2, analysed.length) }, async () => {
+      while (next < analysed.length) {
         const i = next++;
         const stock = selected[i];
         try {
-          const candles = await stockHistory(session, String(stock.instrument.token), now);
+          const candles = await stockHistory(session, String(stock.instrument.token), snapshotTime);
           analysed[i] = evaluateStock({ symbol: stock.symbol, sector: stock.sector, quote: stock.quote,
-            candles, now, cash, niftyReturn,
+            candles, now: snapshotTime, cash, niftyReturn,
             sectorReturn: sectorMap.get(stock.sector)?.changePct,
             sectorCount: sectorMap.get(stock.sector)?.count || 0 });
         } catch (error) {
@@ -389,23 +405,29 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
         }
       }
     }));
+    if (analysed.length) await Promise.race([workers, wait(4000)]);
     const sideRank = side => analysed.filter(x => x.side === side && x.status === 'READY')
       .sort((a, b) => (b.plan?.estimatedProfitAtTwoR / b.plan?.estimatedLoss) -
         (a.plan?.estimatedProfitAtTwoR / a.plan?.estimatedLoss))[0] || null;
     const tracked = trackedToken ? quoteByToken.get(trackedToken) : null;
-    const trackedAge = quoteFeedAgeMs(tracked, now.getTime());
+    const trackedAge = quoteFeedAgeMs(tracked, snapshotTime.getTime());
+    const completedChecks = analysed.filter(x => !x.reason.startsWith('Broker candle history is loading')).length;
     const result = {
       marketStatus: market === 'SCANNING' && !indexFresh ? 'DATA_STALE' : market,
-      timestamp: now.toISOString(), universeSource: list.source,
-      scanned: stocks.length, evaluated: analysed.length, niftyChangePct: Number.isFinite(niftyReturn) ? round(niftyReturn) : null,
+      timestamp: snapshotTime.toISOString(), universeSource: list.source,
+      scanned: stocks.length, evaluated: completedChecks, niftyChangePct: Number.isFinite(niftyReturn) ? round(niftyReturn) : null,
       strongestSector: sectorRows[0] || null, weakestSector: sectorRows[sectorRows.length - 1] || null,
       bestBuy: sideRank('BUY'), bestSell: sideRank('SELL'),
-      candidates: analysed.sort((a, b) => (b.status === 'READY') - (a.status === 'READY')).slice(0, 12),
+      candidates: [...analysed].sort((a, b) => (b.status === 'READY') - (a.status === 'READY')).slice(0, 12),
       trackedQuote: tracked && trackedAge != null && trackedAge >= -30_000 && trackedAge <= 45_000
         ? { token: trackedToken, price: round(quoteLtp(tracked)), quoteTime: tracked.exchFeedTime, fresh: true }
         : null,
-      note: market !== 'SCANNING' ? 'No new stock calls outside the scanner window. Market snapshots are informational.'
+      note: market === 'OPENING_RANGE' ? 'Opening range until 09:35 IST. Preparing broker candle history; entries start only after completed candles are available.'
+        : market === 'NO_NEW_ENTRIES' ? 'New intraday entries stop at 14:45 IST. Market snapshots remain informational.'
+        : market === 'MARKET_CLOSED' ? 'Market closed. No new stock calls.'
         : !indexFresh ? 'Nifty quote is delayed; stock entries are paused.'
+        : !selected.length ? 'No liquid stock quotes passed the first screen. Checking again shortly.'
+        : completedChecks < analysed.length ? `${completedChecks} of ${analysed.length} detailed checks finished. Broker history continues loading.`
         : analysed.some(x => x.status === 'READY') ? 'Research signal only. Live stock orders are disabled.'
         : 'No confirmed stock entry. See each candidate for its WAIT reason.'
     };

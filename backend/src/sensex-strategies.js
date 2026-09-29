@@ -121,6 +121,7 @@ export function evaluateSensexFamilies({ candles, higherCandles, interval = 'FIV
 export function buildSensexDecision({ family, pcr, oiCoverage, support, resistance, spot, futurePrice, selected, now = new Date() }) {
   const checks = [];
   const conflicts = [];
+  const cautions = [];
   const add = (name, state, detail) => {
     checks.push({ name, vote: state, detail });
     if (state === 'BLOCK') conflicts.push(detail);
@@ -138,10 +139,11 @@ export function buildSensexDecision({ family, pcr, oiCoverage, support, resistan
   add('Futures basis', basisPct == null || Math.abs(basisPct) > 1.5 ? 'BLOCK' : 'OK',
     basisPct == null ? 'Fresh SENSEX futures price is unavailable; funding basis cannot be checked.' :
       `SENSEX futures basis ${round(basisPct, 3)}% against spot${Math.abs(basisPct) > 1.5 ? ' is outside the filter' : ''}. This is a cost of carry proxy, not a funding rate.`);
-  const oiOpposite = dir !== 'WAIT' && Number.isFinite(pcr) && ((dir === 'CE' && pcr <= 0.9) || (dir === 'PE' && pcr >= 1.1));
-  add('Open interest and PCR', !Number.isFinite(pcr) || cover < 3 || oiOpposite ? 'BLOCK' : 'OK',
+  const extremePcr = Number.isFinite(pcr) && (pcr > 1.8 || pcr < 0.6);
+  add('Open interest and PCR', !Number.isFinite(pcr) || cover < 3 ? 'BLOCK' : 'OK',
     !Number.isFinite(pcr) || cover < 3 ? 'At least three fresh paired strikes are required for OI context.' :
-      oiOpposite ? `Near ATM PCR ${round(pcr)} is opposite to ${dir}; conflict veto.` : `Near ATM PCR ${round(pcr)} with ${cover} paired strikes.`);
+      `Near ATM PCR ${round(pcr)} with ${cover} paired strikes. OI counts open contracts, so this ratio alone is not a directional vote.`);
+  if (extremePcr) cautions.push(`Near ATM PCR ${round(pcr)} is unusually one sided. Review option prices and the nearby OI levels before a manual entry.`);
   const barrier = dir === 'CE' && resistance != null && resistance > spot && resistance - spot <= (family.atrValue || 0) * 0.5 ||
     dir === 'PE' && support != null && support < spot && spot - support <= (family.atrValue || 0) * 0.5;
   add('OI barrier', barrier ? 'BLOCK' : 'OK', barrier ? 'Heavy OI support or resistance is too close to the proposed move.' : 'No nearby heavy OI barrier in the proposed direction.');
@@ -161,12 +163,12 @@ export function buildSensexDecision({ family, pcr, oiCoverage, support, resistan
   const direction = setupAllowed ? dir : 'WAIT';
   const totalVotes = family.votes.length;
   return {
-    direction, status: setupAllowed ? 'FAMILY_CONFIRMED' : family.conflict || oiOpposite || htfOpposite ? 'REJECTED_CONFLICT' : 'WATCHING',
+    direction, status: setupAllowed ? 'FAMILY_CONFIRMED' : family.conflict || htfOpposite || barrier ? 'REJECTED_CONFLICT' : 'WATCHING',
     setupAllowed, autoEntryAllowed: false,
     supportingVotes: family.active.length, totalVotes, alignmentPct: totalVotes ? round(100 * family.active.length / totalVotes, 0) : 0,
     regime: family.regime.name, regimeSuitable: family.regime.suitable, regimeDetail: family.regime.detail,
     strategyFamily: setupAllowed ? family.active.map(x => x.name).join(' + ') : null,
-    strategyVotes: family.votes, contextChecks: checks, conflicts, cautions: [],
+    strategyVotes: family.votes, contextChecks: checks, conflicts, cautions,
     selectedContractReason: selected?.reason || null, selectedContractScore: selected?.score || null,
     message: setupAllowed ? `${family.reason} Context passed. Manual review only; two live scans and premium entry confirmation are still required.` :
       family.conflict ? 'WAIT: independent SENSEX strategy families disagree.' :

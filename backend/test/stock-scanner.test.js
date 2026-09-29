@@ -58,6 +58,22 @@ test('a delayed broker candle is retried within the same slot using a short requ
   assert.equal(calls.length, 2);
 });
 
+test('concurrent scanner refreshes share one broker history request', async () => {
+  let requests = 0;
+  let finish;
+  const response = new Promise(resolve => { finish = resolve; });
+  const fetchHistory = async () => { requests++; return response; };
+  const session = { clientCode: 'SCANNER_DEDUP_TEST' };
+  const at = india(29, 9, 36);
+  const first = stockHistory(session, 'token-unique-dedup', at, fetchHistory);
+  const second = stockHistory(session, 'token-unique-dedup', at, fetchHistory);
+  await Promise.resolve();
+  assert.equal(requests, 1);
+  const row = candle(29, 9, 25, 100, 101, 99, 100, 10_000);
+  finish({ data: [[row.timestamp, row.open, row.high, row.low, row.close, row.volume]] });
+  assert.deepEqual(await first, await second);
+});
+
 test('position risk includes costs and respects cash, including high priced shares', () => {
   const size = sizeStockTrade({ cash: 20_000, entry: 100, stop: 99, spread: 0.05 });
   assert.ok(size.quantity > 0);
