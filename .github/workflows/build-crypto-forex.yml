@@ -32,7 +32,8 @@ jobs:
             v220-src/project.part03_04a \
             v220-src/project.part04b0_04b1 \
             v220-src/project.part04c_04d \
-            v220-src/project.part04e_04f \
+            v220-src/project.part04e \
+            v220-src/project.part04f \
             v220-src/project.part05_06 \
             | base64 -d > /tmp/dhanpulse-v220-project.zip
           unzip -t /tmp/dhanpulse-v220-project.zip
