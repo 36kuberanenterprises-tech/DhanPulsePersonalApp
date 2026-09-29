@@ -12,14 +12,14 @@ android {
         applicationId = "in.dhanpulse.personal"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "2.7.5"
+        versionCode = 36
+        versionName = "2.7.6"
     }
 
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".preview275"
-            manifestPlaceholders["appLabel"] = "DhanPulse 2.7.5 Preview"
+            applicationIdSuffix = ".preview276"
+            manifestPlaceholders["appLabel"] = "DhanPulse 2.7.6 Preview"
         }
         getByName("release") {
             manifestPlaceholders["appLabel"] = "DhanPulse"

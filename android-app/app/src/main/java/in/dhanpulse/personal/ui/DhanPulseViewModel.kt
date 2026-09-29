@@ -1058,7 +1058,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         val s = sessionId ?: return
         if (stockRefreshInFlight) return
         stockRefreshInFlight = true
-        stockScanLoading = stockScan == null
+        stockScanLoading = true
         viewModelScope.launch {
             try {
                 val response = client().stockScanner(s, openPaperStock?.token)

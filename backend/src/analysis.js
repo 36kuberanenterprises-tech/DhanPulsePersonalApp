@@ -671,7 +671,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     rules: sensexFamiliesEnabled ? sensexFamily.votes.map(v => ({ name: v.name, state: v.vote === 'CE' ? 'BULLISH' : v.vote === 'PE' ? 'BEARISH' : 'NEUTRAL', detail: v.detail })) : engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
-      ...(sensexFamiliesEnabled ? ['SENSEX uses six independent price strategy families. Any opposing active family or OI vote returns WAIT.',
+      ...(sensexFamiliesEnabled ? ['SENSEX uses six independent price strategy families. Opposing active families, opposing higher timeframe context, and nearby OI barriers return WAIT. PCR by itself is not a directional vote.',
         'SENSEX futures basis is a cost of carry proxy, not a perpetual funding rate. No funding rate is inferred.',
         'SENSEX family calls are manual research only. Auto orders are disabled until the model and actual option execution are validated.',
         'The current Backtest Lab uses a separate CLARITY model and does not validate this SENSEX family model.'] :

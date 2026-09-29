@@ -248,9 +248,22 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                         Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
                         val status = if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
+                        val stockAge = if (vm.stocksVisible) runCatching {
+                            vm.stockScan?.timestamp?.let { System.currentTimeMillis() - java.time.Instant.parse(it).toEpochMilli() }
+                        }.getOrNull() else null
+                        val stockDelayed = vm.stocksVisible && (stockAge == null || stockAge > 45_000 || vm.stockScanError != null)
+                        val pillText = when {
+                            status == "MARKET_CLOSED" -> "CLOSED"
+                            status == "NO_OPTIONS" -> "NO OPTIONS"
+                            stockDelayed || status == "DATA_STALE" || (!vm.stocksVisible && (vm.refreshWarning != null || vm.analysis == null)) -> "DELAYED"
+                            vm.stocksVisible && status == "OPENING_RANGE" -> "OPENING RANGE"
+                            vm.stocksVisible && status == "NO_NEW_ENTRIES" -> "ENTRIES CLOSED"
+                            vm.stocksVisible -> "SCANNING"
+                            else -> "LIVE"
+                        }
                         StatusPill(
-                            if (status == "MARKET_CLOSED") "CLOSED" else if (status == "NO_OPTIONS") "NO OPTIONS" else if (vm.stocksVisible && (status == "DATA_STALE" || vm.stockScan == null)) "DELAYED" else if (!vm.stocksVisible && (vm.refreshWarning != null || vm.analysis == null)) "DELAYED" else "LIVE",
-                            if (status == "NO_OPTIONS" || status == "DATA_STALE" || (vm.stocksVisible && vm.stockScan == null) || (!vm.stocksVisible && (vm.refreshWarning != null || vm.analysis == null))) Amber else Green
+                            pillText,
+                            if (pillText == "LIVE" || pillText == "SCANNING") Green else Amber
                         )
                     }
                     Text((vm.profile?.name ?: "Angel One connected") + if (vm.stocksVisible) " • NSE Stocks" else if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
@@ -1018,6 +1031,7 @@ private fun StocksSection(vm: DhanPulseViewModel) {
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        if (vm.stockScanLoading) Text("Updating quotes and stock checks...", color = Amber, style = MaterialTheme.typography.bodySmall)
                         Text("${scan.marketStatus.replace('_', ' ')} • ${stockTime(scan.timestamp)}", color = if (scan.marketStatus == "SCANNING") Green else Amber, fontWeight = FontWeight.Bold)
                         Text("${scan.scanned} stock quotes screened • ${scan.evaluated} detailed checks • Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"}", color = Ink)
                         Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -1370,8 +1384,9 @@ private fun SignalRulesPanel(a: AnalysisResponse) {
             ) {
                 Column {
                     Text("Signal checks", color = Ink, fontWeight = FontWeight.ExtraBold)
-                    Text("${a.rules.size} engine conditions", color = Muted, fontSize = 10.sp)
+                    Text("${a.rules.size} ${if (a.symbol == "SENSEX" && a.tradeDecision.contextChecks.isNotEmpty()) "strategy families" else "engine conditions"}", color = Muted, fontSize = 10.sp)
                     if (!a.tradeDecision.setupAllowed) Text(a.tradeDecision.message, color = Amber, fontSize = 10.sp)
+                    a.tradeDecision.cautions.forEach { Text(it, color = Amber, fontSize = 10.sp) }
                 }
                 Text(if (open) "Hide" else "View", color = Blue, fontWeight = FontWeight.Bold)
             }
