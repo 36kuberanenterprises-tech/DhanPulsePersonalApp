@@ -91,7 +91,6 @@ jobs:
             > /tmp/v232.patch
           cd crypto-forex-app/buildsrc
           patch -p1 < /tmp/v232.patch
-          sed -i 's/applicationId = "com.dhanpulse.cryptofxresearchv231"/applicationId = "com.dhanpulse.cryptofxresearchv232"/' app/build.gradle.kts
 
       - name: Apply V2.3.3 native stream and notification cleanup patch
         run: |
@@ -103,6 +102,7 @@ jobs:
             v233-patch/part04.patch \
             v233-patch/part05.patch \
             > /tmp/v233.patch
+          printf '\n' >> /tmp/v233.patch
           cd crypto-forex-app/buildsrc
           patch -p1 < /tmp/v233.patch
           grep -n 'applicationId\|versionCode\|versionName\|okhttp' app/build.gradle.kts
