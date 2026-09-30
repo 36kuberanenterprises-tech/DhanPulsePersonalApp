@@ -1,0 +1,166 @@
+").classList.add("active");q("forexTab").classList.remove("active")}setSymbols();renderTrades();if(!BACKGROUND_MODE)bindChartGestures();load();setInterval(nativeHeartbeat,2000);nativeHeartbeat();
+ })();
+ </script>
+ </body>
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java v231/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+--- v230/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java	2026-09-26 03:02:12.000000000 +0000
++++ v231/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java	2026-09-30 21:43:40.404691782 +0000
+@@ -9,6 +9,8 @@
+ import android.content.Intent;
+ import android.content.SharedPreferences;
+ import android.content.pm.ServiceInfo;
++import android.graphics.Bitmap;
++import android.graphics.BitmapFactory;
+ import android.net.wifi.WifiManager;
+ import android.os.Build;
+ import android.os.IBinder;
+@@ -21,21 +23,35 @@
+ 
+ import org.json.JSONObject;
+ 
++import java.text.DecimalFormat;
++import java.text.DecimalFormatSymbols;
++import java.util.Locale;
++
+ public class DhanPulseMonitorService extends Service {
+     public static final String ACTION_START = "com.dhanpulse.cryptofxv11.START";
+     public static final String ACTION_STOP = "com.dhanpulse.cryptofxv11.STOP";
+     public static final String ACTION_UI_FOREGROUND = "com.dhanpulse.cryptofxv11.UI_FOREGROUND";
+     public static final String ACTION_UI_BACKGROUND = "com.dhanpulse.cryptofxv11.UI_BACKGROUND";
++    public static final String ACTION_HEARTBEAT_EVENT = "com.dhanpulse.cryptofxv11.HEARTBEAT_EVENT";
++    public static final String ACTION_SIGNAL_EVENT = "com.dhanpulse.cryptofxv11.SIGNAL_EVENT";
++    public static final String ACTION_TRADE_EVENT = "com.dhanpulse.cryptofxv11.TRADE_EVENT";
++    public static final String ACTION_CONFIG_EVENT = "com.dhanpulse.cryptofxv11.CONFIG_EVENT";
++    public static final String EXTRA_JSON = "json";
+ 
+     private static final int FOREGROUND_ID = 1800;
+-    private static final String CH_MONITOR = "dhanpulse_monitor";
+-    private static final String CH_SIGNAL = "dhanpulse_signals";
++    private static final String CH_MONITOR = "dhanpulse_monitor_v231";
++    private static final String CH_SIGNAL = "dhanpulse_signals_v231";
+ 
+     private WebView headlessWebView;
+     private PowerManager.WakeLock wakeLock;
+     private WifiManager.WifiLock wifiLock;
+     private SharedPreferences prefs;
+     private boolean uiForeground = false;
++    private String foregroundTitle = "DhanPulse Live Monitor";
++    private String lastHeartbeatSymbol = "";
++    private double lastHeartbeatPrice = Double.NaN;
++    private long lastNotificationUpdate = 0L;
++    private Bitmap logoBitmap;
+ 
+     @Override
+     public void onCreate() {
+@@ -43,12 +59,33 @@
+         prefs = getSharedPreferences("dhanpulse_monitor", MODE_PRIVATE);
+         createChannels();
+         acquireLocks();
+-        startForegroundNow("Starting continuous market monitoring");
++        logoBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.dhanpulse_logo);
++        startForegroundNow("Starting live market feed");
+     }
+ 
+     @Override
+     public int onStartCommand(Intent intent, int flags, int startId) {
+         String action = intent == null ? ACTION_START : intent.getAction();
++        if (action == null) action = ACTION_START;
++
++        if (ACTION_HEARTBEAT_EVENT.equals(action)) {
++            handleHeartbeat(intent == null ? null : intent.getStringExtra(EXTRA_JSON));
++            return START_STICKY;
++        }
++        if (ACTION_SIGNAL_EVENT.equals(action)) {
++            notifySignal(intent == null ? null : intent.getStringExtra(EXTRA_JSON));
++            return START_STICKY;
++        }
++        if (ACTION_TRADE_EVENT.equals(action)) {
++            notifyTradeUpdate(intent == null ? null : intent.getStringExtra(EXTRA_JSON));
++            return START_STICKY;
++        }
++        if (ACTION_CONFIG_EVENT.equals(action)) {
++            String json = intent == null ? null : intent.getStringExtra(EXTRA_JSON);
++            if (json != null) prefs.edit().putString("monitor_config", json).apply();
++            return START_STICKY;
++        }
++
+         if (ACTION_STOP.equals(action)) {
+             prefs.edit().putBoolean("monitor_enabled", false).apply();
+             destroyHeadlessWebView();
+@@ -63,15 +100,15 @@
+         if (ACTION_UI_FOREGROUND.equals(action)) {
+             uiForeground = true;
+             destroyHeadlessWebView();
+-            updateForeground("Monitoring active · app open");
++            if (Double.isNaN(lastHeartbeatPrice)) updateForeground("Waiting for live price · app open");
+         } else if (ACTION_UI_BACKGROUND.equals(action)) {
+             uiForeground = false;
+             prefs.edit().putBoolean("background_ran", true).apply();
+             ensureHeadlessWebView();
+-            updateForeground("Background monitoring active");
++            if (Double.isNaN(lastHeartbeatPrice)) updateForeground("Background feed starting");
+         } else {
+             if (!uiForeground) ensureHeadlessWebView();
+-            updateForeground("Continuous monitoring active");
++            if (Double.isNaN(lastHeartbeatPrice)) updateForeground("Continuous monitoring active");
+         }
+ 
+         return START_STICKY;
+@@ -83,9 +120,9 @@
+ 
+             NotificationChannel monitor = new NotificationChannel(
+                     CH_MONITOR,
+-                    "DhanPulse Background Monitor",
++                    "DhanPulse Live Market Monitor",
+                     NotificationManager.IMPORTANCE_LOW);
+-            monitor.setDescription("Keeps DhanPulse market monitoring active in the background.");
++            monitor.setDescription("Shows live DhanPulse market price movement while monitoring continues.");
+             monitor.setShowBadge(false);
+             nm.createNotificationChannel(monitor);
+ 
+@@ -115,18 +152,20 @@
+                 ? new Notification.Builder(this, CH_MONITOR)
+                 : new Notification.Builder(this);
+ 
+-        b.setSmallIcon(R.drawable.ic_launcher)
+-                .setContentTitle("DhanPulse is monitoring")
++        b.setSmallIcon(R.drawable.ic_stat_dhanpulse)
++                .setContentTitle(foregroundTitle)
+                 .setContentText(text)
++                .setStyle(new Notification.BigTextStyle().bigText(text))
+                 .setContentIntent(open)
+                 .setOngoing(true)
+                 .setOnlyAlertOnce(true)
+                 .setCategory(Notification.CATEGORY_SERVICE)
++                .setShowWhen(false)
+                 .addAction(new Notification.Action.Builder(
+-                        R.drawable.ic_launcher, "Open", open).build())
++                        R.drawable.ic_stat_dhanpulse, "Open", open).build())
+                 .addAction(new Notification.Action.Builder(
+-                        R.drawable.ic_launcher, "Stop", stop).build());
+-
++                        R.drawable.ic_stat_dhanpulse, "Stop", stop).build());
++        if (logoBitmap != null) b.setLargeIcon(logoBitmap);
+         return b.build();
+     }
+ 
+@@ -140,10 +179,56 @@
+     }
+ 
+     private void updateForeground(String text) {
++        long now = System.currentTimeMillis();
++        if (now - lastNotificationUpdate < 350L) return;
++        lastNotificationUpdate = now;
+         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+         nm.notify(FOREGROUND_ID, buildForegroundNotification(text));
+     }
+ 
++    private void handleHeartbeat(String json) {
++        if (json == null || json.isEmpty()) return;
++        try {
++            JSONObject j = new JSONObject(json);
++            String symbol = j.optString("symbol", "");
++            String tf = j.optString("tf", "");
++            String mode = j.optString("feedMode", "");
++            double price = j.optDouble("price", Double.NaN);
++            long lastEve
