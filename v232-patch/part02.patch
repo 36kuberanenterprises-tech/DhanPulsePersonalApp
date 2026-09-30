@@ -1,0 +1,143 @@
+ .setVisibility(Notification.VISIBILITY_PUBLIC)
++                .setPriority(Notification.PRIORITY_HIGH)
++                .setColor(color)
++                .setShowWhen(true)
++                .setWhen(System.currentTimeMillis());
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) b.setColorized(true);
++        if (logoBitmap != null) b.setLargeIcon(logoBitmap);
++        return b;
++    }
++
+     private void notifySignal(String json) {
+         if (json == null || json.isEmpty()) return;
+         try {
+@@ -318,24 +455,13 @@
+ 
+             String text = symbol + " · Entry " + shortNum(entry)
+                     + " · SL " + shortNum(sl) + " · T1 " + shortNum(t1);
++            int color = "BUY".equalsIgnoreCase(side) ? COLOR_GREEN
++                    : ("SELL".equalsIgnoreCase(side) ? COLOR_RED : COLOR_BLUE);
+ 
+-            Intent openIntent = new Intent(this, MainActivity.class);
+-            PendingIntent open = PendingIntent.getActivity(
+-                    this, 21, openIntent,
+-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+-
+-            Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+-                    ? new Notification.Builder(this, CH_SIGNAL)
+-                    : new Notification.Builder(this);
+-
+-            b.setSmallIcon(R.drawable.ic_stat_dhanpulse)
+-                    .setContentTitle("DhanPulse " + side + (stage.isEmpty() ? "" : " · " + stage))
+-                    .setContentText(text)
+-                    .setStyle(new Notification.BigTextStyle().bigText(text))
+-                    .setContentIntent(open)
+-                    .setAutoCancel(true)
+-                    .setCategory(Notification.CATEGORY_EVENT);
+-            if (logoBitmap != null) b.setLargeIcon(logoBitmap);
++            PendingIntent open = openPendingIntent(21);
++            Notification.Builder b = baseSignalBuilder(
++                    "DhanPulse " + side + (stage.isEmpty() ? "" : " · " + stage),
++                    text, color, open);
+ 
+             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+             nm.notify((int) (System.currentTimeMillis() % 100000) + 3000, b.build());
+@@ -354,22 +480,18 @@
+             String symbol = t.optString("symbol", "");
+             if ("OPEN".equals(result) && "OPEN".equals(status)) return;
+ 
+-            Intent openIntent = new Intent(this, MainActivity.class);
+-            PendingIntent open = PendingIntent.getActivity(
+-                    this, 31, openIntent,
+-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+-
+-            Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+-                    ? new Notification.Builder(this, CH_SIGNAL)
+-                    : new Notification.Builder(this);
+-
+-            b.setSmallIcon(R.drawable.ic_stat_dhanpulse)
+-                    .setContentTitle("DhanPulse " + symbol)
+-                    .setContentText("Trade performance: " + result)
+-                    .setContentIntent(open)
+-                    .setAutoCancel(true)
+-                    .setOnlyAlertOnce(true);
+-            if (logoBitmap != null) b.setLargeIcon(logoBitmap);
++            int color;
++            String upper = result.toUpperCase(Locale.US);
++            if (upper.contains("SL") || upper.contains("LOSS")) color = COLOR_RED;
++            else if (upper.contains("AMBIG") || upper.contains("TIME")) color = COLOR_AMBER;
++            else color = COLOR_GREEN;
++
++            PendingIntent open = openPendingIntent(31);
++            Notification.Builder b = baseSignalBuilder(
++                    "DhanPulse " + symbol,
++                    "Trade performance: " + result,
++                    color, open);
++            b.setOnlyAlertOnce(true);
+ 
+             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+             nm.notify((int) (System.currentTimeMillis() % 100000) + 4000, b.build());
+@@ -397,6 +519,7 @@
+         uiForeground = false;
+         prefs.edit().putBoolean("background_ran", true).apply();
+         ensureHeadlessWebView();
++        notifBadge = "LIVE";
+         updateForeground("Background monitoring active");
+         super.onTaskRemoved(rootIntent);
+     }
+@@ -432,7 +555,7 @@
+ 
+         @JavascriptInterface
+         public void onMonitorConfig(String json) {
+-            prefs.edit().putString("monitor_config", json).apply();
++            if (json != null) prefs.edit().putString("monitor_config", json).apply();
+         }
+     }
+ }
+diff -ruN v231src/app/src/main/res/drawable/notification_card_down.xml v232src/app/src/main/res/drawable/notification_card_down.xml
+--- v231src/app/src/main/res/drawable/notification_card_down.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/drawable/notification_card_down.xml	2026-09-30 21:58:11.688989299 +0000
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <gradient android:angle="0" android:startColor="#211114" android:endColor="#40151B" />
++    <corners android:radius="20dp" />
++    <stroke android:width="1dp" android:color="#FF5C70" />
++    <padding android:left="12dp" android:top="10dp" android:right="12dp" android:bottom="10dp" />
++</shape>
+diff -ruN v231src/app/src/main/res/drawable/notification_card_flat.xml v232src/app/src/main/res/drawable/notification_card_flat.xml
+--- v231src/app/src/main/res/drawable/notification_card_flat.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/drawable/notification_card_flat.xml	2026-09-30 21:58:11.691357421 +0000
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <gradient android:angle="0" android:startColor="#0A1822" android:endColor="#10344A" />
++    <corners android:radius="20dp" />
++    <stroke android:width="1dp" android:color="#45C8FF" />
++    <padding android:left="12dp" android:top="10dp" android:right="12dp" android:bottom="10dp" />
++</shape>
+diff -ruN v231src/app/src/main/res/drawable/notification_card_stale.xml v232src/app/src/main/res/drawable/notification_card_stale.xml
+--- v231src/app/src/main/res/drawable/notification_card_stale.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/drawable/notification_card_stale.xml	2026-09-30 21:58:11.692978939 +0000
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <gradient android:angle="0" android:startColor="#211D10" android:endColor="#413718" />
++    <corners android:radius="20dp" />
++    <stroke android:width="1dp" android:color="#F9C74F" />
++    <padding android:left="12dp" android:top="10dp" android:right="12dp" android:bottom="10dp" />
++</shape>
+diff -ruN v231src/app/src/main/res/drawable/notification_card_up.xml v232src/app/src/main/res/drawable/notification_card_up.xml
+--- v231src/app/src/main/res/drawable/notification_card_up.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/drawable/notification_card_up.xml	2026-09-30 21:58:11.686340340 +0000
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <gradient android:angle="0" android:startColor="#0B1E1B" android:endColor="#123A2A" />
++    <corners android:radius="20dp" />
++    <stroke android:width="1dp" android:color="#33D17A" />
++    <padding android:left="12dp" android:top="10dp" android:right="12dp" android:bottom="10dp" />
++</shape>
+diff -ruN v231src/app/src/main/res/drawable/notification_pill_amber.xml v232src/app/src/main/res/drawable/notification_pill_amber.xml
+--- v231src/app/src/main/res/drawable/notification_pill_amber.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res
