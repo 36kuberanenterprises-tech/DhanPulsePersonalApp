@@ -54,6 +54,14 @@ jobs:
             v23-patch/part06.txt \
             v23-patch/part07.txt \
             > /tmp/v23_patch.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/v23_patch.py')
+          x=p.read_text()
+          x=x.replace("block='/* V2.3 research adaptive", "block='''/* V2.3 research adaptive", 1)
+          x=x.replace("window.__nativeDecisionAuthority=false;'\ns=s[:start]+block+s[end:]", "window.__nativeDecisionAuthority=false;'''\ns=s[:start]+block+s[end:]", 1)
+          p.write_text(x)
+          PY
           python /tmp/v23_patch.py
           grep -n 'applicationId\|versionCode\|versionName' crypto-forex-app/buildsrc/app/build.gradle.kts
           grep -n 'Version 2.3 Research Adaptive' crypto-forex-app/buildsrc/app/src/main/assets/index.html
