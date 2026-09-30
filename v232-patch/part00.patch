@@ -1,0 +1,168 @@
+diff -ruN v231src/app/build.gradle.kts v232src/app/build.gradle.kts
+--- v231src/app/build.gradle.kts	2026-09-30 21:42:06.000000000 +0000
++++ v232src/app/build.gradle.kts	2026-09-30 21:57:46.151560302 +0000
+@@ -10,8 +10,8 @@
+         applicationId = "com.dhanpulse.cryptofxresearchv231"
+         minSdk = 26
+         targetSdk = 34
+-        versionCode = 24
+-        versionName = "2.3.1"
++        versionCode = 25
++        versionName = "2.3.2"
+     }
+ 
+     buildTypes {
+diff -ruN v231src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java v232src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+--- v231src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java	2026-09-30 21:43:40.000000000 +0000
++++ v232src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java	2026-09-30 22:00:31.293981261 +0000
+@@ -11,6 +11,7 @@
+ import android.content.pm.ServiceInfo;
+ import android.graphics.Bitmap;
+ import android.graphics.BitmapFactory;
++import android.graphics.Color;
+ import android.net.wifi.WifiManager;
+ import android.os.Build;
+ import android.os.IBinder;
+@@ -20,6 +21,7 @@
+ import android.webkit.WebSettings;
+ import android.webkit.WebView;
+ import android.webkit.WebViewClient;
++import android.widget.RemoteViews;
+ 
+ import org.json.JSONObject;
+ 
+@@ -39,8 +41,14 @@
+     public static final String EXTRA_JSON = "json";
+ 
+     private static final int FOREGROUND_ID = 1800;
+-    private static final String CH_MONITOR = "dhanpulse_monitor_v231";
+-    private static final String CH_SIGNAL = "dhanpulse_signals_v231";
++    private static final String CH_MONITOR = "dhanpulse_monitor_v232_color";
++    private static final String CH_SIGNAL = "dhanpulse_signals_v232_color";
++
++    private static final int COLOR_GREEN = Color.rgb(51, 209, 122);
++    private static final int COLOR_RED = Color.rgb(255, 92, 112);
++    private static final int COLOR_BLUE = Color.rgb(69, 200, 255);
++    private static final int COLOR_AMBER = Color.rgb(249, 199, 79);
++    private static final int COLOR_TEXT = Color.rgb(214, 234, 244);
+ 
+     private WebView headlessWebView;
+     private PowerManager.WakeLock wakeLock;
+@@ -53,6 +61,15 @@
+     private long lastNotificationUpdate = 0L;
+     private Bitmap logoBitmap;
+ 
++    private String notifPrice = "Starting live feed";
++    private String notifMove = "• connecting";
++    private String notifMeta = "Preparing market monitor";
++    private String notifBadge = "LIVE";
++    private int notifCardRes = R.drawable.notification_card_flat;
++    private int notifPillRes = R.drawable.notification_pill_blue;
++    private int notifMoveColor = COLOR_TEXT;
++    private int notifAccentColor = COLOR_BLUE;
++
+     @Override
+     public void onCreate() {
+         super.onCreate();
+@@ -100,15 +117,24 @@
+         if (ACTION_UI_FOREGROUND.equals(action)) {
+             uiForeground = true;
+             destroyHeadlessWebView();
+-            if (Double.isNaN(lastHeartbeatPrice)) updateForeground("Waiting for live price · app open");
++            if (Double.isNaN(lastHeartbeatPrice)) {
++                setWaitingVisuals("Waiting for live price", "App open · connecting");
++                updateForeground("Waiting for live price · app open");
++            }
+         } else if (ACTION_UI_BACKGROUND.equals(action)) {
+             uiForeground = false;
+             prefs.edit().putBoolean("background_ran", true).apply();
+             ensureHeadlessWebView();
+-            if (Double.isNaN(lastHeartbeatPrice)) updateForeground("Background feed starting");
++            if (Double.isNaN(lastHeartbeatPrice)) {
++                setWaitingVisuals("Background feed", "Starting live connection");
++                updateForeground("Background feed starting");
++            }
+         } else {
+             if (!uiForeground) ensureHeadlessWebView();
+-            if (Double.isNaN(lastHeartbeatPrice)) updateForeground("Continuous monitoring active");
++            if (Double.isNaN(lastHeartbeatPrice)) {
++                setWaitingVisuals("Monitoring active", "Waiting for market ticks");
++                updateForeground("Continuous monitoring active");
++            }
+         }
+ 
+         return START_STICKY;
+@@ -120,33 +146,68 @@
+ 
+             NotificationChannel monitor = new NotificationChannel(
+                     CH_MONITOR,
+-                    "DhanPulse Live Market Monitor",
+-                    NotificationManager.IMPORTANCE_LOW);
+-            monitor.setDescription("Shows live DhanPulse market price movement while monitoring continues.");
++                    "DhanPulse Colour Live Monitor",
++                    NotificationManager.IMPORTANCE_DEFAULT);
++            monitor.setDescription("Colour live price movement on notification shade and lock screen.");
+             monitor.setShowBadge(false);
++            monitor.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
++            monitor.enableLights(true);
++            monitor.setLightColor(COLOR_GREEN);
++            monitor.enableVibration(false);
+             nm.createNotificationChannel(monitor);
+ 
+             NotificationChannel signals = new NotificationChannel(
+                     CH_SIGNAL,
+-                    "DhanPulse Signals",
++                    "DhanPulse Colour Signals",
+                     NotificationManager.IMPORTANCE_HIGH);
+-            signals.setDescription("BUY, SELL and target or stop notifications from DhanPulse.");
++            signals.setDescription("Colour BUY, SELL, target and stop notifications on shade and lock screen.");
++            signals.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
++            signals.enableLights(true);
++            signals.setLightColor(COLOR_GREEN);
+             nm.createNotificationChannel(signals);
+         }
+     }
+ 
+-    private Notification buildForegroundNotification(String text) {
++    private PendingIntent openPendingIntent(int requestCode) {
+         Intent openIntent = new Intent(this, MainActivity.class);
+         openIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+-        PendingIntent open = PendingIntent.getActivity(
+-                this, 1, openIntent,
++        return PendingIntent.getActivity(
++                this, requestCode, openIntent,
+                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
++    }
+ 
++    private PendingIntent stopPendingIntent() {
+         Intent stopIntent = new Intent(this, DhanPulseMonitorService.class);
+         stopIntent.setAction(ACTION_STOP);
+-        PendingIntent stop = PendingIntent.getService(
++        return PendingIntent.getService(
+                 this, 2, stopIntent,
+                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
++    }
++
++    private RemoteViews liveRemoteViews(int layoutId, PendingIntent open, PendingIntent stop, boolean expanded) {
++        RemoteViews rv = new RemoteViews(getPackageName(), layoutId);
++        rv.setTextViewText(R.id.notif_title, foregroundTitle);
++        rv.setTextViewText(R.id.notif_price, notifPrice);
++        rv.setTextViewText(R.id.notif_meta, notifMeta);
++        rv.setTextViewText(R.id.notif_badge, notifBadge);
++        rv.setInt(R.id.notif_root, "setBackgroundResource", notifCardRes);
++        rv.setInt(R.id.notif_badge, "setBackgroundResource", notifPillRes);
++        rv.setOnClickPendingIntent(R.id.notif_root, open);
++        if (expanded) {
++            rv.setOnClickPendingIntent(R.id.notif_open, open);
++            rv.setOnClickPendingIntent(R.id.notif_stop, stop);
++            rv.setTextViewText(R.id.notif_move, notifMove);
++            rv.setTextColor(R.id.notif_move, notifMoveColor);
++        }
++        return rv;
++    }
++
++    private Notification buildForegroundNotification(String fallbackText) {
++        PendingIntent open = openPendingIntent(1);
++        PendingIntent stop = stopPendingIntent();
++
++        RemoteViews compact = liveRemoteViews(R.layout.notification_live_co
