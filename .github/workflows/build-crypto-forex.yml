@@ -1,4 +1,4 @@
-name: Build DhanPulse Crypto Forex v2.3 Research APK
+name: Build DhanPulse Crypto Forex v2.3.1 Live Monitor APK
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
     paths:
       - 'v220-src/**'
       - 'v23-patch/**'
+      - 'v231-patch/**'
       - '.github/workflows/build-crypto-forex.yml'
 
 permissions:
@@ -63,11 +64,25 @@ jobs:
           p.write_text(x)
           PY
           python /tmp/v23_patch.py
-          grep -n 'applicationId\|versionCode\|versionName' crypto-forex-app/buildsrc/app/build.gradle.kts
-          grep -n 'Version 2.3 Research Adaptive' crypto-forex-app/buildsrc/app/src/main/assets/index.html
+
+      - name: Apply V2.3.1 logo and live notification fix
+        run: |
+          cat \
+            v231-patch/part00.patch \
+            v231-patch/part01.patch \
+            v231-patch/part02.patch \
+            v231-patch/part03.patch \
+            > /tmp/v231.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v231.patch
+          mkdir -p app/src/main/res/drawable-nodpi
+          cp app/src/main/assets/dhanpulse_logo_v214.jpg app/src/main/res/drawable-nodpi/dhanpulse_logo.jpg
+          grep -n 'applicationId\|versionCode\|versionName' app/build.gradle.kts
+          grep -n 'Version 2.3.1 Live Monitor Fix' app/src/main/assets/index.html
+          grep -n 'addJavascriptInterface\|ACTION_HEARTBEAT_EVENT\|ic_stat_dhanpulse' app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
           python - <<'PY'
           from pathlib import Path
-          s=Path('crypto-forex-app/buildsrc/app/src/main/assets/index.html').read_text()
+          s=Path('app/src/main/assets/index.html').read_text()
           js=s[s.index('<script>')+8:s.rindex('</script>')]
           Path('/tmp/app.js').write_text(js)
           PY
@@ -96,13 +111,13 @@ jobs:
 
       - name: Prepare APK artifact
         run: |
-          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.0_Research_Adaptive.apk
-          sha256sum DhanPulse_Crypto_Forex_v2.3.0_Research_Adaptive.apk
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.1_Live_Monitor_Fix.apk
+          sha256sum DhanPulse_Crypto_Forex_v2.3.1_Live_Monitor_Fix.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.3.0-Research-Adaptive
-          path: DhanPulse_Crypto_Forex_v2.3.0_Research_Adaptive.apk
+          name: DhanPulse-Crypto-Forex-v2.3.1-Live-Monitor-Fix
+          path: DhanPulse_Crypto_Forex_v2.3.1_Live_Monitor_Fix.apk
           if-no-files-found: error
           retention-days: 30
