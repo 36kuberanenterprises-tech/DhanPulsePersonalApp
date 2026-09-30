@@ -1,0 +1,61 @@
+diff -ruN v232src/app/build.gradle.kts v233src/app/build.gradle.kts
+--- v232src/app/build.gradle.kts	2026-09-30 21:57:46.151560302 +0000
++++ v233src/app/build.gradle.kts	2026-09-30 22:38:23.853385149 +0000
+@@ -7,11 +7,11 @@
+     compileSdk = 35
+ 
+     defaultConfig {
+-        applicationId = "com.dhanpulse.cryptofxresearchv231"
++        applicationId = "com.dhanpulse.cryptofxresearchv233"
+         minSdk = 26
+         targetSdk = 34
+-        versionCode = 25
+-        versionName = "2.3.2"
++        versionCode = 26
++        versionName = "2.3.3"
+     }
+ 
+     buildTypes {
+@@ -27,3 +27,8 @@
+         targetCompatibility = JavaVersion.VERSION_17
+     }
+ }
++
++
++dependencies {
++    implementation("com.squareup.okhttp3:okhttp:4.12.0")
++}
+diff -ruN v232src/app/src/main/assets/index.html v233src/app/src/main/assets/index.html
+--- v232src/app/src/main/assets/index.html	2026-09-30 21:57:44.898568948 +0000
++++ v233src/app/src/main/assets/index.html	2026-09-30 22:41:22.305654065 +0000
+@@ -20,7 +20,7 @@
+ </head>
+ <body>
+ <div class="app">
+-<header><div class="brand"><img class="logo" src="dhanpulse_logo_v214.jpg" alt="DhanPulse"><div><h1>DhanPulse</h1><div class="muted small">Crypto and Forex Analysis</div></div></div><div class="statusarea"><span class="ver">Version 2.3.1 Live Monitor Fix</span><span id="conn" class="badge">Loading</span></div></header>
++<header><div class="brand"><img class="logo" src="dhanpulse_logo_v214.jpg" alt="DhanPulse"><div><h1>DhanPulse</h1><div class="muted small">Crypto and Forex Analysis</div></div></div><div class="statusarea"><span class="ver">Version 2.3.3 Native Stream</span><span id="conn" class="badge">Loading</span></div></header>
+ 
+ <div class="panel">
+ <div class="tabs"><button id="cryptoTab" class="active">Crypto</button><button id="forexTab">Forex and Metals</button></div>
+@@ -50,7 +50,7 @@
+ <div class="panel"><div class="row"><div><h2>Recorded Signal Performance</h2><div class="muted small">T1, T2, T3 and SL are checked live on incoming market ticks. Candle data is used as backup.</div><div id="tradeLogState" class="muted small" style="margin-top:5px">Live performance check: waiting for first market tick</div></div><button id="clear" class="danger">Clear Records</button></div><div id="perf" class="perf"></div><div class="table"><table><thead><tr><th>Time</th><th>Market</th><th>Symbol</th><th>TF</th><th>Side</th><th>Entry</th><th>SL</th><th>T1</th><th>T2</th><th>T3</th><th>Status</th><th>Result</th></tr></thead><tbody id="trades"></tbody></table></div></div>
+ 
+ <div class="panel"><h2>XAUUSD and Forex Data Setup</h2><div class="muted small" style="margin:7px 0 12px">Crypto needs no account or API key. For XAUUSD and forex, enter a Twelve Data API key. It stays only on this phone.</div><div class="control"><label>Twelve Data API Key<input id="tdkey" type="password" placeholder="Enter API key"></label><button id="savekey" class="secondary">Save Key</button><button id="testxau">Test XAUUSD</button></div><div id="msg" class="muted small" style="margin-top:8px"></div></div>
+-<footer>DhanPulse Crypto and Forex Version 2.3.1 Live Monitor Fix. Analysis only. No orders are placed. Low latency event driven engine processes streaming ticks independently from chart redraw. Intrabar Turning Point Engine monitors top sell and bottom buy reversals continuously, together with liquidity sweeps, reclaim, micro CHoCH, displacement, FVG, order blocks and crypto order flow. Native foreground monitoring continues when the app is minimised or the screen is locked.</footer>
++<footer>DhanPulse Crypto and Forex Version 2.3.3 Native Stream. Analysis only. No orders are placed. Low latency event driven engine processes streaming ticks independently from chart redraw. Intrabar Turning Point Engine monitors top sell and bottom buy reversals continuously, together with liquidity sweeps, reclaim, micro CHoCH, displacement, FVG, order blocks and crypto order flow. Native foreground monitoring continues when the app is minimised or the screen is locked.</footer>
+ </div>
+ 
+ <script>
+@@ -65,6 +65,7 @@
+ function nativeSignal(t){try{if(window.DhanPulseNative&&DhanPulseNative.onSignal)DhanPulseNative.onSignal(JSON.stringify(t))}catch(e){}}
+ function nativeTradeUpdate(t,source){try{if(window.DhanPulseNative&&DhanPulseNative.onTradeUpdate)DhanPulseNative.onTradeUpdate(JSON.stringify({trade:t,source:source||"tick",at:Date.now()}))}catch(e){}}
+ function nativeHeartbeat(){try{if(window.DhanPulseNative&&DhanPulseNative.onHeartbeat)DhanPulseNative.onHeartbeat(JSON.stringify({market:S.market,symbol:S.symbol,tf:S.tf,price:S.livePrice,feedMode:S.feedMode,lastEventAt:S.lastMarketEventAt,at:Date.now()}))}catch(e){}}
++window.__nativeMarketTick=function(payload){try{var d=typeof payload==="string"?JSON.parse(payload):payload;if(!d||S.market!=="crypto"||String(d.symbol||"")!==S.symbol)return;var p=num(d.price),ts=num(d.ts||Date.now()),qv=num(d.qty||0),buy=!!d.buy,mode=String(d.mode||"NATIVE WS");if(!finite(p)||p<=0)return;processTick(p,ts,qv,buy,ts,mode);conn(mode,"live")}catch(e){}};
+ var S={market:"crypto",symbol:"BTCUSDT",tf:"5m",candles:[],htfCandles:[],microCandles:[],ctx:{},analysis:null,turn:null,ws:null,timer:null,pollTimer:null,ctxTimer:null,wsTimer:null,pending:null,pollBusy:false,lastCtxOI:null,flowTrades:[],lastTurnRecord:null,livePrice:null,feedLatencyMs:null,engineMs:null,totalLatencyMs:null,lastEventType:"INIT",lastEventAt:null,lastMarketEventAt:null,lastMarketExchangeAt:null,feedMode:"INIT",feedWatchTimer:null,wsRetryTimer:null,restSyncTimer:null,fastCache:null,fastSignal:null,fastPending:null,flowBuy:0,flowSell:0,tdHeartbeat:null,chartTimer:null,chartView:{visible:0,rightOffset:0},chartPointers:{},chartGesture:null,tradeCache:null,lastTradeLogAt:null,lastTradeLogSource:"INIT",tradeLogUiAt:0};
+ var TRKEY="dhanpulse_cf_android_trades_v23", KEY="dhanpulse_td_key_v1";
+ function q(id){return document.getElementById(id)}
+@@ -252,7 +253,7 @@
+ function applyLiveCandle(c){var last=S.candles[S.candles.length-1];if(last&&last.t===c.t)S.candles[S.candles.length-1]=c;else S.candles.push(c);if(S.candles.length>400)S.candles.shift();S.analysis=analyse(S.candles,S.ctx);render();updateWithCandle(c);considerEarly(c);if(c.closed)autoRecord()}
+ function applyMicroCandle(c){var last=S.microCandles[S.microCandles.length-1];if(last&&last.t===c.t)S.microCandles[S.microCandles.length-1]=c;else S.microCandles.push(c);if(S.microCandles.length>220)S.microCandles.shift();prepareFastCache()}
+ function pushAggTrade(a){var price=num(a.p),qty=num(a.q||0),ts=num(a.T||a.E||Date.now()),buy=!a.m;processTick(price,ts,qty,buy,eventMs(a),"AGG TRADE")}
+-function startWs(){if(S.market!=="crypto")return;var s=S.symbol.toLowerCase(),url="wss://fstream.binance.com/ws/"+s+"@aggTrade",got=false;conn("Connecting Trade Stream","");try{var w=new WebSocket(url);S.ws=w;if(S.wsTimer)clearTimeout(S.wsTimer);S.wsTimer=setTimeout(function(){if(!got&&S.market==="crypto"){startPolling();conn("REST Backup · WS no ticks","")}},2200);w.onopen=function(){conn("WS Open · waiting trade ticks","")};w.onmessage=function(ev){var d=JSON.parse(ev.data);if(d&&d.e==="aggTrade"){got=true;if(S.wsTimer){clearTimeout(S.wsTimer);S.wsTimer=null}stopRestFallback();pushAggTrade(d);conn("Live Trade Stream","live")}};w.onerror=function(){startPolling()};w.onclose=function(){if(S.market!=="crypto")return;startPolling();if(!S.wsRetryTimer)S.wsRetryTimer=setTimeout(function(){S.wsRetryTimer=null;if(S.market==="crypto"){S.ws=null;startWs()}},3000)};i
