@@ -1,0 +1,148 @@
+tered = false;
++
++    private final BroadcastReceiver nativeTickReceiver = new BroadcastReceiver() {
++        @Override
++        public void onReceive(Context context, Intent intent) {
++            if (intent == null || backgrounded || webView == null) return;
++            String json = intent.getStringExtra(DhanPulseMonitorService.EXTRA_JSON);
++            if (json == null || json.isEmpty()) return;
++            webView.post(() -> {
++                try {
++                    String js = "window.__nativeMarketTick&&window.__nativeMarketTick("
++                            + JSONObject.quote(json) + ");";
++                    webView.evaluateJavascript(js, null);
++                } catch (Exception ignored) {
++                }
++            });
++        }
++    };
+ 
+     @Override
+     protected void onCreate(Bundle savedInstanceState) {
+@@ -32,6 +54,7 @@
+         prefs = getSharedPreferences("dhanpulse_monitor", MODE_PRIVATE);
+         prefs.edit().putBoolean("monitor_enabled", true).apply();
+ 
++        registerNativeTickReceiver();
+         startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND, null);
+         requestNotificationPermissionIfNeeded();
+         maybeAskBatteryExemption();
+@@ -82,6 +105,30 @@
+         }
+     }
+ 
++
++    private void registerNativeTickReceiver() {
++        if (nativeTickReceiverRegistered) return;
++        try {
++            IntentFilter filter = new IntentFilter(DhanPulseMonitorService.ACTION_NATIVE_TICK);
++            if (Build.VERSION.SDK_INT >= 33) {
++                registerReceiver(nativeTickReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
++            } else {
++                registerReceiver(nativeTickReceiver, filter);
++            }
++            nativeTickReceiverRegistered = true;
++        } catch (Exception ignored) {
++        }
++    }
++
++    private void unregisterNativeTickReceiver() {
++        if (!nativeTickReceiverRegistered) return;
++        try {
++            unregisterReceiver(nativeTickReceiver);
++        } catch (Exception ignored) {
++        }
++        nativeTickReceiverRegistered = false;
++    }
++
+     private void requestNotificationPermissionIfNeeded() {
+         if (Build.VERSION.SDK_INT >= 33 &&
+                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+@@ -150,6 +197,7 @@
+ 
+     @Override
+     protected void onDestroy() {
++        unregisterNativeTickReceiver();
+         if (backgrounded) {
+             startMonitoringService(DhanPulseMonitorService.ACTION_UI_BACKGROUND, null);
+         }
+diff -ruN v232src/app/src/main/res/layout/notification_live_compact.xml v233src/app/src/main/res/layout/notification_live_compact.xml
+--- v232src/app/src/main/res/layout/notification_live_compact.xml	2026-09-30 21:58:35.993719033 +0000
++++ v233src/app/src/main/res/layout/notification_live_compact.xml	2026-09-30 22:38:42.099020216 +0000
+@@ -8,26 +8,17 @@
+     android:background="@drawable/notification_card_flat"
+     android:padding="10dp">
+ 
+-    <ImageView
+-        android:id="@+id/notif_logo"
+-        android:layout_width="44dp"
+-        android:layout_height="44dp"
+-        android:src="@drawable/dhanpulse_logo"
+-        android:scaleType="centerCrop"
+-        android:contentDescription="DhanPulse" />
+-
+     <LinearLayout
+         android:layout_width="0dp"
+         android:layout_height="wrap_content"
+         android:layout_weight="1"
+-        android:layout_marginStart="10dp"
+         android:orientation="vertical">
+ 
+         <TextView
+             android:id="@+id/notif_title"
+             android:layout_width="wrap_content"
+             android:layout_height="wrap_content"
+-            android:text="DhanPulse Live"
++            android:text="BTCUSDT"
+             android:textColor="#FFFFFF"
+             android:textSize="14sp"
+             android:textStyle="bold"
+@@ -49,7 +40,7 @@
+             android:layout_width="wrap_content"
+             android:layout_height="wrap_content"
+             android:layout_marginTop="1dp"
+-            android:text="LIVE · 5m"
++            android:text="NATIVE WS · 5m"
+             android:textColor="#D6EAF4"
+             android:textSize="12sp"
+             android:maxLines="1" />
+diff -ruN v232src/app/src/main/res/layout/notification_live_expanded.xml v233src/app/src/main/res/layout/notification_live_expanded.xml
+--- v232src/app/src/main/res/layout/notification_live_expanded.xml	2026-09-30 21:58:35.994731336 +0000
++++ v233src/app/src/main/res/layout/notification_live_expanded.xml	2026-09-30 22:38:42.101531941 +0000
+@@ -13,26 +13,17 @@
+         android:orientation="horizontal"
+         android:gravity="center_vertical">
+ 
+-        <ImageView
+-            android:id="@+id/notif_logo"
+-            android:layout_width="52dp"
+-            android:layout_height="52dp"
+-            android:src="@drawable/dhanpulse_logo"
+-            android:scaleType="centerCrop"
+-            android:contentDescription="DhanPulse" />
+-
+         <LinearLayout
+             android:layout_width="0dp"
+             android:layout_height="wrap_content"
+             android:layout_weight="1"
+-            android:layout_marginStart="10dp"
+             android:orientation="vertical">
+ 
+             <TextView
+                 android:id="@+id/notif_title"
+                 android:layout_width="wrap_content"
+                 android:layout_height="wrap_content"
+-                android:text="DhanPulse Live · BTCUSDT"
++                android:text="BTCUSDT"
+                 android:textColor="#FFFFFF"
+                 android:textSize="15sp"
+                 android:textStyle="bold" />
+@@ -78,7 +69,7 @@
+         android:layout_width="wrap_content"
+         android:layout_height="wrap_content"
+         android:layout_marginTop="4dp"
+-        android:text="TRADE WS · 5m · live market feed"
++        android:text="NATIVE WS · 5m · LIVE"
+         android:textColor="#D6EAF4"
+         android:textSize="12sp" />
+ 
