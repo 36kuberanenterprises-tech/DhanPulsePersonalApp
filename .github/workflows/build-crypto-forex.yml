@@ -1,4 +1,4 @@
-name: Build DhanPulse Crypto Forex v2.3.1 Live Monitor APK
+name: Build DhanPulse Crypto Forex v2.3.2 Colour Lock Screen APK
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ on:
       - 'v220-src/**'
       - 'v23-patch/**'
       - 'v231-patch/**'
+      - 'v232-patch/**'
       - '.github/workflows/build-crypto-forex.yml'
 
 permissions:
@@ -77,9 +78,22 @@ jobs:
           patch -p1 < /tmp/v231.patch
           mkdir -p app/src/main/res/drawable-nodpi
           cp app/src/main/assets/dhanpulse_logo_v214.jpg app/src/main/res/drawable-nodpi/dhanpulse_logo.jpg
+
+      - name: Apply V2.3.2 colour lock screen notification patch
+        run: |
+          cat \
+            v232-patch/part00.patch \
+            v232-patch/part01.patch \
+            v232-patch/part02.patch \
+            v232-patch/part03.patch \
+            v232-patch/part04.patch \
+            > /tmp/v232.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v232.patch
           grep -n 'applicationId\|versionCode\|versionName' app/build.gradle.kts
-          grep -n 'Version 2.3.1 Live Monitor Fix' app/src/main/assets/index.html
-          grep -n 'addJavascriptInterface\|ACTION_HEARTBEAT_EVENT\|ic_stat_dhanpulse' app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+          grep -n 'dhanpulse_monitor_v232_color\|VISIBILITY_PUBLIC\|DecoratedCustomViewStyle' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+          test -f app/src/main/res/layout/notification_live_compact.xml
+          test -f app/src/main/res/layout/notification_live_expanded.xml
           python - <<'PY'
           from pathlib import Path
           s=Path('app/src/main/assets/index.html').read_text()
@@ -111,13 +125,13 @@ jobs:
 
       - name: Prepare APK artifact
         run: |
-          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.1_Live_Monitor_Fix.apk
-          sha256sum DhanPulse_Crypto_Forex_v2.3.1_Live_Monitor_Fix.apk
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.2_Colour_Lock_Screen.apk
+          sha256sum DhanPulse_Crypto_Forex_v2.3.2_Colour_Lock_Screen.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.3.1-Live-Monitor-Fix
-          path: DhanPulse_Crypto_Forex_v2.3.1_Live_Monitor_Fix.apk
+          name: DhanPulse-Crypto-Forex-v2.3.2-Colour-Lock-Screen
+          path: DhanPulse_Crypto_Forex_v2.3.2_Colour_Lock_Screen.apk
           if-no-files-found: error
           retention-days: 30
