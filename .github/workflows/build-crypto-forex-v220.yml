@@ -1,0 +1,155 @@
+name: Build DhanPulse Crypto Forex V2.2 Precision Risk Engine APK
+
+on:
+  push:
+    branches: [ clean-algo-v2.2.0 ]
+    paths:
+      - 'crypto-forex-native/**'
+      - '.github/workflows/build-crypto-forex-v220.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Reconstruct current DhanPulse web UI asset
+        run: |
+          cat \
+            crypto-forex-app/project.part00 \
+            crypto-forex-app/project.part01 \
+            crypto-forex-app/project.part02 \
+            crypto-forex-app/project.part03 \
+            crypto-forex-app/project.part04a \
+            crypto-forex-app/project.part04b0 \
+            crypto-forex-app/project.part04b1 \
+            crypto-forex-app/project.part04c \
+            crypto-forex-app/project.part04d \
+            crypto-forex-app/project.part04e \
+            crypto-forex-app/project.part04f \
+            crypto-forex-app/project.part05 \
+            crypto-forex-app/project.part06 \
+            | base64 -d > /tmp/dhanpulse-project.zip
+          mkdir -p /tmp/dhanpulse-old
+          unzip -q /tmp/dhanpulse-project.zip -d /tmp/dhanpulse-old
+          mkdir -p crypto-forex-native/app/src/main/assets
+          cp /tmp/dhanpulse-old/app/src/main/assets/index.html crypto-forex-native/app/src/main/assets/index.html
+          sed -i 's/Version 1.8.0/Version 2.0.0 Adaptive Ensemble/g' crypto-forex-native/app/src/main/assets/index.html
+          sed -i 's/Version 1.8.0./Version 2.0.0 Adaptive Ensemble./g' crypto-forex-native/app/src/main/assets/index.html || true
+
+      - name: Apply adaptive ensemble base
+        run: python3 crypto-forex-native/apply_v2_patch.py
+
+      - name: Apply clean algorithm V2.1
+        run: python3 crypto-forex-native/apply_v21_patch.py
+
+      - name: Apply balanced trigger V2.1.1
+        run: python3 crypto-forex-native/apply_v211_patch.py
+
+      - name: Apply active signal V2.1.2
+        run: python3 crypto-forex-native/apply_v212_patch.py
+
+      - name: Install compatibility logo for V2.1.3 patch
+        run: |
+          mkdir -p crypto-forex-native/app/src/main/res/drawable crypto-forex-native/app/src/main/assets
+          base64 -d crypto-forex-native/logo_small.b64 > crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg
+          cp crypto-forex-native/app/src/main/res/drawable/dhanpulse_logo.jpg crypto-forex-native/app/src/main/assets/dhanpulse_logo.jpg
+
+      - name: Apply V2.1.3 compatibility patch
+        run: python3 crypto-forex-native/apply_v213_patch.py
+
+      - name: Install verified DhanPulse V2.1.4 artwork
+        run: |
+          cat crypto-forex-native/logo128.part0 crypto-forex-native/logo128.part1 | base64 -d > crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg
+          cp crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg crypto-forex-native/app/src/main/assets/dhanpulse_logo_v214.jpg
+          test "$(xxd -p -l 2 crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg)" = "ffd8"
+          file crypto-forex-native/app/src/main/res/drawable/dhanpulse_launcher_v214.jpg | grep -q JPEG
+
+      - name: Apply native authority and branding V2.1.4
+        run: python3 crypto-forex-native/apply_v214_patch.py
+
+      - name: Apply WebSocket recovery V2.1.5
+        run: python3 crypto-forex-native/apply_v215_patch.py
+
+      - name: Apply hybrid microstructure fallback V2.1.6
+        run: python3 crypto-forex-native/apply_v216_patch.py
+
+      - name: Apply feed authority fix V2.1.7
+        run: python3 crypto-forex-native/apply_v217_patch.py
+
+      - name: Apply signal sync and fast decision V2.1.8
+        run: python3 crypto-forex-native/apply_v218_patch.py
+
+      - name: Apply V2.1.8 compile annotation fix
+        run: python3 crypto-forex-native/apply_v218_compile_fix.py
+
+      - name: Reconstruct and apply V2.1.9 multi strategy patch
+        run: |
+          cat \
+            crypto-forex-native/v219_patch_parts/part00 \
+            crypto-forex-native/v219_patch_parts/part01 \
+            crypto-forex-native/v219_patch_parts/part02 \
+            crypto-forex-native/v219_patch_parts/part03 \
+            > crypto-forex-native/apply_v219_patch.py
+          python3 -m py_compile crypto-forex-native/apply_v219_patch.py
+          python3 crypto-forex-native/apply_v219_patch.py
+
+      - name: Apply V2.2 precision risk engine
+        run: |
+          python3 -m py_compile crypto-forex-native/apply_v220_patch.py
+          python3 crypto-forex-native/apply_v220_patch.py
+
+      - name: Verify V2.2 wiring
+        run: |
+          grep -q 'versionName = "2.2.0"' crypto-forex-native/app/build.gradle.kts
+          grep -q 'native_trades_v22_json' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'engineVersion", "2.2.0"' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'precisionMinQuality' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'T1 LOCK' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'native precision v2.2.0' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/BackgroundService.java
+          grep -q 'Version 2.2.0 Precision Risk Engine' crypto-forex-native/app/src/main/assets/index.html
+          grep -q 'Expectancy' crypto-forex-native/app/src/main/assets/index.html
+          grep -q 'android:icon="@drawable/dhanpulse_launcher_v214"' crypto-forex-native/app/src/main/AndroidManifest.xml
+          ! grep -q '@JavascriptInterface[[:space:]]*@JavascriptInterface' crypto-forex-native/app/src/main/java/com/dhanpulse/cryptofxnative/MainActivity.java
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "sdk.dir=$ANDROID_HOME" > crypto-forex-native/local.properties
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build installable debug APK
+        working-directory: crypto-forex-native
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Prepare APK artifact
+        run: cp crypto-forex-native/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.2.0_Precision_Risk_Engine.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DhanPulse-Crypto-Forex-v2.2.0-Precision-Risk-Engine
+          path: DhanPulse_Crypto_Forex_v2.2.0_Precision_Risk_Engine.apk
+          if-no-files-found: error
+          retention-days: 30
