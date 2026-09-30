@@ -1,0 +1,167 @@
+mpact, open, stop, false);
++        RemoteViews expanded = liveRemoteViews(R.layout.notification_live_expanded, open, stop, true);
+ 
+         Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                 ? new Notification.Builder(this, CH_MONITOR)
+@@ -154,17 +215,24 @@
+ 
+         b.setSmallIcon(R.drawable.ic_stat_dhanpulse)
+                 .setContentTitle(foregroundTitle)
+-                .setContentText(text)
+-                .setStyle(new Notification.BigTextStyle().bigText(text))
++                .setContentText(fallbackText)
++                .setSubText("DhanPulse Live Market")
++                .setCustomContentView(compact)
++                .setCustomBigContentView(expanded)
++                .setStyle(new Notification.DecoratedCustomViewStyle())
+                 .setContentIntent(open)
+                 .setOngoing(true)
+                 .setOnlyAlertOnce(true)
+-                .setCategory(Notification.CATEGORY_SERVICE)
+-                .setShowWhen(false)
+-                .addAction(new Notification.Action.Builder(
+-                        R.drawable.ic_stat_dhanpulse, "Open", open).build())
+-                .addAction(new Notification.Action.Builder(
+-                        R.drawable.ic_stat_dhanpulse, "Stop", stop).build());
++                .setCategory(Notification.CATEGORY_STATUS)
++                .setVisibility(Notification.VISIBILITY_PUBLIC)
++                .setPriority(Notification.PRIORITY_DEFAULT)
++                .setShowWhen(true)
++                .setWhen(System.currentTimeMillis())
++                .setColor(notifAccentColor);
++
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            b.setColorized(true);
++        }
+         if (logoBitmap != null) b.setLargeIcon(logoBitmap);
+         return b.build();
+     }
+@@ -186,6 +254,17 @@
+         nm.notify(FOREGROUND_ID, buildForegroundNotification(text));
+     }
+ 
++    private void setWaitingVisuals(String price, String meta) {
++        notifPrice = price;
++        notifMove = "• waiting";
++        notifMeta = meta;
++        notifBadge = "WAIT";
++        notifCardRes = R.drawable.notification_card_flat;
++        notifPillRes = R.drawable.notification_pill_blue;
++        notifMoveColor = COLOR_TEXT;
++        notifAccentColor = COLOR_BLUE;
++    }
++
+     private void handleHeartbeat(String json) {
+         if (json == null || json.isEmpty()) return;
+         try {
+@@ -200,31 +279,66 @@
+             foregroundTitle = symbol.isEmpty() ? "DhanPulse Live Monitor" : "DhanPulse Live · " + symbol;
+ 
+             if (Double.isNaN(price) || price <= 0) {
+-                String line = (symbol.isEmpty() ? "Market" : symbol) + " · waiting for live price";
+-                if (!mode.isEmpty()) line += " · " + mode;
+-                updateForeground(line);
++                String meta = (!mode.isEmpty() ? mode : "Market feed") + (!tf.isEmpty() ? " · " + tf : "");
++                setWaitingVisuals("Waiting for live price", meta);
++                updateForeground((symbol.isEmpty() ? "Market" : symbol) + " · waiting for live price");
+                 return;
+             }
+ 
+-            String move = "• 0.00%";
+-            if (symbol.equals(lastHeartbeatSymbol) && !Double.isNaN(lastHeartbeatPrice) && lastHeartbeatPrice > 0) {
+-                double pct = (price - lastHeartbeatPrice) / lastHeartbeatPrice * 100.0;
+-                if (pct > 0.00001) move = "▲ +" + String.format(Locale.US, "%.3f", pct) + "%";
+-                else if (pct < -0.00001) move = "▼ " + String.format(Locale.US, "%.3f", pct) + "%";
++            double pct = 0.0;
++            boolean comparable = symbol.equals(lastHeartbeatSymbol)
++                    && !Double.isNaN(lastHeartbeatPrice) && lastHeartbeatPrice > 0;
++            if (comparable) pct = (price - lastHeartbeatPrice) / lastHeartbeatPrice * 100.0;
++
++            String move = "• 0.000%";
++            notifCardRes = R.drawable.notification_card_flat;
++            notifPillRes = R.drawable.notification_pill_blue;
++            notifMoveColor = COLOR_BLUE;
++            notifAccentColor = COLOR_BLUE;
++
++            if (comparable && pct > 0.00001) {
++                move = "▲ +" + String.format(Locale.US, "%.3f", pct) + "%";
++                notifCardRes = R.drawable.notification_card_up;
++                notifPillRes = R.drawable.notification_pill_green;
++                notifMoveColor = Color.rgb(124, 255, 177);
++                notifAccentColor = COLOR_GREEN;
++            } else if (comparable && pct < -0.00001) {
++                move = "▼ " + String.format(Locale.US, "%.3f", pct) + "%";
++                notifCardRes = R.drawable.notification_card_down;
++                notifPillRes = R.drawable.notification_pill_red;
++                notifMoveColor = Color.rgb(255, 156, 170);
++                notifAccentColor = COLOR_RED;
++            }
++
++            String state = "LIVE";
++            long ageMs = 0L;
++            if (lastEventAt > 0) ageMs = Math.max(0L, now - lastEventAt);
++            if (lastEventAt > 0 && ageMs > 12000L) {
++                state = "STALE";
++                notifCardRes = R.drawable.notification_card_stale;
++                notifPillRes = R.drawable.notification_pill_amber;
++                notifMoveColor = COLOR_AMBER;
++                notifAccentColor = COLOR_AMBER;
+             }
+ 
+-            String line = liveNum(price) + "  " + move;
+-            if (!mode.isEmpty()) line += " · " + mode;
+-            if (!tf.isEmpty()) line += " · " + tf;
+-            if (lastEventAt > 0) {
+-                long ageMs = Math.max(0L, now - lastEventAt);
+-                if (ageMs > 12000L) line += " · STALE " + Math.max(1L, ageMs / 1000L) + "s";
+-                else line += " · LIVE";
++            notifPrice = liveNum(price);
++            notifMove = move;
++            notifBadge = state;
++            StringBuilder meta = new StringBuilder();
++            if (!mode.isEmpty()) meta.append(mode);
++            if (!tf.isEmpty()) {
++                if (meta.length() > 0) meta.append(" · ");
++                meta.append(tf);
+             }
++            if (meta.length() > 0) meta.append(" · ");
++            meta.append(state);
++            if ("STALE".equals(state)) meta.append(" ").append(Math.max(1L, ageMs / 1000L)).append("s");
++            notifMeta = meta.toString();
+ 
++            String fallback = notifPrice + "  " + notifMove + " · " + notifMeta;
+             lastHeartbeatSymbol = symbol;
+             lastHeartbeatPrice = price;
+-            updateForeground(line);
++            updateForeground(fallback);
+         } catch (Exception ignored) {
+         }
+     }
+@@ -282,9 +396,11 @@
+                 v.addJavascriptInterface(new NativeBridge(), "DhanPulseNative");
+                 headlessWebView = v;
+                 v.loadUrl("file:///android_asset/index.html?background=1");
++                setWaitingVisuals("Background engine", "Loading live market feed");
+                 updateForeground("Background engine loading live feed");
+             } catch (Throwable t) {
+                 headlessWebView = null;
++                setWaitingVisuals("Background engine", "Retrying connection");
+                 updateForeground("Background engine retrying");
+             }
+         });
+@@ -305,6 +421,27 @@
+         });
+     }
+ 
++    private Notification.Builder baseSignalBuilder(String title, String text, int color, PendingIntent open) {
++        Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
++                ? new Notification.Builder(this, CH_SIGNAL)
++                : new Notification.Builder(this);
++        b.setSmallIcon(R.drawable.ic_stat_dhanpulse)
++                .setContentTitle(title)
++                .setContentText(text)
++                .setStyle(new Notification.BigTextStyle().bigText(text))
++                .setContentIntent(open)
++                .setAutoCancel(true)
++                .setCategory(Notification.CATEGORY_EVENT)
++                
