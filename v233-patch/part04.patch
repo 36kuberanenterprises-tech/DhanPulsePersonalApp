@@ -1,0 +1,183 @@
+"REST FALLBACK");
++                    }
++                } catch (Exception ignored) {
++                } finally {
++                    restRequestInFlight = false;
++                }
++            }
++        });
++    }
++
++    private void handleDirectTick(String symbol, double price, long ts, double qty, boolean buy, String mode) {
++        if (!symbol.equalsIgnoreCase(nativeSymbol)) return;
++        long now = System.currentTimeMillis();
++        lastDirectTickAt = now;
++        nativeFeedMode = mode;
++
++        if (now - lastNativeInjectAt >= 100L) {
++            lastNativeInjectAt = now;
++            dispatchNativeTick(symbol, price, ts, qty, buy, mode);
++        }
++
++        if (now - lastNativeNotificationAt >= 220L) {
++            lastNativeNotificationAt = now;
++            mainHandler.post(() -> updateDirectNotification(symbol, price, mode));
++        }
++    }
++
++    private void dispatchNativeTick(String symbol, double price, long ts, double qty, boolean buy, String mode) {
++        try {
++            JSONObject tick = new JSONObject();
++            tick.put("symbol", symbol);
++            tick.put("price", price);
++            tick.put("ts", ts);
++            tick.put("qty", qty);
++            tick.put("buy", buy);
++            tick.put("mode", mode);
++            final String json = tick.toString();
++            mainHandler.post(() -> {
++                try {
++                    Intent i = new Intent(ACTION_NATIVE_TICK);
++                    i.setPackage(getPackageName());
++                    i.putExtra(EXTRA_JSON, json);
++                    sendBroadcast(i);
++                } catch (Exception ignored) {
++                }
++                WebView v = headlessWebView;
++                if (v != null) {
++                    try {
++                        String js = "window.__nativeMarketTick&&window.__nativeMarketTick("
++                                + JSONObject.quote(json) + ");";
++                        v.evaluateJavascript(js, null);
++                    } catch (Exception ignored) {
++                    }
++                }
++            });
++        } catch (Exception ignored) {
++        }
++    }
++
++    private void updateDirectNotification(String symbol, double price, String mode) {
++        foregroundTitle = symbol;
++        boolean comparable = !Double.isNaN(lastDisplayedPrice) && lastDisplayedPrice > 0;
++        double pct = comparable ? (price - lastDisplayedPrice) / lastDisplayedPrice * 100.0 : 0.0;
++        notifPrice = liveNum(price);
++        notifBadge = "LIVE";
++        notifCardRes = R.drawable.notification_card_flat;
++        notifPillRes = R.drawable.notification_pill_blue;
++        notifMoveColor = COLOR_BLUE;
++        notifAccentColor = COLOR_BLUE;
++        notifMove = "• LIVE";
++
++        if (comparable && pct > 0.00001) {
++            notifMove = "▲ +" + String.format(Locale.US, "%.3f", pct) + "%";
++            notifCardRes = R.drawable.notification_card_up;
++            notifPillRes = R.drawable.notification_pill_green;
++            notifMoveColor = Color.rgb(124, 255, 177);
++            notifAccentColor = COLOR_GREEN;
++        } else if (comparable && pct < -0.00001) {
++            notifMove = "▼ " + String.format(Locale.US, "%.3f", pct) + "%";
++            notifCardRes = R.drawable.notification_card_down;
++            notifPillRes = R.drawable.notification_pill_red;
++            notifMoveColor = Color.rgb(255, 156, 170);
++            notifAccentColor = COLOR_RED;
++        }
++
++        notifMeta = mode + " · " + nativeTf + " · LIVE";
++        lastDisplayedPrice = price;
++        lastHeartbeatSymbol = symbol;
++        lastHeartbeatPrice = price;
++        updateForeground(notifPrice + " " + notifMove + " · " + notifMeta);
++    }
++
++    private void startNativeWatchdog() {
++        if (mainHandler == null || nativeWatchdogRunnable != null) return;
++        nativeWatchdogRunnable = new Runnable() {
++            @Override
++            public void run() {
++                if (nativeWatchdogRunnable != this) return;
++                if ("crypto".equalsIgnoreCase(nativeMarket)) {
++                    long age = lastDirectTickAt == 0L ? Long.MAX_VALUE
++                            : System.currentTimeMillis() - lastDirectTickAt;
++                    if (age > 2500L) {
++                        startNativeRestFallback();
++                        if (!nativeWsConnected) scheduleNativeReconnect();
++                    }
++                    if (age > 6000L && lastDirectTickAt > 0L) {
++                        notifBadge = "STALE";
++                        notifCardRes = R.drawable.notification_card_stale;
++                        notifPillRes = R.drawable.notification_pill_amber;
++                        notifMoveColor = COLOR_AMBER;
++                        notifAccentColor = COLOR_AMBER;
++                        notifMeta = nativeFeedMode + " · " + nativeTf + " · STALE";
++                        updateForeground("Market feed stale · reconnecting");
++                    }
++                }
++                mainHandler.postDelayed(this, 1000L);
++            }
++        };
++        mainHandler.post(nativeWatchdogRunnable);
++    }
++
++    private void stopNativeFeed() {
++        closeNativeTransport();
++        if (mainHandler != null && nativeWatchdogRunnable != null) {
++            mainHandler.removeCallbacks(nativeWatchdogRunnable);
++        }
++        nativeWatchdogRunnable = null;
++        if (marketClient != null) {
++            try {
++                marketClient.dispatcher().cancelAll();
++            } catch (Exception ignored) {
++            }
++        }
++    }
++
+     private void acquireLocks() {
+         try {
+             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+@@ -438,7 +832,6 @@
+                 .setShowWhen(true)
+                 .setWhen(System.currentTimeMillis());
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) b.setColorized(true);
+-        if (logoBitmap != null) b.setLargeIcon(logoBitmap);
+         return b;
+     }
+ 
+@@ -527,8 +920,8 @@
+     @Override
+     public void onDestroy() {
+         destroyHeadlessWebView();
++        stopNativeFeed();
+         releaseLocks();
+-        if (logoBitmap != null && !logoBitmap.isRecycled()) logoBitmap.recycle();
+         super.onDestroy();
+     }
+ 
+diff -ruN v232src/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java v233src/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java
+--- v232src/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java	2026-09-30 21:57:44.904007489 +0000
++++ v233src/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java	2026-09-30 22:41:01.164300940 +0000
+@@ -3,8 +3,10 @@
+ import android.Manifest;
+ import android.app.Activity;
+ import android.app.AlertDialog;
++import android.content.BroadcastReceiver;
+ import android.content.Context;
+ import android.content.Intent;
++import android.content.IntentFilter;
+ import android.content.SharedPreferences;
+ import android.content.pm.PackageManager;
+ import android.net.Uri;
+@@ -19,12 +21,32 @@
+ import android.webkit.WebView;
+ import android.webkit.WebViewClient;
+ 
++import org.json.JSONObject;
++
+ public class MainActivity extends Activity {
+     private static final int REQ_NOTIFICATIONS = 1108;
+     private static final String APP_URL = "file:///android_asset/index.html";
+     private WebView webView;
+     private SharedPreferences prefs;
+     private boolean backgrounded = false;
++    private boolean nativeTickReceiverRegis
