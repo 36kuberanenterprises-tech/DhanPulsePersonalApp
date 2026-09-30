@@ -1,0 +1,178 @@
+diff -ruN v233orig/app/build.gradle.kts v233src/app/build.gradle.kts
+--- v233orig/app/build.gradle.kts	2026-09-30 22:38:23.000000000 +0000
++++ v233src/app/build.gradle.kts	2026-09-30 22:57:03.414794202 +0000
+@@ -7,11 +7,11 @@
+     compileSdk = 35
+ 
+     defaultConfig {
+-        applicationId = "com.dhanpulse.cryptofxresearchv233"
++        applicationId = "com.dhanpulse.cryptofxresearchv234"
+         minSdk = 26
+         targetSdk = 34
+-        versionCode = 26
+-        versionName = "2.3.3"
++        versionCode = 27
++        versionName = "2.3.4"
+     }
+ 
+     buildTypes {
+diff -ruN v233orig/app/src/main/assets/index.html v233src/app/src/main/assets/index.html
+--- v233orig/app/src/main/assets/index.html	2026-09-30 22:41:22.000000000 +0000
++++ v233src/app/src/main/assets/index.html	2026-09-30 22:57:45.938954393 +0000
+@@ -20,7 +20,7 @@
+ </head>
+ <body>
+ <div class="app">
+-<header><div class="brand"><img class="logo" src="dhanpulse_logo_v214.jpg" alt="DhanPulse"><div><h1>DhanPulse</h1><div class="muted small">Crypto and Forex Analysis</div></div></div><div class="statusarea"><span class="ver">Version 2.3.3 Native Stream</span><span id="conn" class="badge">Loading</span></div></header>
++<header><div class="brand"><img class="logo" src="dhanpulse_logo_v214.jpg" alt="DhanPulse"><div><h1>DhanPulse</h1><div class="muted small">Crypto and Forex Analysis</div></div></div><div class="statusarea"><span class="ver">Version 2.3.4 Lock Screen Fix</span><span id="conn" class="badge">Loading</span></div></header>
+ 
+ <div class="panel">
+ <div class="tabs"><button id="cryptoTab" class="active">Crypto</button><button id="forexTab">Forex and Metals</button></div>
+@@ -50,7 +50,7 @@
+ <div class="panel"><div class="row"><div><h2>Recorded Signal Performance</h2><div class="muted small">T1, T2, T3 and SL are checked live on incoming market ticks. Candle data is used as backup.</div><div id="tradeLogState" class="muted small" style="margin-top:5px">Live performance check: waiting for first market tick</div></div><button id="clear" class="danger">Clear Records</button></div><div id="perf" class="perf"></div><div class="table"><table><thead><tr><th>Time</th><th>Market</th><th>Symbol</th><th>TF</th><th>Side</th><th>Entry</th><th>SL</th><th>T1</th><th>T2</th><th>T3</th><th>Status</th><th>Result</th></tr></thead><tbody id="trades"></tbody></table></div></div>
+ 
+ <div class="panel"><h2>XAUUSD and Forex Data Setup</h2><div class="muted small" style="margin:7px 0 12px">Crypto needs no account or API key. For XAUUSD and forex, enter a Twelve Data API key. It stays only on this phone.</div><div class="control"><label>Twelve Data API Key<input id="tdkey" type="password" placeholder="Enter API key"></label><button id="savekey" class="secondary">Save Key</button><button id="testxau">Test XAUUSD</button></div><div id="msg" class="muted small" style="margin-top:8px"></div></div>
+-<footer>DhanPulse Crypto and Forex Version 2.3.3 Native Stream. Analysis only. No orders are placed. Low latency event driven engine processes streaming ticks independently from chart redraw. Intrabar Turning Point Engine monitors top sell and bottom buy reversals continuously, together with liquidity sweeps, reclaim, micro CHoCH, displacement, FVG, order blocks and crypto order flow. Native foreground monitoring continues when the app is minimised or the screen is locked.</footer>
++<footer>DhanPulse Crypto and Forex Version 2.3.4 Lock Screen Fix. Analysis only. No orders are placed. Low latency event driven engine processes streaming ticks independently from chart redraw. Intrabar Turning Point Engine monitors top sell and bottom buy reversals continuously, together with liquidity sweeps, reclaim, micro CHoCH, displacement, FVG, order blocks and crypto order flow. Native foreground monitoring continues when the app is minimised or the screen is locked.</footer>
+ </div>
+ 
+ <script>
+diff -ruN v233orig/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java v233src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+--- v233orig/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java	2026-09-30 22:40:42.000000000 +0000
++++ v233src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java	2026-09-30 22:57:03.415861408 +0000
+@@ -54,8 +54,8 @@
+     public static final String EXTRA_JSON = "json";
+ 
+     private static final int FOREGROUND_ID = 1800;
+-    private static final String CH_MONITOR = "dhanpulse_monitor_v233_native";
+-    private static final String CH_SIGNAL = "dhanpulse_signals_v233_native";
++    private static final String CH_MONITOR = "dhanpulse_monitor_v234_lockscreen";
++    private static final String CH_SIGNAL = "dhanpulse_signals_v234_lockscreen";
+ 
+     private static final int COLOR_GREEN = Color.rgb(51, 209, 122);
+     private static final int COLOR_RED = Color.rgb(255, 92, 112);
+@@ -188,9 +188,9 @@
+ 
+             NotificationChannel monitor = new NotificationChannel(
+                     CH_MONITOR,
+-                    "DhanPulse Colour Live Monitor",
+-                    NotificationManager.IMPORTANCE_DEFAULT);
+-            monitor.setDescription("Colour live price movement on notification shade and lock screen.");
++                    "DhanPulse Live Lock Screen",
++                    NotificationManager.IMPORTANCE_HIGH);
++            monitor.setDescription("Live market price and feed status on the notification shade and lock screen.");
+             monitor.setShowBadge(false);
+             monitor.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+             monitor.enableLights(true);
+@@ -264,7 +264,7 @@
+                 .setContentIntent(open)
+                 .setOngoing(true)
+                 .setOnlyAlertOnce(true)
+-                .setCategory(Notification.CATEGORY_STATUS)
++                .setCategory(Notification.CATEGORY_SERVICE)
+                 .setVisibility(Notification.VISIBILITY_PUBLIC)
+                 .setPriority(Notification.PRIORITY_DEFAULT)
+                 .setShowWhen(true)
+@@ -274,6 +274,9 @@
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+             b.setColorized(true);
+         }
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++            b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
++        }
+         return b.build();
+     }
+ 
+diff -ruN v233orig/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java v233src/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java
+--- v233orig/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java	2026-09-30 22:41:01.000000000 +0000
++++ v233src/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java	2026-09-30 22:57:20.996262995 +0000
+@@ -55,9 +55,7 @@
+         prefs.edit().putBoolean("monitor_enabled", true).apply();
+ 
+         registerNativeTickReceiver();
+-        startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND, null);
+         requestNotificationPermissionIfNeeded();
+-        maybeAskBatteryExemption();
+ 
+         webView = new WebView(this);
+         webView.setLayoutParams(new ViewGroup.LayoutParams(
+@@ -133,6 +131,47 @@
+         if (Build.VERSION.SDK_INT >= 33 &&
+                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
++            return;
++        }
++        continueAfterNotificationPermission();
++    }
++
++    private void continueAfterNotificationPermission() {
++        startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND, null);
++        maybeAskBatteryExemption();
++    }
++
++    private void showNotificationPermissionRequiredDialog() {
++        new AlertDialog.Builder(this)
++                .setTitle("Allow lock screen live updates")
++                .setMessage("DhanPulse needs notification permission to show the live market card, signals and trade updates on the lock screen. Please allow notifications for this app.")
++                .setPositiveButton("Open settings", (d, which) -> {
++                    try {
++                        Intent i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
++                        i.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
++                        startActivity(i);
++                    } catch (Exception e) {
++                        try {
++                            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
++                            i.setData(Uri.parse("package:" + getPackageName()));
++                            startActivity(i);
++                        } catch (Exception ignored) {
++                        }
++                    }
++                })
++                .setNegativeButton("Later", (d, which) -> d.dismiss())
++                .show();
++    }
++
++    @Override
++    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
++        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
++        if (requestCode == REQ_NOTIFICATIONS) {
++            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
++                continueAfterNotificationPermission();
++            } else {
++                showNotificationPermissionRequiredDialog();
++            }
+         }
+     }
+ 
+@@ -169,7 +208,10 @@
+     @Override
+     protected void onResume() {
+         super.onResume();
+-        startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND, null);
++        if (Build.VERSION.SDK_INT < 33 ||
++                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
++            startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND, null);
++        }
+         if (webView != null) {
+             webView.onResume();
+             if (backgrounded || prefs.getBoolean("background_ran", false)) {
+@@ -192,13 +234,17 @@
+             } catch (Exception ignored) {
+             }
+         }
+-        startMonitoringService(DhanPulseMonitorService.ACTION_UI_BACKGROUND, null);
++        if (Build.VERSION.SDK_INT < 33 ||
++                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
++            startMonitoringService(DhanPulseMonitorService.ACTION_UI_BACKGROUND, null);
++        }
+     }
+ 
+     @Override
+     protected void onDestroy() {
+         unregisterNativeTickReceiver();
+-        if (backgrounded) {
++        if (backgrounded && (Build.VERSION.SDK_INT < 33 ||
++                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)) {
+             startMonitoringService(DhanPulseMonitorService.ACTION_UI_BACKGROUND, null);
+         }
+         if (webView != null) {
