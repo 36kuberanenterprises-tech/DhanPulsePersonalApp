@@ -1,4 +1,4 @@
-name: Build DhanPulse Crypto Forex v2.3.2 Colour Lock Screen APK
+name: Build DhanPulse Crypto Forex v2.3.3 Native Stream APK
 
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ on:
       - 'v23-patch/**'
       - 'v231-patch/**'
       - 'v232-patch/**'
+      - 'v233-patch/**'
       - '.github/workflows/build-crypto-forex.yml'
 
 permissions:
@@ -91,10 +92,24 @@ jobs:
           cd crypto-forex-app/buildsrc
           patch -p1 < /tmp/v232.patch
           sed -i 's/applicationId = "com.dhanpulse.cryptofxresearchv231"/applicationId = "com.dhanpulse.cryptofxresearchv232"/' app/build.gradle.kts
-          grep -n 'applicationId\|versionCode\|versionName' app/build.gradle.kts
-          grep -n 'dhanpulse_monitor_v232_color\|VISIBILITY_PUBLIC\|DecoratedCustomViewStyle' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
-          test -f app/src/main/res/layout/notification_live_compact.xml
-          test -f app/src/main/res/layout/notification_live_expanded.xml
+
+      - name: Apply V2.3.3 native stream and notification cleanup patch
+        run: |
+          cat \
+            v233-patch/part00.patch \
+            v233-patch/part01.patch \
+            v233-patch/part02.patch \
+            v233-patch/part03.patch \
+            v233-patch/part04.patch \
+            v233-patch/part05.patch \
+            > /tmp/v233.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v233.patch
+          grep -n 'applicationId\|versionCode\|versionName\|okhttp' app/build.gradle.kts
+          grep -n 'ACTION_NATIVE_TICK\|NATIVE WS\|dhanpulse_monitor_v233_native' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+          ! grep -q 'setLargeIcon' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+          ! grep -q 'notif_logo' app/src/main/res/layout/notification_live_compact.xml
+          ! grep -q 'notif_logo' app/src/main/res/layout/notification_live_expanded.xml
           python - <<'PY'
           from pathlib import Path
           s=Path('app/src/main/assets/index.html').read_text()
@@ -126,13 +141,13 @@ jobs:
 
       - name: Prepare APK artifact
         run: |
-          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.2_Colour_Lock_Screen.apk
-          sha256sum DhanPulse_Crypto_Forex_v2.3.2_Colour_Lock_Screen.apk
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.3_Native_Stream.apk
+          sha256sum DhanPulse_Crypto_Forex_v2.3.3_Native_Stream.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.3.2-Colour-Lock-Screen
-          path: DhanPulse_Crypto_Forex_v2.3.2_Colour_Lock_Screen.apk
+          name: DhanPulse-Crypto-Forex-v2.3.3-Native-Stream
+          path: DhanPulse_Crypto_Forex_v2.3.3_Native_Stream.apk
           if-no-files-found: error
           retention-days: 30
