@@ -1,0 +1,47 @@
+f(S.feedWatchTimer)clearInterval(S.feedWatchTimer);S.feedWatchTimer=setInterval(function(){if(S.market!=="crypto")return;var age=S.lastMarketEventAt?Date.now()-S.lastMarketEventAt:999999;if(age>2200)startPolling()},500)}catch(e){startPolling()}}
++function startWs(){if(S.market!=="crypto")return;if(window.DhanPulseNative){conn("Native Stream","live");return}var s=S.symbol.toLowerCase(),url="wss://fstream.binance.com/ws/"+s+"@aggTrade",got=false;conn("Connecting Trade Stream","");try{var w=new WebSocket(url);S.ws=w;if(S.wsTimer)clearTimeout(S.wsTimer);S.wsTimer=setTimeout(function(){if(!got&&S.market==="crypto"){startPolling();conn("REST Backup · WS no ticks","")}},2200);w.onopen=function(){conn("WS Open · waiting trade ticks","")};w.onmessage=function(ev){var d=JSON.parse(ev.data);if(d&&d.e==="aggTrade"){got=true;if(S.wsTimer){clearTimeout(S.wsTimer);S.wsTimer=null}stopRestFallback();pushAggTrade(d);conn("Live Trade Stream","live")}};w.onerror=function(){startPolling()};w.onclose=function(){if(S.market!=="crypto")return;startPolling();if(!S.wsRetryTimer)S.wsRetryTimer=setTimeout(function(){S.wsRetryTimer=null;if(S.market==="crypto"){S.ws=null;startWs()}},3000)};if(S.feedWatchTimer)clearInterval(S.feedWatchTimer);S.feedWatchTimer=setInterval(function(){if(S.market!=="crypto")return;var age=S.lastMarketEventAt?Date.now()-S.lastMarketEventAt:999999;if(age>2200)startPolling()},500)}catch(e){startPolling()}}
+ function startTdWs(){var key=localStorage.getItem(KEY)||"";if(!key){conn("Forex REST","live");return}try{var w=new WebSocket("wss://ws.twelvedata.com/v1/quotes/price?apikey="+encodeURIComponent(key));S.ws=w;w.onopen=function(){conn("Forex Stream","live");w.send(JSON.stringify({action:"subscribe",params:{symbols:S.symbol}}));S.tdHeartbeat=setInterval(function(){try{if(w.readyState===1)w.send(JSON.stringify({action:"heartbeat"}))}catch(e){}},10000)};w.onmessage=function(ev){var st=performance.now(),d=JSON.parse(ev.data);if(d&&finite(d.price)){var p=num(d.price),tm=eventMs(d)||Date.now();processTick(p,tm,0,false,eventMs(d),"FOREX TICK")}else setLatency(eventMs(d),st,"FOREX EVENT")};w.onerror=function(){conn("Forex REST Backup","")};w.onclose=function(){if(S.market==="forex")conn("Forex REST Backup","")}}catch(e){conn("Forex REST Backup","")}}
+ 
+ function considerTurning(){var a=S.analysis,t=a&&a.turn;if(!a||!t||!t.trigger)return;var now=Date.now(),key=S.symbol+"|"+t.state+"|"+Math.round(a.last.c/Math.max(a.atr*.08,1e-9));if(S.lastTurnRecord&&S.lastTurnRecord.key===key&&now-S.lastTurnRecord.t<90000)return;var p=S.pending;if(!p||p.key!==key){S.pending={key:key,side:a.decision,since:now,count:1,turn:true};return}p.count++;if(p.count>=2&&now-p.since>=700){record("intrabar-turn");S.lastTurnRecord={key:key,t:now};S.pending=null}}
+@@ -344,7 +345,7 @@
+ renderTrades=function(){renderTradeLogState(true);var ts=trades().slice().reverse(),tot=ts.length,closed=ts.filter(function(t){return t.status==="CLOSED"}),resolved=closed.filter(function(t){return t.result!=="AMBIGUOUS"&&finite(t.pnlR)}),amb=closed.filter(function(t){return t.result==="AMBIGUOUS"}).length,prof=resolved.filter(function(t){return t.pnlR>0}).length,loss=resolved.filter(function(t){return t.pnlR<0}).length,open=ts.filter(function(t){return t.status==="OPEN"}).length,h1=ts.filter(function(t){return t.h1}).length,h2=ts.filter(function(t){return t.h2}).length,h3=ts.filter(function(t){return t.h3}).length,net=resolved.reduce(function(s,t){return s+num(t.pnlR)},0),avg=resolved.length?net/resolved.length:0,gp=resolved.filter(function(t){return t.pnlR>0}).reduce(function(s,t){return s+num(t.pnlR)},0),gl=Math.abs(resolved.filter(function(t){return t.pnlR<0}).reduce(function(s,t){return s+num(t.pnlR)},0)),pf=gl?gp/gl:(gp>0?99:0),pc=function(n,d){return d?((n/d)*100).toFixed(1)+"%":"0.0%"};q("perf").innerHTML='<div><span>V2.3 Signals</span><b>'+tot+'</b></div><div><span>Resolved Closed</span><b>'+resolved.length+'</b></div><div><span>Profit Rate</span><b>'+pc(prof,resolved.length)+'</b></div><div><span>Loss Rate</span><b>'+pc(loss,resolved.length)+'</b></div><div><span>Net R</span><b>'+net.toFixed(2)+'R</b></div><div><span>Average R</span><b>'+avg.toFixed(3)+'R</b></div><div><span>Profit Factor</span><b>'+pf.toFixed(2)+'</b></div><div><span>T1 Touch Rate</span><b>'+pc(h1,tot)+'</b></div><div><span>T2 Touch Rate</span><b>'+pc(h2,tot)+'</b></div><div><span>T3 Full Hit</span><b>'+pc(h3,tot)+'</b></div><div><span>Ambiguous Backup</span><b>'+amb+'</b></div><div><span>Open Signals</span><b>'+open+'</b></div>';q("trades").innerHTML=ts.slice(0,100).map(function(t){var d=dec(t.entry),label=(t.strategy||t.stage||"V2.3")+(finite(t.quality)?" Q"+t.quality:"")+(finite(t.pnlR)?" · "+Number(t.pnlR).toFixed(2)+"R":"");return'<tr><td>'+new Date(t.createdAt).toLocaleString("en-IN")+'</td><td>'+t.market+'</td><td>'+t.symbol+'</td><td>'+t.tf+'</td><td>'+t.side+'<br><small>'+label+'</small></td><td>'+fmt(t.entry,d)+'</td><td>'+fmt(t.sl,d)+'</td><td>'+fmt(t.t1,d)+'</td><td>'+fmt(t.t2,d)+'</td><td>'+fmt(t.t3,d)+'</td><td>'+t.status+'</td><td>'+t.result+'</td></tr>'}).join("")||'<tr><td colspan="12">No V2.3 signals recorded yet.</td></tr>'};
+ window.__nativeDecisionAuthority=false;
+ 
+-window.onresize=function(){ensureChartView();draw()};window.onbeforeunload=stop;var kk=localStorage.getItem(KEY)||"";if(kk)q("tdkey").value=kk;loadMonitorConfig();q("tf").value=S.tf;if(S.market==="forex"){q("forexTab").classList.add("active");q("cryptoTab").classList.remove("active")}else{q("cryptoTab").classList.add("active");q("forexTab").classList.remove("active")}setSymbols();renderTrades();if(!BACKGROUND_MODE)bindChartGestures();load();setInterval(nativeHeartbeat,2000);nativeHeartbeat();
++window.onresize=function(){ensureChartView();draw()};window.onbeforeunload=stop;var kk=localStorage.getItem(KEY)||"";if(kk)q("tdkey").value=kk;loadMonitorConfig();q("tf").value=S.tf;if(S.market==="forex"){q("forexTab").classList.add("active");q("cryptoTab").classList.remove("active")}else{q("cryptoTab").classList.add("active");q("forexTab").classList.remove("active")}setSymbols();saveMonitorConfig();renderTrades();if(!BACKGROUND_MODE)bindChartGestures();load();setInterval(nativeHeartbeat,2000);nativeHeartbeat();
+ })();
+ </script>
+ </body>
+diff -ruN v232src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java v233src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+--- v232src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java	2026-09-30 22:00:31.293981261 +0000
++++ v233src/app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java	2026-09-30 22:40:42.392484566 +0000
+@@ -14,7 +14,9 @@
+ import android.graphics.Color;
+ import android.net.wifi.WifiManager;
+ import android.os.Build;
++import android.os.Handler;
+ import android.os.IBinder;
++import android.os.Looper;
+ import android.os.PowerManager;
+ import android.view.ContextThemeWrapper;
+ import android.webkit.JavascriptInterface;
+@@ -25,9 +27,19 @@
+ 
+ import org.json.JSONObject;
+ 
++import java.io.IOException;
+ import java.text.DecimalFormat;
+ import java.text.DecimalFormatSymbols;
+ import java.util.Locale;
++import java.util.concurrent.TimeUnit;
++
++import okhttp3.Call;
++import okhttp3.Callback;
++import okhttp3.OkHttpClient;
++import okhttp3.Request;
++import okhttp3.Response;
++import okhttp3.WebSocket;
++import okhttp3.WebSocketListener;
+ 
+ public class DhanPulseMonitorService extends Service {
+     public static final String ACTION_START = "com.dh
