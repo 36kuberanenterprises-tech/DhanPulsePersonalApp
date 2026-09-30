@@ -1,0 +1,154 @@
+ficationPermissionIfNeeded();
+         maybeAskBatteryExemption();
+ 
+@@ -40,7 +42,7 @@
+                 ViewGroup.LayoutParams.MATCH_PARENT));
+         configureWebView(webView);
+         setContentView(webView);
+-        webView.loadUrl("file:///android_asset/index.html");
++        webView.loadUrl(APP_URL);
+     }
+ 
+     private void configureWebView(WebView view) {
+@@ -60,14 +62,19 @@
+         }
+         view.setWebViewClient(new WebViewClient());
+         view.setWebChromeClient(new WebChromeClient());
++        view.addJavascriptInterface(new NativeBridge(), "DhanPulseNative");
+     }
+ 
+-    private void startMonitoringService(String action) {
++    private void startMonitoringService(String action, String json) {
+         Intent i = new Intent(this, DhanPulseMonitorService.class);
+         i.setAction(action);
++        if (json != null) i.putExtra(DhanPulseMonitorService.EXTRA_JSON, json);
+         try {
+-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+-                startForegroundService(i);
++            if (DhanPulseMonitorService.ACTION_UI_FOREGROUND.equals(action)
++                    || DhanPulseMonitorService.ACTION_UI_BACKGROUND.equals(action)
++                    || DhanPulseMonitorService.ACTION_START.equals(action)) {
++                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i);
++                else startService(i);
+             } else {
+                 startService(i);
+             }
+@@ -115,14 +122,13 @@
+     @Override
+     protected void onResume() {
+         super.onResume();
+-        startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND);
++        startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND, null);
+         if (webView != null) {
+             webView.onResume();
+-            webView.resumeTimers();
+             if (backgrounded || prefs.getBoolean("background_ran", false)) {
+                 backgrounded = false;
+                 prefs.edit().putBoolean("background_ran", false).apply();
+-                webView.reload();
++                webView.loadUrl(APP_URL);
+             }
+         }
+     }
+@@ -131,18 +137,27 @@
+     protected void onStop() {
+         super.onStop();
+         backgrounded = true;
+-        startMonitoringService(DhanPulseMonitorService.ACTION_UI_BACKGROUND);
++        if (webView != null) {
++            try {
++                webView.stopLoading();
++                webView.loadUrl("about:blank");
++                webView.onPause();
++            } catch (Exception ignored) {
++            }
++        }
++        startMonitoringService(DhanPulseMonitorService.ACTION_UI_BACKGROUND, null);
+     }
+ 
+     @Override
+     protected void onDestroy() {
+         if (backgrounded) {
+-            startMonitoringService(DhanPulseMonitorService.ACTION_UI_BACKGROUND);
++            startMonitoringService(DhanPulseMonitorService.ACTION_UI_BACKGROUND, null);
+         }
+         if (webView != null) {
+             ViewGroup parent = (ViewGroup) webView.getParent();
+             if (parent != null) parent.removeView(webView);
+             webView.stopLoading();
++            webView.removeJavascriptInterface("DhanPulseNative");
+             webView.destroy();
+             webView = null;
+         }
+@@ -157,4 +172,26 @@
+             super.onBackPressed();
+         }
+     }
++
++    private final class NativeBridge {
++        @JavascriptInterface
++        public void onSignal(String json) {
++            startMonitoringService(DhanPulseMonitorService.ACTION_SIGNAL_EVENT, json);
++        }
++
++        @JavascriptInterface
++        public void onTradeUpdate(String json) {
++            startMonitoringService(DhanPulseMonitorService.ACTION_TRADE_EVENT, json);
++        }
++
++        @JavascriptInterface
++        public void onHeartbeat(String json) {
++            startMonitoringService(DhanPulseMonitorService.ACTION_HEARTBEAT_EVENT, json);
++        }
++
++        @JavascriptInterface
++        public void onMonitorConfig(String json) {
++            startMonitoringService(DhanPulseMonitorService.ACTION_CONFIG_EVENT, json);
++        }
++    }
+ }
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/res/drawable/dhanpulse_icon_foreground.xml v231/app/src/main/res/drawable/dhanpulse_icon_foreground.xml
+--- v230/app/src/main/res/drawable/dhanpulse_icon_foreground.xml	1970-01-01 00:00:00.000000000 +0000
++++ v231/app/src/main/res/drawable/dhanpulse_icon_foreground.xml	2026-09-30 21:42:05.206706967 +0000
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<inset xmlns:android="http://schemas.android.com/apk/res/android"
++    android:insetLeft="10dp" android:insetTop="10dp"
++    android:insetRight="10dp" android:insetBottom="10dp">
++    <bitmap android:src="@drawable/dhanpulse_logo" android:gravity="fill" />
++</inset>
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/res/drawable/ic_stat_dhanpulse.xml v231/app/src/main/res/drawable/ic_stat_dhanpulse.xml
+--- v230/app/src/main/res/drawable/ic_stat_dhanpulse.xml	1970-01-01 00:00:00.000000000 +0000
++++ v231/app/src/main/res/drawable/ic_stat_dhanpulse.xml	2026-09-30 21:42:05.204675644 +0000
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp" android:height="24dp"
++    android:viewportWidth="24" android:viewportHeight="24">
++    <path android:fillColor="#FFFFFFFF" android:pathData="M3,17L8.2,11.8L11.5,15.1L18.2,8.4L16,6.2H22V12.2L19.7,9.9L11.5,18.1L8.2,14.8L4.5,18.5Z"/>
++    <path android:fillColor="#FFFFFFFF" android:pathData="M4,4H8.2C11.3,4 13.2,5.7 13.2,8.5C13.2,11.3 11.3,13 8.2,13H4ZM6.4,6.2V10.8H8C9.8,10.8 10.7,10 10.7,8.5C10.7,7 9.8,6.2 8,6.2Z"/>
++</vector>
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml v231/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+--- v230/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml	1970-01-01 00:00:00.000000000 +0000
++++ v231/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml	2026-09-30 21:42:05.208344713 +0000
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
++    <background android:drawable="@color/icon_background" />
++    <foreground android:drawable="@drawable/dhanpulse_icon_foreground" />
++</adaptive-icon>
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml v231/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+--- v230/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml	1970-01-01 00:00:00.000000000 +0000
++++ v231/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml	2026-09-30 21:42:05.210138443 +0000
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
++    <background android:drawable="@color/icon_background" />
++    <foreground android:drawable="@drawable/dhanpulse_icon_foreground" />
++</adaptive-icon>
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/res/values/colors.xml v231/app/src/main/res/values/colors.xml
+--- v230/app/src/main/res/values/colors.xml	1970-01-01 00:00:00.000000000 +0000
++++ v231/app/src/main/res/values/colors.xml	2026-09-30 21:42:05.211923265 +0000
+@@ -0,0 +1,2 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources><color name="icon_background">#FFFFFF</color></resources>
