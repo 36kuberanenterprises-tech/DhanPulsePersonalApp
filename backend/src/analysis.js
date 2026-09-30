@@ -1,6 +1,6 @@
 import { ema, rsi, macd, supertrend, atr } from './indicators.js';
 import { instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs } from './angel.js';
-import { evaluateSensexFamilies, buildSensexDecision } from './sensex-strategies.js';
+import { evaluateSensexFamilies, buildSensexDecision, sensexHigherCandles } from './sensex-strategies.js';
 
 const round = (n, d = 2) => Number.isFinite(n) ? Number(n.toFixed(d)) : null;
 const IST_OFFSET_MS = 330 * 60 * 1000;
@@ -50,6 +50,7 @@ const INTERVAL_MINUTES = {
 const liveCandleCache = new Map();
 const candleLoadLocks = new Map();
 const candleRetryAfter = new Map();
+const candleRetryReason = new Map();
 const optionWindowCache = new Map();
 const premiumSnapshots = new Map();
 
@@ -92,7 +93,7 @@ function bucketStartFor(now, interval, segment = 'EQUITY') {
 
 async function loadHistoricalBase(session, exchange, token, interval, now, key, segment) {
   const retryAt = candleRetryAfter.get(key) || 0;
-  if (Date.now() < retryAt) throw new Error('Market history is cooling down after a broker rate-limit response. Retrying automatically.');
+  if (Date.now() < retryAt) throw new Error(candleRetryReason.get(key) || 'Market history is cooling down after a broker rate limit response.');
 
   const payload = {
     exchange,
@@ -115,15 +116,25 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key, 
         lastLiveAt: Date.now()
       });
       candleRetryAfter.delete(key);
+      candleRetryReason.delete(key);
       return liveCandleCache.get(key);
     } catch (e) {
       lastError = e;
       const msg = String(e?.message || '');
-      if (/403|rate/i.test(msg) && attempt === 0) {
+      if (/\b403\b|forbidden/i.test(msg)) {
+        const reason = 'Angel One denied historical candles (HTTP 403). Check historical API access and the server network route.';
+        candleRetryAfter.set(key, Date.now() + 60_000);
+        candleRetryReason.set(key, reason);
+        throw new Error(reason);
+      }
+      if (/\b429\b|rate limit/i.test(msg) && attempt === 0) {
         await sleep(6500);
         continue;
       }
-      if (/403|rate/i.test(msg)) candleRetryAfter.set(key, Date.now() + 45_000);
+      if (/\b429\b|rate limit/i.test(msg)) {
+        candleRetryAfter.set(key, Date.now() + 45_000);
+        candleRetryReason.set(key, 'Angel One historical candle rate limit. Retrying after cooldown.');
+      }
       throw e;
     }
   }
@@ -513,7 +524,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       ? await confirmedBrokerCandles(session, uExchange, String(underlying.token), interval, now, segment)
       : await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE', segment);
   } catch (e) {
-    if (segment !== 'MCX') throw e;
+    if (segment !== 'MCX' && !sensexFamiliesEnabled) throw e;
     // Some broker index tokens supply a quote but reject historical candles.
     // Keep the index visible without fabricating a trend or an option call.
     return {
@@ -605,8 +616,8 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   let sensexFamily = null;
   let sensexCe = null, sensexPe = null;
   if (sensexFamiliesEnabled) {
-    let higherCandles = [];
-    try { higherCandles = await confirmedBrokerCandles(session, uExchange, String(underlying.token), 'FIFTEEN_MINUTE', now, segment); }
+    let higherCandles = sensexHigherCandles(candles, interval, now);
+    try { if (higherCandles == null) higherCandles = await confirmedBrokerCandles(session, uExchange, String(underlying.token), 'FIFTEEN_MINUTE', now, segment); }
     catch { /* The family evaluator reports missing higher timeframe history as WAIT. */ }
     sensexCe = selectBestContract(chain, 'CE', spot, true);
     sensexPe = selectBestContract(chain, 'PE', spot, true);

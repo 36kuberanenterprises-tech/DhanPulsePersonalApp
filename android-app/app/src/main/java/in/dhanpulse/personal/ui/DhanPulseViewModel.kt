@@ -282,14 +282,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 error = null
                 refreshWarning = when {
                     result.tradeDecision.status == "MARKET_CLOSED" -> "Market closed. Showing the last available broker prices. New calls and Auto Trade are paused until fresh session data returns."
-                    result.tradeDecision.status == "HISTORY_UNAVAILABLE" -> "Broker market quote is visible, but historical candles are unavailable. Calls are paused until history loads."
+                    result.tradeDecision.status == "HISTORY_UNAVAILABLE" -> result.tradeDecision.message
                     result.dataFresh == false -> "Market feed is delayed or its time is unavailable. Showing the last available prices; new calls and Auto Trade are paused."
                     else -> null
                 }
                 if (result.dataFresh != false) {
                     updateSignalTracker(result)
                     updatePremiumDecision(result)
-                    if (autoTradeEnabled) evaluateAutoTrade(result)
+                if (autoTradeEnabled) evaluateAutoTrade(result)
                 } else {
                     premiumTradePlan = PremiumTradePlan(signal = "WAIT", status = "WAIT", stage = result.tradeDecision.status, decisionNote = refreshWarning)
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until a fresh broker quote is available."
@@ -484,7 +484,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             confirmationRequired = 2,
             decisionNote = if (decision.status == "OI_CAUTION")
                 "Price trend is strong but PCR disagrees. Manual review only. Confirming the same direction and strike on two live scans before the call is recorded."
-            else "Meta decision passed. Confirming the same direction and strike on two live scans before the call is recorded."
+            else if (decision.status == "FAMILY_CONFIRMED")
+                "SENSEX family setup passed. Confirming the same direction and strike on two live scans for a manual research call. Auto entry is disabled."
+            else "Trade decision passed. Confirming the same direction and strike on two live scans before the call is recorded."
         )
     }
 
@@ -928,7 +930,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 blockedSignal = null
                 pendingSignalKey = null
                 pendingSignalCount = 0
-                autoStatus = if (result.tradeDecision.status == "OI_CAUTION")
+                autoStatus = if (result.symbol == "SENSEX" && result.tradeDecision.status == "FAMILY_CONFIRMED")
+                    "SENSEX research call only. Automatic live entry is disabled for this unvalidated model."
+                else if (result.tradeDecision.status == "OI_CAUTION")
                     "Auto entry paused: PCR opposes the trend. Review this call manually."
                 else "WAIT • Fresh, confirmed trade decision required for auto entry."
                 return

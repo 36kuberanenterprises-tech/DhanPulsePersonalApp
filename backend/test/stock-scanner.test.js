@@ -74,6 +74,18 @@ test('concurrent scanner refreshes share one broker history request', async () =
   assert.deepEqual(await first, await second);
 });
 
+test('a forbidden broker history response is not retried on every scanner refresh', async () => {
+  let requests = 0;
+  const session = { clientCode: 'SCANNER_FORBIDDEN_TEST' };
+  const fetchHistory = async () => {
+    requests++;
+    throw new Error('Candle data: non JSON response (403)');
+  };
+  await assert.rejects(stockHistory(session, 'token-403', india(29, 9, 36), fetchHistory), /403/);
+  await assert.rejects(stockHistory(session, 'token-403', india(29, 9, 36), fetchHistory), /403/);
+  assert.equal(requests, 1);
+});
+
 test('position risk includes costs and respects cash, including high priced shares', () => {
   const size = sizeStockTrade({ cash: 20_000, entry: 100, stop: 99, spread: 0.05 });
   assert.ok(size.quantity > 0);

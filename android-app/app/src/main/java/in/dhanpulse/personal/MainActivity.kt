@@ -509,6 +509,7 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
         d.status == "MARKET_CLOSED" -> "MARKET CLOSED"
         d.status == "NO_OPTIONS" -> "NO OPTIONS"
         d.status == "DATA_STALE" -> "DATA DELAYED"
+        d.status == "HISTORY_UNAVAILABLE" -> "BROKER CANDLES UNAVAILABLE"
         !d.setupAllowed && d.status == "REJECTED_CONFLICT" -> "REJECTED • CONFLICT"
         d.direction == "WAIT" -> "WATCHING"
         !d.setupAllowed -> "SETUP FORMING"
@@ -1023,7 +1024,7 @@ private fun StocksSection(vm: DhanPulseViewModel) {
     ) {
         item { SectionTitle("Daily Stock Scanner", "NSE cash shares • 5 minute setups • paper tracking") }
         item {
-            InfoStrip("Research only", "No live stock orders. Paper entry and exit prices are quote samples, not exchange fills. Keep the app open to refresh; missed moves are marked unresolved.")
+            InfoStrip("Research only", "Uses Rs. 20,000 model capital for paper risk sizing, independent of broker cash. No live stock orders. Paper entry and exit prices are quote samples, not exchange fills. Keep the app open to refresh; missed moves are marked unresolved.")
         }
         if (vm.stockScanLoading && scan == null) item { LoadingMarketCard() }
         vm.stockScanError?.let { message -> item { InfoStrip("Scanner unavailable", message) } }
