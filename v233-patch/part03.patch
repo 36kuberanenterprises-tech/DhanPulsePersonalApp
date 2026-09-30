@@ -169,4 +169,4 @@ d = false;
 +                    long ts = j.optLong("time", System.currentTimeMillis());
 +                    if (!Double.isNaN(price) && price > 0
 +                            && !(nativeWsConnected && System.currentTimeMillis() - lastDirectTickAt < 1000L)) {
-+                        handleDirectTick(symbol, price, ts, 0.0, false,  
++                        handleDirectTick(symbol, price, ts, 0.0, false, 
