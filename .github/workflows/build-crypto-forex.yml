@@ -1,4 +1,4 @@
-name: Build DhanPulse Crypto Forex v2.2 Quality APK
+name: Build DhanPulse Crypto Forex v2.3 Research APK
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches: [ main ]
     paths:
       - 'v220-src/**'
+      - 'v23-patch/**'
       - '.github/workflows/build-crypto-forex.yml'
 
 permissions:
@@ -23,7 +24,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v5
 
-      - name: Reconstruct DhanPulse v2.2 project
+      - name: Reconstruct DhanPulse v2.2 base
         run: |
           cat \
             v220-src/project.part00 \
@@ -40,8 +41,29 @@ jobs:
           rm -rf crypto-forex-app/buildsrc
           mkdir -p crypto-forex-app/buildsrc
           unzip -q /tmp/dhanpulse-v220-project.zip -d crypto-forex-app/buildsrc
+
+      - name: Apply V2.3 research adaptive patch
+        run: |
+          cat \
+            v23-patch/part00.txt \
+            v23-patch/part01.txt \
+            v23-patch/part02.txt \
+            v23-patch/part03.txt \
+            v23-patch/part04.txt \
+            v23-patch/part05.txt \
+            v23-patch/part06.txt \
+            v23-patch/part07.txt \
+            > /tmp/v23_patch.py
+          python /tmp/v23_patch.py
           grep -n 'applicationId\|versionCode\|versionName' crypto-forex-app/buildsrc/app/build.gradle.kts
-          grep -n 'Version 2.2 Quality Controlled' crypto-forex-app/buildsrc/app/src/main/assets/index.html
+          grep -n 'Version 2.3 Research Adaptive' crypto-forex-app/buildsrc/app/src/main/assets/index.html
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('crypto-forex-app/buildsrc/app/src/main/assets/index.html').read_text()
+          js=s[s.index('<script>')+8:s.rindex('</script>')]
+          Path('/tmp/app.js').write_text(js)
+          PY
+          node --check /tmp/app.js
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -66,13 +88,13 @@ jobs:
 
       - name: Prepare APK artifact
         run: |
-          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.2.0_Quality_Controlled.apk
-          sha256sum DhanPulse_Crypto_Forex_v2.2.0_Quality_Controlled.apk
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.0_Research_Adaptive.apk
+          sha256sum DhanPulse_Crypto_Forex_v2.3.0_Research_Adaptive.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.2.0-Quality-Controlled
-          path: DhanPulse_Crypto_Forex_v2.2.0_Quality_Controlled.apk
+          name: DhanPulse-Crypto-Forex-v2.3.0-Research-Adaptive
+          path: DhanPulse_Crypto_Forex_v2.3.0_Research_Adaptive.apk
           if-no-files-found: error
           retention-days: 30
