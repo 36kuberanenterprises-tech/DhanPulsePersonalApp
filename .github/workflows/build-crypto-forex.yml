@@ -90,6 +90,7 @@ jobs:
             > /tmp/v232.patch
           cd crypto-forex-app/buildsrc
           patch -p1 < /tmp/v232.patch
+          sed -i 's/applicationId = "com.dhanpulse.cryptofxresearchv231"/applicationId = "com.dhanpulse.cryptofxresearchv232"/' app/build.gradle.kts
           grep -n 'applicationId\|versionCode\|versionName' app/build.gradle.kts
           grep -n 'dhanpulse_monitor_v232_color\|VISIBILITY_PUBLIC\|DecoratedCustomViewStyle' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
           test -f app/src/main/res/layout/notification_live_compact.xml
