@@ -1,0 +1,175 @@
+ntAt = j.optLong("lastEventAt", 0L);
++            long now = System.currentTimeMillis();
++
++            foregroundTitle = symbol.isEmpty() ? "DhanPulse Live Monitor" : "DhanPulse Live · " + symbol;
++
++            if (Double.isNaN(price) || price <= 0) {
++                String line = (symbol.isEmpty() ? "Market" : symbol) + " · waiting for live price";
++                if (!mode.isEmpty()) line += " · " + mode;
++                updateForeground(line);
++                return;
++            }
++
++            String move = "• 0.00%";
++            if (symbol.equals(lastHeartbeatSymbol) && !Double.isNaN(lastHeartbeatPrice) && lastHeartbeatPrice > 0) {
++                double pct = (price - lastHeartbeatPrice) / lastHeartbeatPrice * 100.0;
++                if (pct > 0.00001) move = "▲ +" + String.format(Locale.US, "%.3f", pct) + "%";
++                else if (pct < -0.00001) move = "▼ " + String.format(Locale.US, "%.3f", pct) + "%";
++            }
++
++            String line = liveNum(price) + "  " + move;
++            if (!mode.isEmpty()) line += " · " + mode;
++            if (!tf.isEmpty()) line += " · " + tf;
++            if (lastEventAt > 0) {
++                long ageMs = Math.max(0L, now - lastEventAt);
++                if (ageMs > 12000L) line += " · STALE " + Math.max(1L, ageMs / 1000L) + "s";
++                else line += " · LIVE";
++            }
++
++            lastHeartbeatSymbol = symbol;
++            lastHeartbeatPrice = price;
++            updateForeground(line);
++        } catch (Exception ignored) {
++        }
++    }
++
+     private void acquireLocks() {
+         try {
+             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+@@ -221,11 +306,12 @@
+     }
+ 
+     private void notifySignal(String json) {
++        if (json == null || json.isEmpty()) return;
+         try {
+             JSONObject j = new JSONObject(json);
+             String side = j.optString("side", "SIGNAL");
+             String symbol = j.optString("symbol", "");
+-            String stage = j.optString("stage", "");
++            String stage = j.optString("strategy", j.optString("stage", ""));
+             double entry = j.optDouble("entry", Double.NaN);
+             double sl = j.optDouble("sl", Double.NaN);
+             double t1 = j.optDouble("t1", Double.NaN);
+@@ -242,23 +328,23 @@
+                     ? new Notification.Builder(this, CH_SIGNAL)
+                     : new Notification.Builder(this);
+ 
+-            Notification n = b.setSmallIcon(R.drawable.ic_launcher)
+-                    .setContentTitle("DhanPulse " + side + " · " + stage)
++            b.setSmallIcon(R.drawable.ic_stat_dhanpulse)
++                    .setContentTitle("DhanPulse " + side + (stage.isEmpty() ? "" : " · " + stage))
+                     .setContentText(text)
+                     .setStyle(new Notification.BigTextStyle().bigText(text))
+                     .setContentIntent(open)
+                     .setAutoCancel(true)
+-                    .setCategory(Notification.CATEGORY_EVENT)
+-                    .build();
++                    .setCategory(Notification.CATEGORY_EVENT);
++            if (logoBitmap != null) b.setLargeIcon(logoBitmap);
+ 
+             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+-            nm.notify((int) (System.currentTimeMillis() % 100000) + 3000, n);
+-            updateForeground(side + " " + symbol + " · monitoring continues");
++            nm.notify((int) (System.currentTimeMillis() % 100000) + 3000, b.build());
+         } catch (Exception ignored) {
+         }
+     }
+ 
+     private void notifyTradeUpdate(String json) {
++        if (json == null || json.isEmpty()) return;
+         try {
+             JSONObject outer = new JSONObject(json);
+             JSONObject t = outer.optJSONObject("trade");
+@@ -277,25 +363,33 @@
+                     ? new Notification.Builder(this, CH_SIGNAL)
+                     : new Notification.Builder(this);
+ 
+-            Notification n = b.setSmallIcon(R.drawable.ic_launcher)
++            b.setSmallIcon(R.drawable.ic_stat_dhanpulse)
+                     .setContentTitle("DhanPulse " + symbol)
+                     .setContentText("Trade performance: " + result)
+                     .setContentIntent(open)
+                     .setAutoCancel(true)
+-                    .setOnlyAlertOnce(true)
+-                    .build();
++                    .setOnlyAlertOnce(true);
++            if (logoBitmap != null) b.setLargeIcon(logoBitmap);
+ 
+             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+-            nm.notify((int) (System.currentTimeMillis() % 100000) + 4000, n);
++            nm.notify((int) (System.currentTimeMillis() % 100000) + 4000, b.build());
+         } catch (Exception ignored) {
+         }
+     }
+ 
++    private String liveNum(double v) {
++        DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(Locale.US);
++        DecimalFormat df = Math.abs(v) >= 1000
++                ? new DecimalFormat("#,##0.00", symbols)
++                : new DecimalFormat("#,##0.0000", symbols);
++        return df.format(v);
++    }
++
+     private String shortNum(double v) {
+         if (Double.isNaN(v)) return "NA";
+-        if (Math.abs(v) >= 1000) return String.format(java.util.Locale.US, "%.2f", v);
+-        if (Math.abs(v) >= 1) return String.format(java.util.Locale.US, "%.4f", v);
+-        return String.format(java.util.Locale.US, "%.6f", v);
++        if (Math.abs(v) >= 1000) return String.format(Locale.US, "%.2f", v);
++        if (Math.abs(v) >= 1) return String.format(Locale.US, "%.4f", v);
++        return String.format(Locale.US, "%.6f", v);
+     }
+ 
+     @Override
+@@ -311,6 +405,7 @@
+     public void onDestroy() {
+         destroyHeadlessWebView();
+         releaseLocks();
++        if (logoBitmap != null && !logoBitmap.isRecycled()) logoBitmap.recycle();
+         super.onDestroy();
+     }
+ 
+@@ -332,16 +427,7 @@
+ 
+         @JavascriptInterface
+         public void onHeartbeat(String json) {
+-            try {
+-                JSONObject j = new JSONObject(json);
+-                String symbol = j.optString("symbol", "");
+-                String mode = j.optString("feedMode", "");
+-                double p = j.optDouble("price", Double.NaN);
+-                String line = symbol + (Double.isNaN(p) ? "" : " " + shortNum(p));
+-                if (!mode.isEmpty()) line += " · " + mode;
+-                updateForeground(line);
+-            } catch (Exception ignored) {
+-            }
++            handleHeartbeat(json);
+         }
+ 
+         @JavascriptInterface
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java v231/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java
+--- v230/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java	2026-09-26 02:58:40.000000000 +0000
++++ v231/app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java	2026-09-30 21:43:40.402487737 +0000
+@@ -13,6 +13,7 @@
+ import android.os.PowerManager;
+ import android.provider.Settings;
+ import android.view.ViewGroup;
++import android.webkit.JavascriptInterface;
+ import android.webkit.WebChromeClient;
+ import android.webkit.WebSettings;
+ import android.webkit.WebView;
+@@ -20,6 +21,7 @@
+ 
+ public class MainActivity extends Activity {
+     private static final int REQ_NOTIFICATIONS = 1108;
++    private static final String APP_URL = "file:///android_asset/index.html";
+     private WebView webView;
+     private SharedPreferences prefs;
+     private boolean backgrounded = false;
+@@ -30,7 +32,7 @@
+         prefs = getSharedPreferences("dhanpulse_monitor", MODE_PRIVATE);
+         prefs.edit().putBoolean("monitor_enabled", true).apply();
+ 
+-        startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND);
++        startMonitoringService(DhanPulseMonitorService.ACTION_UI_FOREGROUND, null);
+         requestNoti
