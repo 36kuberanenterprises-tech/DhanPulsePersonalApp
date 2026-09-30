@@ -1,0 +1,178 @@
+/drawable/notification_pill_amber.xml	2026-09-30 21:58:11.705505315 +0000
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <solid android:color="#6B581B" />
++    <corners android:radius="18dp" />
++    <padding android:left="8dp" android:top="3dp" android:right="8dp" android:bottom="3dp" />
++</shape>
+diff -ruN v231src/app/src/main/res/drawable/notification_pill_blue.xml v232src/app/src/main/res/drawable/notification_pill_blue.xml
+--- v231src/app/src/main/res/drawable/notification_pill_blue.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/drawable/notification_pill_blue.xml	2026-09-30 21:58:11.701222540 +0000
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <solid android:color="#145D7A" />
++    <corners android:radius="18dp" />
++    <padding android:left="8dp" android:top="3dp" android:right="8dp" android:bottom="3dp" />
++</shape>
+diff -ruN v231src/app/src/main/res/drawable/notification_pill_green.xml v232src/app/src/main/res/drawable/notification_pill_green.xml
+--- v231src/app/src/main/res/drawable/notification_pill_green.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/drawable/notification_pill_green.xml	2026-09-30 21:58:11.694949070 +0000
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <solid android:color="#1B6B45" />
++    <corners android:radius="18dp" />
++    <padding android:left="8dp" android:top="3dp" android:right="8dp" android:bottom="3dp" />
++</shape>
+diff -ruN v231src/app/src/main/res/drawable/notification_pill_red.xml v232src/app/src/main/res/drawable/notification_pill_red.xml
+--- v231src/app/src/main/res/drawable/notification_pill_red.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/drawable/notification_pill_red.xml	2026-09-30 21:58:11.697010708 +0000
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <solid android:color="#7A2534" />
++    <corners android:radius="18dp" />
++    <padding android:left="8dp" android:top="3dp" android:right="8dp" android:bottom="3dp" />
++</shape>
+diff -ruN v231src/app/src/main/res/layout/notification_live_compact.xml v232src/app/src/main/res/layout/notification_live_compact.xml
+--- v231src/app/src/main/res/layout/notification_live_compact.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/layout/notification_live_compact.xml	2026-09-30 21:58:35.993719033 +0000
+@@ -0,0 +1,71 @@
++<?xml version="1.0" encoding="utf-8"?>
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/notif_root"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:orientation="horizontal"
++    android:gravity="center_vertical"
++    android:background="@drawable/notification_card_flat"
++    android:padding="10dp">
++
++    <ImageView
++        android:id="@+id/notif_logo"
++        android:layout_width="44dp"
++        android:layout_height="44dp"
++        android:src="@drawable/dhanpulse_logo"
++        android:scaleType="centerCrop"
++        android:contentDescription="DhanPulse" />
++
++    <LinearLayout
++        android:layout_width="0dp"
++        android:layout_height="wrap_content"
++        android:layout_weight="1"
++        android:layout_marginStart="10dp"
++        android:orientation="vertical">
++
++        <TextView
++            android:id="@+id/notif_title"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:text="DhanPulse Live"
++            android:textColor="#FFFFFF"
++            android:textSize="14sp"
++            android:textStyle="bold"
++            android:maxLines="1" />
++
++        <TextView
++            android:id="@+id/notif_price"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:layout_marginTop="1dp"
++            android:text="Waiting for live price"
++            android:textColor="#FFFFFF"
++            android:textSize="20sp"
++            android:textStyle="bold"
++            android:maxLines="1" />
++
++        <TextView
++            android:id="@+id/notif_meta"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:layout_marginTop="1dp"
++            android:text="LIVE · 5m"
++            android:textColor="#D6EAF4"
++            android:textSize="12sp"
++            android:maxLines="1" />
++    </LinearLayout>
++
++    <TextView
++        android:id="@+id/notif_badge"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:background="@drawable/notification_pill_blue"
++        android:paddingStart="8dp"
++        android:paddingTop="4dp"
++        android:paddingEnd="8dp"
++        android:paddingBottom="4dp"
++        android:text="LIVE"
++        android:textColor="#FFFFFF"
++        android:textSize="11sp"
++        android:textStyle="bold" />
++</LinearLayout>
+diff -ruN v231src/app/src/main/res/layout/notification_live_expanded.xml v232src/app/src/main/res/layout/notification_live_expanded.xml
+--- v231src/app/src/main/res/layout/notification_live_expanded.xml	1970-01-01 00:00:00.000000000 +0000
++++ v232src/app/src/main/res/layout/notification_live_expanded.xml	2026-09-30 21:58:35.994731336 +0000
+@@ -0,0 +1,117 @@
++<?xml version="1.0" encoding="utf-8"?>
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/notif_root"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:orientation="vertical"
++    android:background="@drawable/notification_card_flat"
++    android:padding="12dp">
++
++    <LinearLayout
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:orientation="horizontal"
++        android:gravity="center_vertical">
++
++        <ImageView
++            android:id="@+id/notif_logo"
++            android:layout_width="52dp"
++            android:layout_height="52dp"
++            android:src="@drawable/dhanpulse_logo"
++            android:scaleType="centerCrop"
++            android:contentDescription="DhanPulse" />
++
++        <LinearLayout
++            android:layout_width="0dp"
++            android:layout_height="wrap_content"
++            android:layout_weight="1"
++            android:layout_marginStart="10dp"
++            android:orientation="vertical">
++
++            <TextView
++                android:id="@+id/notif_title"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:text="DhanPulse Live · BTCUSDT"
++                android:textColor="#FFFFFF"
++                android:textSize="15sp"
++                android:textStyle="bold" />
++
++            <TextView
++                android:id="@+id/notif_price"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_marginTop="2dp"
++                android:text="83,245.10"
++                android:textColor="#FFFFFF"
++                android:textSize="24sp"
++                android:textStyle="bold" />
++        </LinearLayout>
++
++        <TextView
++            android:id="@+id/notif_badge"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:background="@drawable/notification_pill_blue"
++            android:paddingStart="9dp"
++            android:paddingTop="5dp"
++            android:paddingEnd="9dp"
++            android:paddingBottom="5dp"
++            android:text="LIVE"
++            android:tex
