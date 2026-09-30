@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateSensexFamilies, sensexClosedCandles, buildSensexDecision } from '../src/sensex-strategies.js';
+import { evaluateSensexFamilies, sensexClosedCandles, sensexHigherCandles, buildSensexDecision } from '../src/sensex-strategies.js';
 
 const now = new Date('2026-09-28T09:21:00Z'); // 14:51 IST
 
@@ -45,6 +45,20 @@ test('only broker completed bars enter the SENSEX signal and all six families ar
     higherCandles: candles(50, '2026-09-28T09:00:00Z', 15, 7),
     interval: 'FIVE_MINUTE', spot: 55_000, now });
   assert.deepEqual(withPartial.votes, family.votes);
+});
+
+test('15 minute context is assembled only from three complete broker five minute bars', () => {
+  const five = candles(80, '2026-09-28T09:15:00Z', 5, 3);
+  const complete = sensexHigherCandles(five, 'FIVE_MINUTE', now);
+  assert.equal(complete.length, 26);
+  assert.equal(complete.at(-1).timestamp, '2026-09-28T09:00:00.000Z');
+  assert.equal(complete.at(-1).close, five.at(-2).close);
+  const missing = sensexHigherCandles(five.filter(x => x.timestamp !== '2026-09-28T09:10:00.000Z'), 'FIVE_MINUTE', now);
+  assert.equal(missing.length, complete.length - 1);
+  assert.equal(missing.at(-1).timestamp, '2026-09-28T08:45:00.000Z');
+  const partial = { ...five.at(-1), timestamp: '2026-09-28T09:20:00Z', close: 99_999 };
+  assert.deepEqual(sensexHigherCandles([...five, partial], 'FIVE_MINUTE', now), complete);
+  assert.equal(sensexHigherCandles(five, 'TEN_MINUTE', now), null);
 });
 
 test('a supported SENSEX setup stays manual even when all market checks pass', () => {

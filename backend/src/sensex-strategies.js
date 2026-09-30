@@ -23,6 +23,30 @@ export function sensexClosedCandles(candles, interval, now = new Date()) {
   return [...byTime.entries()].sort(([a], [b]) => a - b).map(([, c]) => c);
 }
 
+// The higher timeframe must come from the same broker confirmed history as
+// the selected short timeframe. A separate 15 minute API request can fail or
+// lag while the underlying completed bars are already available.
+export function sensexHigherCandles(candles, interval, now = new Date()) {
+  const baseMinutes = MINUTES[interval];
+  if (baseMinutes === 15) return sensexClosedCandles(candles, interval, now);
+  if (!baseMinutes || 15 % baseMinutes !== 0) return null;
+  const baseMs = baseMinutes * 60_000;
+  const groups = new Map();
+  for (const row of sensexClosedCandles(candles, interval, now)) {
+    const start = Math.floor(Date.parse(row.timestamp) / 900_000) * 900_000;
+    const rows = groups.get(start) || [];
+    rows.push(row);
+    groups.set(start, rows);
+  }
+  const count = 15 / baseMinutes;
+  return [...groups.entries()].sort(([a], [b]) => a - b).flatMap(([start, rows]) => {
+    if (rows.length !== count || rows.some((row, i) => Date.parse(row.timestamp) !== start + i * baseMs)) return [];
+    return [{ timestamp: new Date(start).toISOString(), open: rows[0].open,
+      high: Math.max(...rows.map(row => row.high)), low: Math.min(...rows.map(row => row.low)),
+      close: rows.at(-1).close, volume: rows.reduce((sum, row) => sum + (row.volume || 0), 0) }];
+  });
+}
+
 function expectedLastStart(now, interval) {
   const local = new Date(now.getTime() + IST_MS);
   const open = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 9, 15) - IST_MS;
@@ -152,7 +176,7 @@ export function buildSensexDecision({ family, pcr, oiCoverage, support, resistan
     selectedContract.askQty >= selectedContract.lotSize && selectedContract.ltp >= 15;
   add('Option spread and depth', spreadReady ? 'OK' : 'BLOCK', spreadReady
     ? `Spread ${round(spreadPct)}% with bid and ask depth for at least one lot.`
-    : 'Fresh option bid, ask, one lot of depth, OI and a suitable premium are required.');
+    : selected?.reason || 'Fresh option bid, ask, one lot of depth, OI and a suitable premium are required.');
   const minutes = indiaMinutes(now);
   add('Entry window', minutes >= 570 && minutes < 915 ? 'OK' : 'BLOCK',
     minutes >= 570 && minutes < 915 ? 'New SENSEX calls may be checked between 09:30 and 15:15 IST.' :

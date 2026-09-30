@@ -1,4 +1,4 @@
-import { candleData, instrumentMaster, marketData, parseCandles, parseFetched, quoteFeedAgeMs, quoteLtp, resolveUnderlying, rmsLimit } from './angel.js';
+import { candleData, instrumentMaster, marketData, parseCandles, parseFetched, quoteFeedAgeMs, quoteLtp, resolveUnderlying } from './angel.js';
 import { atr, ema } from './indicators.js';
 
 const IST = 330 * 60_000;
@@ -6,6 +6,7 @@ const FIVE_MINUTES = 300_000;
 const CANDLE_SETTLE_MS = 20_000;
 const HISTORY_RETRY_MS = 15_000;
 const HISTORY_GAP_MS = 700;
+const PAPER_MODEL_CAPITAL = 20_000;
 const NIFTY_CSV = 'https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv';
 // Used only when the official constituent file cannot be reached. Never
 // describe this fallback as a current Nifty 50 constituent list.
@@ -242,6 +243,7 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
         prior.close <= vwap && last.close < prior.low,
       stop: Math.max(last.high, prior.high) + a * 0.08 }
   ];
+  if (!moves.some(move => move.aligned)) return refuse('Market, sector, VWAP and 15 minute trend do not agree');
   for (const move of moves) {
     if (!move.aligned) continue;
     const setup = move.breakout ? 'OPENING_RANGE' : move.pullback ? 'FIRST_PULLBACK' : null;
@@ -270,6 +272,7 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
 
 const historyCache = new Map();
 const historyLocks = new Map();
+const historyFailures = new Map();
 const scanCache = new Map();
 const scanLocks = new Map();
 let nextHistoryRequestAt = 0;
@@ -288,6 +291,11 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
   const current = last && Date.parse(last.timestamp) >= latestCompletedCandleStart(now);
   if (entry && entry.slot === slot && (current || now.getTime() - entry.checkedAt < HISTORY_RETRY_MS)) return entry.candles;
   if (historyLocks.has(key)) return historyLocks.get(key);
+  const failure = historyFailures.get(key);
+  if (failure && Date.now() < failure.retryAt) {
+    if (entry) return entry.candles;
+    throw new Error(failure.reason);
+  }
   const pending = (async () => {
   // The first request needs prior sessions for comparable volume. Later
   // requests fetch a short overlap and merge it with that history.
@@ -312,8 +320,15 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
   const candles = [...merged.entries()].filter(([time]) => time >= cutoff && time <= now.getTime())
     .sort(([a], [b]) => a - b).map(([, c]) => c);
   historyCache.set(key, { slot, checkedAt: now.getTime(), candles });
+  historyFailures.delete(key);
   return candles;
-  })().finally(() => historyLocks.delete(key));
+  })().catch(error => {
+    if (/\b403\b|forbidden/i.test(String(error?.message || ''))) {
+      historyFailures.set(key, { retryAt: Date.now() + 60_000,
+        reason: 'Angel One denied five minute history (HTTP 403); check historical API access and the server network route' });
+    }
+    throw error;
+  }).finally(() => historyLocks.delete(key));
   historyLocks.set(key, pending);
   return pending;
 }
@@ -368,17 +383,14 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
       .map(([name, values]) => ({ name, changePct: round(median(values)), count: values.length }))
       .sort((a, b) => b.changePct - a.changePct);
     const sectorMap = new Map(sectorRows.map(x => [x.name, x]));
-    const selected = ranked.filter(x => x.fresh && x.turnover >= 10_000_000 && quoteSpread(x.quote) != null)
-      .sort((a, b) => b.turnover * Math.abs(b.pct) - a.turnover * Math.abs(a.pct))
+    const liquidQuotes = ranked.filter(x => x.fresh && quoteSpread(x.quote) != null)
+      .sort((a, b) => b.turnover * Math.abs(b.pct) - a.turnover * Math.abs(a.pct));
+    const selected = liquidQuotes.filter(x => x.turnover >= 10_000_000)
       .slice(0, (market === 'SCANNING' || market === 'OPENING_RANGE') && indexFresh ? 8 : 0);
     if (market === 'OPENING_RANGE') {
-      for (const stock of selected) {
+      for (const stock of liquidQuotes.slice(0, 8)) {
         void stockHistory(session, String(stock.instrument.token), snapshotTime).catch(() => {});
       }
-    }
-    let cash = 0;
-    if (market === 'SCANNING' && selected.length) {
-      try { cash = Number((await rmsLimit(session))?.data?.availablecash || 0); } catch {}
     }
     const analysed = market === 'SCANNING' ? selected.map(stock => ({
       symbol: stock.symbol, sector: stock.sector, token: String(stock.instrument.token),
@@ -393,14 +405,16 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
         try {
           const candles = await stockHistory(session, String(stock.instrument.token), snapshotTime);
           analysed[i] = evaluateStock({ symbol: stock.symbol, sector: stock.sector, quote: stock.quote,
-            candles, now: snapshotTime, cash, niftyReturn,
+            candles, now: snapshotTime, cash: PAPER_MODEL_CAPITAL, niftyReturn,
             sectorReturn: sectorMap.get(stock.sector)?.changePct,
             sectorCount: sectorMap.get(stock.sector)?.count || 0 });
         } catch (error) {
-          const blocked = /403|rate|timeout/i.test(String(error?.message || ''));
+          const forbidden = /\b403\b|forbidden/i.test(String(error?.message || ''));
+          const blocked = /rate|timeout/i.test(String(error?.message || ''));
           analysed[i] = { symbol: stock.symbol, sector: stock.sector, token: String(stock.instrument.token),
             price: round(stock.price), quoteTime: stock.quote?.exchFeedTime || null, status: 'WAIT', side: 'WAIT',
-            reason: blocked ? 'Broker restricted five minute history; retrying later' : 'Broker five minute history unavailable; retrying later',
+            reason: forbidden ? 'Angel One denied five minute history (HTTP 403); check historical API access and server network route'
+              : blocked ? 'Broker restricted five minute history; retrying later' : 'Broker five minute history unavailable; retrying later',
             setup: null, plan: null };
         }
       }
@@ -428,7 +442,7 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
         : !indexFresh ? 'Nifty quote is delayed; stock entries are paused.'
         : !selected.length ? 'No liquid stock quotes passed the first screen. Checking again shortly.'
         : completedChecks < analysed.length ? `${completedChecks} of ${analysed.length} detailed checks finished. Broker history continues loading.`
-        : analysed.some(x => x.status === 'READY') ? 'Research signal only. Live stock orders are disabled.'
+        : analysed.some(x => x.status === 'READY') ? 'Research signal with Rs. 20,000 model capital only. Live stock orders are disabled.'
         : 'No confirmed stock entry. See each candidate for its WAIT reason.'
     };
     scanCache.set(key, { at: Date.now(), data: result });
