@@ -1,0 +1,173 @@
+anpulse.cryptofxv11.START";
+@@ -38,11 +50,12 @@
+     public static final String ACTION_SIGNAL_EVENT = "com.dhanpulse.cryptofxv11.SIGNAL_EVENT";
+     public static final String ACTION_TRADE_EVENT = "com.dhanpulse.cryptofxv11.TRADE_EVENT";
+     public static final String ACTION_CONFIG_EVENT = "com.dhanpulse.cryptofxv11.CONFIG_EVENT";
++    public static final String ACTION_NATIVE_TICK = "com.dhanpulse.cryptofxv11.NATIVE_TICK";
+     public static final String EXTRA_JSON = "json";
+ 
+     private static final int FOREGROUND_ID = 1800;
+-    private static final String CH_MONITOR = "dhanpulse_monitor_v232_color";
+-    private static final String CH_SIGNAL = "dhanpulse_signals_v232_color";
++    private static final String CH_MONITOR = "dhanpulse_monitor_v233_native";
++    private static final String CH_SIGNAL = "dhanpulse_signals_v233_native";
+ 
+     private static final int COLOR_GREEN = Color.rgb(51, 209, 122);
+     private static final int COLOR_RED = Color.rgb(255, 92, 112);
+@@ -59,7 +72,24 @@
+     private String lastHeartbeatSymbol = "";
+     private double lastHeartbeatPrice = Double.NaN;
+     private long lastNotificationUpdate = 0L;
+-    private Bitmap logoBitmap;
++    private Handler mainHandler;
++    private OkHttpClient marketClient;
++    private WebSocket marketWebSocket;
++    private volatile boolean nativeWsConnected = false;
++    private volatile boolean restRequestInFlight = false;
++    private String nativeMarket = "crypto";
++    private String nativeSymbol = "BTCUSDT";
++    private String nativeTf = "5m";
++    private String nativeFeedMode = "INIT";
++    private long lastDirectTickAt = 0L;
++    private long lastNativeInjectAt = 0L;
++    private long lastNativeNotificationAt = 0L;
++    private double lastDisplayedPrice = Double.NaN;
++    private int wsEndpointIndex = 0;
++    private long reconnectDelayMs = 800L;
++    private Runnable reconnectRunnable;
++    private Runnable restFallbackRunnable;
++    private Runnable nativeWatchdogRunnable;
+ 
+     private String notifPrice = "Starting live feed";
+     private String notifMove = "• connecting";
+@@ -74,10 +104,18 @@
+     public void onCreate() {
+         super.onCreate();
+         prefs = getSharedPreferences("dhanpulse_monitor", MODE_PRIVATE);
++        mainHandler = new Handler(Looper.getMainLooper());
++        marketClient = new OkHttpClient.Builder()
++                .pingInterval(15, TimeUnit.SECONDS)
++                .connectTimeout(5, TimeUnit.SECONDS)
++                .readTimeout(0, TimeUnit.MILLISECONDS)
++                .retryOnConnectionFailure(true)
++                .build();
+         createChannels();
+         acquireLocks();
+-        logoBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.dhanpulse_logo);
+-        startForegroundNow("Starting live market feed");
++        startForegroundNow("Starting direct live market feed");
++        restartNativeFeedFromPrefs();
++        startNativeWatchdog();
+     }
+ 
+     @Override
+@@ -99,13 +137,17 @@
+         }
+         if (ACTION_CONFIG_EVENT.equals(action)) {
+             String json = intent == null ? null : intent.getStringExtra(EXTRA_JSON);
+-            if (json != null) prefs.edit().putString("monitor_config", json).apply();
++            if (json != null) {
++                prefs.edit().putString("monitor_config", json).apply();
++                applyNativeConfig(json, true);
++            }
+             return START_STICKY;
+         }
+ 
+         if (ACTION_STOP.equals(action)) {
+             prefs.edit().putBoolean("monitor_enabled", false).apply();
+             destroyHeadlessWebView();
++            stopNativeFeed();
+             releaseLocks();
+             stopForeground(true);
+             stopSelf();
+@@ -216,7 +258,6 @@
+         b.setSmallIcon(R.drawable.ic_stat_dhanpulse)
+                 .setContentTitle(foregroundTitle)
+                 .setContentText(fallbackText)
+-                .setSubText("DhanPulse Live Market")
+                 .setCustomContentView(compact)
+                 .setCustomBigContentView(expanded)
+                 .setStyle(new Notification.DecoratedCustomViewStyle())
+@@ -233,7 +274,6 @@
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+             b.setColorized(true);
+         }
+-        if (logoBitmap != null) b.setLargeIcon(logoBitmap);
+         return b.build();
+     }
+ 
+@@ -248,7 +288,7 @@
+ 
+     private void updateForeground(String text) {
+         long now = System.currentTimeMillis();
+-        if (now - lastNotificationUpdate < 350L) return;
++        if (now - lastNotificationUpdate < 180L) return;
+         lastNotificationUpdate = now;
+         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+         nm.notify(FOREGROUND_ID, buildForegroundNotification(text));
+@@ -272,11 +312,17 @@
+             String symbol = j.optString("symbol", "");
+             String tf = j.optString("tf", "");
+             String mode = j.optString("feedMode", "");
++            String market = j.optString("market", "");
+             double price = j.optDouble("price", Double.NaN);
+             long lastEventAt = j.optLong("lastEventAt", 0L);
+             long now = System.currentTimeMillis();
+ 
+-            foregroundTitle = symbol.isEmpty() ? "DhanPulse Live Monitor" : "DhanPulse Live · " + symbol;
++            if (!tf.isEmpty()) nativeTf = tf;
++            if ("crypto".equalsIgnoreCase(market) && now - lastDirectTickAt < 2500L) {
++                return;
++            }
++
++            foregroundTitle = symbol.isEmpty() ? "Live Market" : symbol;
+ 
+             if (Double.isNaN(price) || price <= 0) {
+                 String meta = (!mode.isEmpty() ? mode : "Market feed") + (!tf.isEmpty() ? " · " + tf : "");
+@@ -343,6 +389,354 @@
+         }
+     }
+ 
++    private void restartNativeFeedFromPrefs() {
++        String config = prefs.getString("monitor_config", "");
++        applyNativeConfig(config, false);
++        restartNativeTransport();
++    }
++
++    private void applyNativeConfig(String json, boolean reconnect) {
++        String oldMarket = nativeMarket;
++        String oldSymbol = nativeSymbol;
++        try {
++            if (json != null && !json.isEmpty()) {
++                JSONObject j = new JSONObject(json);
++                String market = j.optString("market", nativeMarket);
++                String symbol = j.optString("symbol", nativeSymbol);
++                String tf = j.optString("tf", nativeTf);
++                if (!market.isEmpty()) nativeMarket = market.toLowerCase(Locale.US);
++                if (!symbol.isEmpty()) nativeSymbol = symbol.toUpperCase(Locale.US);
++                if (!tf.isEmpty()) nativeTf = tf;
++            }
++        } catch (Exception ignored) {
++        }
++        foregroundTitle = nativeSymbol.isEmpty() ? "Live Market" : nativeSymbol;
++        if (reconnect && (!oldMarket.equals(nativeMarket) || !oldSymbol.equals(nativeSymbol))) {
++            restartNativeTransport();
++        }
++    }
++
++    private void restartNativeTransport() {
++        closeNativeTransport();
++        if ("crypto".equalsIgnoreCase(nativeMarket)) {
++            connectNativeCryptoWs();
++        }
++    }
++
++    private void closeNativeTransport() {
++        if (mainHandler != null && reconnectRunnable != null) {
++            mainHandler.removeCallbacks(reconnectRunnable);
++        }
++        reconnectRunnable = null;
++        stopNativeRestFallback();
++        WebSocket ws = marketWebSocket;
++        marketWebSocket = null;
++        nativeWsConnecte
