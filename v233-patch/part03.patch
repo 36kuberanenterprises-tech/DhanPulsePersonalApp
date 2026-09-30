@@ -1,0 +1,172 @@
+d = false;
++        if (ws != null) {
++            try {
++                ws.cancel();
++            } catch (Exception ignored) {
++            }
++        }
++    }
++
++    private void connectNativeCryptoWs() {
++        if (marketClient == null || !"crypto".equalsIgnoreCase(nativeMarket)) return;
++        final String symbol = nativeSymbol.toLowerCase(Locale.US);
++        final String stream = symbol + "@aggTrade";
++        final String[] endpoints = new String[]{
++                "wss://fstream.binance.com/ws/" + stream,
++                "wss://fstream.binance.com:9443/ws/" + stream,
++                "wss://fstream.binance.com/stream?streams=" + stream
++        };
++        final String url = endpoints[Math.floorMod(wsEndpointIndex, endpoints.length)];
++        Request request = new Request.Builder()
++                .url(url)
++                .header("User-Agent", "DhanPulse-Android/2.3.3")
++                .build();
++        setWaitingVisuals(nativeSymbol, "Connecting direct Binance stream");
++        notifBadge = "LINK";
++        updateForeground("Connecting direct Binance stream");
++
++        marketWebSocket = marketClient.newWebSocket(request, new WebSocketListener() {
++            @Override
++            public void onOpen(WebSocket webSocket, Response response) {
++                if (webSocket != marketWebSocket) return;
++                nativeWsConnected = true;
++                nativeFeedMode = "NATIVE WS";
++                reconnectDelayMs = 800L;
++                stopNativeRestFallback();
++                mainHandler.post(() -> {
++                    notifBadge = "LIVE";
++                    notifMeta = "NATIVE WS · " + nativeTf + " · LIVE";
++                    notifAccentColor = COLOR_GREEN;
++                    updateForeground("Native WebSocket connected");
++                });
++            }
++
++            @Override
++            public void onMessage(WebSocket webSocket, String text) {
++                if (webSocket != marketWebSocket) return;
++                try {
++                    JSONObject outer = new JSONObject(text);
++                    JSONObject d = outer.optJSONObject("data");
++                    JSONObject j = d != null ? d : outer;
++                    if (!"aggTrade".equals(j.optString("e", "aggTrade"))) return;
++                    double price = j.optDouble("p", Double.NaN);
++                    double qty = j.optDouble("q", 0.0);
++                    long ts = j.optLong("T", j.optLong("E", System.currentTimeMillis()));
++                    boolean buy = !j.optBoolean("m", false);
++                    if (!Double.isNaN(price) && price > 0) {
++                        handleDirectTick(nativeSymbol, price, ts, qty, buy, "NATIVE WS");
++                    }
++                } catch (Exception ignored) {
++                }
++            }
++
++            @Override
++            public void onClosing(WebSocket webSocket, int code, String reason) {
++                try {
++                    webSocket.close(code, reason);
++                } catch (Exception ignored) {
++                }
++            }
++
++            @Override
++            public void onClosed(WebSocket webSocket, int code, String reason) {
++                if (webSocket != marketWebSocket) return;
++                marketWebSocket = null;
++                nativeWsConnected = false;
++                wsEndpointIndex++;
++                startNativeRestFallback();
++                scheduleNativeReconnect();
++            }
++
++            @Override
++            public void onFailure(WebSocket webSocket, Throwable t, Response response) {
++                if (webSocket != marketWebSocket) return;
++                marketWebSocket = null;
++                nativeWsConnected = false;
++                wsEndpointIndex++;
++                startNativeRestFallback();
++                scheduleNativeReconnect();
++            }
++        });
++
++        mainHandler.postDelayed(() -> {
++            if ("crypto".equalsIgnoreCase(nativeMarket)
++                    && System.currentTimeMillis() - lastDirectTickAt > 1400L) {
++                startNativeRestFallback();
++            }
++        }, 1500L);
++    }
++
++    private void scheduleNativeReconnect() {
++        if (mainHandler == null || !"crypto".equalsIgnoreCase(nativeMarket)) return;
++        if (reconnectRunnable != null) return;
++        long delay = reconnectDelayMs;
++        reconnectDelayMs = Math.min(5000L, reconnectDelayMs * 2L);
++        reconnectRunnable = () -> {
++            reconnectRunnable = null;
++            if (!"crypto".equalsIgnoreCase(nativeMarket) || nativeWsConnected) return;
++            WebSocket ws = marketWebSocket;
++            marketWebSocket = null;
++            if (ws != null) {
++                try {
++                    ws.cancel();
++                } catch (Exception ignored) {
++                }
++            }
++            connectNativeCryptoWs();
++        };
++        mainHandler.postDelayed(reconnectRunnable, delay);
++    }
++
++    private void startNativeRestFallback() {
++        if (mainHandler == null || restFallbackRunnable != null || !"crypto".equalsIgnoreCase(nativeMarket)) return;
++        restFallbackRunnable = new Runnable() {
++            @Override
++            public void run() {
++                if (restFallbackRunnable != this || !"crypto".equalsIgnoreCase(nativeMarket)) return;
++                if (nativeWsConnected && System.currentTimeMillis() - lastDirectTickAt < 1200L) {
++                    stopNativeRestFallback();
++                    return;
++                }
++                pollNativeRestPrice();
++                mainHandler.postDelayed(this, 450L);
++            }
++        };
++        mainHandler.post(restFallbackRunnable);
++    }
++
++    private void stopNativeRestFallback() {
++        if (mainHandler != null && restFallbackRunnable != null) {
++            mainHandler.removeCallbacks(restFallbackRunnable);
++        }
++        restFallbackRunnable = null;
++    }
++
++    private void pollNativeRestPrice() {
++        if (marketClient == null || restRequestInFlight || !"crypto".equalsIgnoreCase(nativeMarket)) return;
++        final String symbol = nativeSymbol;
++        restRequestInFlight = true;
++        String url = "https://fapi.binance.com/fapi/v2/ticker/price?symbol="
++                + symbol + "&_=" + System.currentTimeMillis();
++        Request request = new Request.Builder()
++                .url(url)
++                .header("Cache-Control", "no-cache")
++                .header("User-Agent", "DhanPulse-Android/2.3.3")
++                .build();
++        marketClient.newCall(request).enqueue(new Callback() {
++            @Override
++            public void onFailure(Call call, IOException e) {
++                restRequestInFlight = false;
++            }
++
++            @Override
++            public void onResponse(Call call, Response response) throws IOException {
++                try (Response r = response) {
++                    if (!r.isSuccessful() || r.body() == null) return;
++                    String body = r.body().string();
++                    JSONObject j = new JSONObject(body);
++                    double price = j.optDouble("price", Double.NaN);
++                    long ts = j.optLong("time", System.currentTimeMillis());
++                    if (!Double.isNaN(price) && price > 0
++                            && !(nativeWsConnected && System.currentTimeMillis() - lastDirectTickAt < 1000L)) {
++                        handleDirectTick(symbol, price, ts, 0.0, false,  
