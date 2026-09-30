@@ -1,0 +1,20 @@
+from pathlib import Path
+
+p=Path("crypto-forex-app/buildsrc/app/src/main/assets/index.html")
+s=p.read_text()
+s=s.replace("Version 2.2 Quality Controlled","Version 2.3 Research Adaptive")
+s=s.replace("DhanPulse Crypto and Forex Version 2.2 Quality Controlled.","DhanPulse Crypto and Forex Version 2.3 Research Adaptive.")
+s=s.replace('var TRKEY="dhanpulse_cf_android_trades_v22"','var TRKEY="dhanpulse_cf_android_trades_v23"')
+s=s.replace("V2.2 Quality Auto","V2.3 Research Auto")
+s=s.replace("The quality controller publishes a signal only after regime, strategy, feed, conflict and duplicate checks pass.","The research adaptive controller publishes only after closed candle, regime, volatility, price volume, derivatives context, conflict and live performance checks pass.")
+
+old_funding='q("funding").textContent=finite(S.ctx.fundingRate)?(S.ctx.fundingRate*100).toFixed(4)+"%":"NA";'
+new_funding='q("funding").textContent=finite(S.ctx.fundingRate)?(S.ctx.fundingRate*100).toFixed(4)+"% · Basis "+(finite(S.ctx.basisBps)?fmt(S.ctx.basisBps,1)+"bp":"NA"):"NA";'
+s=s.replace(old_funding,new_funding)
+old_ctx='async function cryptoContext(symbol){var b="https://fapi.binance.com",u=encodeURIComponent(symbol),rs=await Promise.all([fetch(b+"/fapi/v1/openInterest?symbol="+u),fetch(b+"/fapi/v1/premiumIndex?symbol="+u),fetch(b+"/fapi/v1/depth?symbol="+u+"&limit=50"),fetch(b+"/fapi/v1/ticker/24hr?symbol="+u)]);var oi=await rs[0].json(),pr=await rs[1].json(),dp=await rs[2].json(),tk=await rs[3].json(),sum=function(a){return(a||[]).reduce(function(s,x){return s+num(x[1]||0)},0)},bq=sum(dp.bids),aq=sum(dp.asks),ov=num(oi.openInterest||0),od=S.lastCtxOI&&S.lastCtxOI>0?(ov-S.lastCtxOI)/S.lastCtxOI*100:0;S.lastCtxOI=ov;var bid=dp.bids&&dp.bids.length?num(dp.bids[0][0]):0,ask=dp.asks&&dp.asks.length?num(dp.asks[0][0]):0,mid=bid&&ask?(bid+ask)/2:0,spreadBps=mid?(ask-bid)/mid*10000:0;return{openInterest:ov,oiDeltaPct:od,fundingRate:num(pr.lastFundingRate||0),orderBookImbalance:bq+aq?(bq-aq)/(bq+aq):0,spreadBps:spreadBps,priceChangePercent24h:num(tk.priceChangePercent||0),quoteVolume24h:num(tk.quoteVolume||0)}}'
+new_ctx='async function cryptoContext(symbol){var b="https://fapi.binance.com",u=encodeURIComponent(symbol),rs=await Promise.all([fetch(b+"/fapi/v1/openInterest?symbol="+u),fetch(b+"/fapi/v1/premiumIndex?symbol="+u),fetch(b+"/fapi/v1/depth?symbol="+u+"&limit=50"),fetch(b+"/fapi/v1/ticker/24hr?symbol="+u)]);var oi=await rs[0].json(),pr=await rs[1].json(),dp=await rs[2].json(),tk=await rs[3].json(),sum=function(a){return(a||[]).reduce(function(s,x){return s+num(x[1]||0)},0)},bq=sum(dp.bids),aq=sum(dp.asks),ov=num(oi.openInterest||0),od=S.lastCtxOI&&S.lastCtxOI>0?(ov-S.lastCtxOI)/S.lastCtxOI*100:0;S.lastCtxOI=ov;var bid=dp.bids&&dp.bids.length?num(dp.bids[0][0]):0,ask=dp.asks&&dp.asks.length?num(dp.asks[0][0]):0,mid=bid&&ask?(bid+ask)/2:0,spreadBps=mid?(ask-bid)/mid*10000:0,mark=num(pr.markPrice||0),idx=num(pr.indexPrice||0),basisBps=idx?(mark-idx)/idx*10000:0;return{openInterest:ov,oiDeltaPct:od,fundingRate:num(pr.lastFundingRate||0),basisBps:basisBps,markPrice:mark,indexPrice:idx,orderBookImbalance:bq+aq?(bq-aq)/(bq+aq):0,spreadBps:spreadBps,priceChangePercent24h:num(tk.priceChangePercent||0),quoteVolume24h:num(tk.quoteVolume||0)}}'
+if old_ctx not in s: raise SystemExit("cryptoContext patch target missing")
+s=s.replace(old_ctx,new_ctx)
+start=s.index('/* V2.2 quality controlled multi strategy admission engine.')
+end=s.index('window.__nativeDecisionAuthority=false;',start)+len('window.__nativeDecisionAuthority=false;')
+block='/* V2.3 research adaptive multi strategy engine.\n   Design goal: improve live expectancy rather than chase signal count.\n   Uses completed candle structure, volatility regime, price volume confirmation,\n   derivatives context, strategy
