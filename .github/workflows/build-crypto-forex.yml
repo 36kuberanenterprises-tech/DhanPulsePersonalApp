@@ -1,4 +1,4 @@
-name: Build DhanPulse Crypto Forex v2.3.3 Native Stream APK
+name: Build DhanPulse Crypto Forex v2.3.4 Lock Screen Fix APK
 
 on:
   workflow_dispatch:
@@ -10,6 +10,7 @@ on:
       - 'v231-patch/**'
       - 'v232-patch/**'
       - 'v233-patch/**'
+      - 'v234-patch/**'
       - '.github/workflows/build-crypto-forex.yml'
 
 permissions:
@@ -67,46 +68,34 @@ jobs:
           PY
           python /tmp/v23_patch.py
 
-      - name: Apply V2.3.1 logo and live notification fix
+      - name: Apply V2.3.1 patch
         run: |
-          cat \
-            v231-patch/part00.patch \
-            v231-patch/part01.patch \
-            v231-patch/part02.patch \
-            v231-patch/part03.patch \
-            > /tmp/v231.patch
+          cat v231-patch/part00.patch v231-patch/part01.patch v231-patch/part02.patch v231-patch/part03.patch > /tmp/v231.patch
           cd crypto-forex-app/buildsrc
           patch -p1 < /tmp/v231.patch
           mkdir -p app/src/main/res/drawable-nodpi
           cp app/src/main/assets/dhanpulse_logo_v214.jpg app/src/main/res/drawable-nodpi/dhanpulse_logo.jpg
 
-      - name: Apply V2.3.2 colour lock screen notification patch
+      - name: Apply V2.3.2 patch
         run: |
-          cat \
-            v232-patch/part00.patch \
-            v232-patch/part01.patch \
-            v232-patch/part02.patch \
-            v232-patch/part03.patch \
-            v232-patch/part04.patch \
-            > /tmp/v232.patch
+          cat v232-patch/part00.patch v232-patch/part01.patch v232-patch/part02.patch v232-patch/part03.patch v232-patch/part04.patch > /tmp/v232.patch
           cd crypto-forex-app/buildsrc
           patch -p1 < /tmp/v232.patch
 
-      - name: Apply V2.3.3 native stream and notification cleanup patch
+      - name: Apply V2.3.3 native stream patch
         run: |
-          cat \
-            v233-patch/part00.patch \
-            v233-patch/part01.patch \
-            v233-patch/part02.patch \
-            v233-patch/part03.patch \
-            v233-patch/part04.patch \
-            v233-patch/part05.patch \
-            > /tmp/v233.patch
+          cat v233-patch/part00.patch v233-patch/part01.patch v233-patch/part02.patch v233-patch/part03.patch v233-patch/part04.patch v233-patch/part05.patch > /tmp/v233.patch
           printf '\n' >> /tmp/v233.patch
           cd crypto-forex-app/buildsrc
           patch -p1 < /tmp/v233.patch
+
+      - name: Apply V2.3.4 lock screen fix
+        run: |
+          cd crypto-forex-app/buildsrc
+          patch -p1 < ../../v234-patch/v234.patch
           grep -n 'applicationId\|versionCode\|versionName\|okhttp' app/build.gradle.kts
-          grep -n 'ACTION_NATIVE_TICK\|NATIVE WS\|dhanpulse_monitor_v233_native' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+          grep -n 'dhanpulse_monitor_v234_lockscreen\|IMPORTANCE_HIGH\|FOREGROUND_SERVICE_IMMEDIATE' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+          grep -n 'onRequestPermissionsResult\|Allow lock screen live updates' app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java
           ! grep -q 'setLargeIcon' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
           ! grep -q 'notif_logo' app/src/main/res/layout/notification_live_compact.xml
           ! grep -q 'notif_logo' app/src/main/res/layout/notification_live_expanded.xml
@@ -141,13 +130,13 @@ jobs:
 
       - name: Prepare APK artifact
         run: |
-          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.3_Native_Stream.apk
-          sha256sum DhanPulse_Crypto_Forex_v2.3.3_Native_Stream.apk
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.3.4_Lock_Screen_Fix.apk
+          sha256sum DhanPulse_Crypto_Forex_v2.3.4_Lock_Screen_Fix.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.3.3-Native-Stream
-          path: DhanPulse_Crypto_Forex_v2.3.3_Native_Stream.apk
+          name: DhanPulse-Crypto-Forex-v2.3.4-Lock-Screen-Fix
+          path: DhanPulse_Crypto_Forex_v2.3.4_Lock_Screen_Fix.apk
           if-no-files-found: error
           retention-days: 30
