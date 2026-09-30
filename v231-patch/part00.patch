@@ -1,0 +1,59 @@
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/build.gradle.kts v231/app/build.gradle.kts
+--- v230/app/build.gradle.kts	2026-09-30 21:16:52.576818547 +0000
++++ v231/app/build.gradle.kts	2026-09-30 21:42:06.663693499 +0000
+@@ -7,11 +7,11 @@
+     compileSdk = 35
+ 
+     defaultConfig {
+-        applicationId = "com.dhanpulse.cryptofxresearchv23"
++        applicationId = "com.dhanpulse.cryptofxresearchv231"
+         minSdk = 26
+         targetSdk = 34
+-        versionCode = 23
+-        versionName = "2.3.0"
++        versionCode = 24
++        versionName = "2.3.1"
+     }
+ 
+     buildTypes {
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/AndroidManifest.xml v231/app/src/main/AndroidManifest.xml
+--- v230/app/src/main/AndroidManifest.xml	2026-09-26 02:58:22.000000000 +0000
++++ v231/app/src/main/AndroidManifest.xml	2026-09-30 21:43:56.948834233 +0000
+@@ -13,8 +13,8 @@
+     <application
+         android:allowBackup="false"
+         android:label="@string/app_name"
+-        android:icon="@drawable/ic_launcher"
+-        android:roundIcon="@drawable/ic_launcher"
++        android:icon="@drawable/dhanpulse_logo"
++        android:roundIcon="@drawable/dhanpulse_logo"
+         android:theme="@style/AppTheme"
+         android:usesCleartextTraffic="false">
+ 
+diff -ruN '--exclude=dhanpulse_logo.jpg' '--exclude=dhanpulse_logo_v214.jpg' '--exclude=app.js' v230/app/src/main/assets/index.html v231/app/src/main/assets/index.html
+--- v230/app/src/main/assets/index.html	2026-09-30 21:17:21.684158512 +0000
++++ v231/app/src/main/assets/index.html	2026-09-30 21:42:06.664263102 +0000
+@@ -20,7 +20,7 @@
+ </head>
+ <body>
+ <div class="app">
+-<header><div class="brand"><img class="logo" src="dhanpulse_logo_v214.jpg" alt="DhanPulse"><div><h1>DhanPulse</h1><div class="muted small">Crypto and Forex Analysis</div></div></div><div class="statusarea"><span class="ver">Version 2.3 Research Adaptive</span><span id="conn" class="badge">Loading</span></div></header>
++<header><div class="brand"><img class="logo" src="dhanpulse_logo_v214.jpg" alt="DhanPulse"><div><h1>DhanPulse</h1><div class="muted small">Crypto and Forex Analysis</div></div></div><div class="statusarea"><span class="ver">Version 2.3.1 Live Monitor Fix</span><span id="conn" class="badge">Loading</span></div></header>
+ 
+ <div class="panel">
+ <div class="tabs"><button id="cryptoTab" class="active">Crypto</button><button id="forexTab">Forex and Metals</button></div>
+@@ -50,7 +50,7 @@
+ <div class="panel"><div class="row"><div><h2>Recorded Signal Performance</h2><div class="muted small">T1, T2, T3 and SL are checked live on incoming market ticks. Candle data is used as backup.</div><div id="tradeLogState" class="muted small" style="margin-top:5px">Live performance check: waiting for first market tick</div></div><button id="clear" class="danger">Clear Records</button></div><div id="perf" class="perf"></div><div class="table"><table><thead><tr><th>Time</th><th>Market</th><th>Symbol</th><th>TF</th><th>Side</th><th>Entry</th><th>SL</th><th>T1</th><th>T2</th><th>T3</th><th>Status</th><th>Result</th></tr></thead><tbody id="trades"></tbody></table></div></div>
+ 
+ <div class="panel"><h2>XAUUSD and Forex Data Setup</h2><div class="muted small" style="margin:7px 0 12px">Crypto needs no account or API key. For XAUUSD and forex, enter a Twelve Data API key. It stays only on this phone.</div><div class="control"><label>Twelve Data API Key<input id="tdkey" type="password" placeholder="Enter API key"></label><button id="savekey" class="secondary">Save Key</button><button id="testxau">Test XAUUSD</button></div><div id="msg" class="muted small" style="margin-top:8px"></div></div>
+-<footer>DhanPulse Crypto and Forex Version 2.3 Research Adaptive. Analysis only. No orders are placed. Low latency event driven engine processes streaming ticks independently from chart redraw. Intrabar Turning Point Engine monitors top sell and bottom buy reversals continuously, together with liquidity sweeps, reclaim, micro CHoCH, displacement, FVG, order blocks and crypto order flow. Native foreground monitoring continues when the app is minimised or the screen is locked.</footer>
++<footer>DhanPulse Crypto and Forex Version 2.3.1 Live Monitor Fix. Analysis only. No orders are placed. Low latency event driven engine processes streaming ticks independently from chart redraw. Intrabar Turning Point Engine monitors top sell and bottom buy reversals continuously, together with liquidity sweeps, reclaim, micro CHoCH, displacement, FVG, order blocks and crypto order flow. Native foreground monitoring continues when the app is minimised or the screen is locked.</footer>
+ </div>
+ 
+ <script>
+@@ -344,7 +344,7 @@
+ renderTrades=function(){renderTradeLogState(true);var ts=trades().slice().reverse(),tot=ts.length,closed=ts.filter(function(t){return t.status==="CLOSED"}),resolved=closed.filter(function(t){return t.result!=="AMBIGUOUS"&&finite(t.pnlR)}),amb=closed.filter(function(t){return t.result==="AMBIGUOUS"}).length,prof=resolved.filter(function(t){return t.pnlR>0}).length,loss=resolved.filter(function(t){return t.pnlR<0}).length,open=ts.filter(function(t){return t.status==="OPEN"}).length,h1=ts.filter(function(t){return t.h1}).length,h2=ts.filter(function(t){return t.h2}).length,h3=ts.filter(function(t){return t.h3}).length,net=resolved.reduce(function(s,t){return s+num(t.pnlR)},0),avg=resolved.length?net/resolved.length:0,gp=resolved.filter(function(t){return t.pnlR>0}).reduce(function(s,t){return s+num(t.pnlR)},0),gl=Math.abs(resolved.filter(function(t){return t.pnlR<0}).reduce(function(s,t){return s+num(t.pnlR)},0)),pf=gl?gp/gl:(gp>0?99:0),pc=function(n,d){return d?((n/d)*100).toFixed(1)+"%":"0.0%"};q("perf").innerHTML='<div><span>V2.3 Signals</span><b>'+tot+'</b></div><div><span>Resolved Closed</span><b>'+resolved.length+'</b></div><div><span>Profit Rate</span><b>'+pc(prof,resolved.length)+'</b></div><div><span>Loss Rate</span><b>'+pc(loss,resolved.length)+'</b></div><div><span>Net R</span><b>'+net.toFixed(2)+'R</b></div><div><span>Average R</span><b>'+avg.toFixed(3)+'R</b></div><div><span>Profit Factor</span><b>'+pf.toFixed(2)+'</b></div><div><span>T1 Touch Rate</span><b>'+pc(h1,tot)+'</b></div><div><span>T2 Touch Rate</span><b>'+pc(h2,tot)+'</b></div><div><span>T3 Full Hit</span><b>'+pc(h3,tot)+'</b></div><div><span>Ambiguous Backup</span><b>'+amb+'</b></div><div><span>Open Signals</span><b>'+open+'</b></div>';q("trades").innerHTML=ts.slice(0,100).map(function(t){var d=dec(t.entry),label=(t.strategy||t.stage||"V2.3")+(finite(t.quality)?" Q"+t.quality:"")+(finite(t.pnlR)?" · "+Number(t.pnlR).toFixed(2)+"R":"");return'<tr><td>'+new Date(t.createdAt).toLocaleString("en-IN")+'</td><td>'+t.market+'</td><td>'+t.symbol+'</td><td>'+t.tf+'</td><td>'+t.side+'<br><small>'+label+'</small></td><td>'+fmt(t.entry,d)+'</td><td>'+fmt(t.sl,d)+'</td><td>'+fmt(t.t1,d)+'</td><td>'+fmt(t.t2,d)+'</td><td>'+fmt(t.t3,d)+'</td><td>'+t.status+'</td><td>'+t.result+'</td></tr>'}).join("")||'<tr><td colspan="12">No V2.3 signals recorded yet.</td></tr>'};
+ window.__nativeDecisionAuthority=false;
+ 
+-window.onresize=function(){ensureChartView();draw()};window.onbeforeunload=stop;var kk=localStorage.getItem(KEY)||"";if(kk)q("tdkey").value=kk;loadMonitorConfig();q("tf").value=S.tf;if(S.market==="forex"){q("forexTab").classList.add("active");q("cryptoTab").classList.remove("active")}else{q("cryptoTab").classList.add("active");q("forexTab").classList.remove("active")}setSymbols();renderTrades();if(!BACKGROUND_MODE)bindChartGestures();load();setInterval(nativeHeartbeat,5000);nativeHeartbeat();
++window.onresize=function(){ensureChartView();draw()};window.onbeforeunload=stop;var kk=localStorage.getItem(KEY)||"";if(kk)q("tdkey").value=kk;loadMonitorConfig();q("tf").value=S.tf;if(S.market==="forex"){q("forexTab").classList.add("active");q("cryptoTab").classList.remove("active")}else{q("cryptoTab
