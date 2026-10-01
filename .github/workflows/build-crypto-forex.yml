@@ -1,4 +1,4 @@
-name: Build DhanPulse Crypto Forex v2.4 Precision Fast APK
+name: Build DhanPulse Crypto Forex v2.5 News Intelligence APK
 
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ on:
       - 'v233-patch/**'
       - 'v234-patch/**'
       - 'v240-patch/**'
+      - 'v250-patch/**'
       - '.github/workflows/build-crypto-forex.yml'
 
 permissions:
@@ -98,9 +99,16 @@ jobs:
       - name: Apply V2.4 precision fast engine
         run: |
           python v240-patch/apply_v240.py
+
+      - name: Apply V2.5 news intelligence and shadow lab
+        run: |
+          cat v250-patch/part00.py v250-patch/part01.py v250-patch/part02.py > /tmp/apply_v250.py
+          python /tmp/apply_v250.py
           cd crypto-forex-app/buildsrc
           grep -n 'applicationId\|versionCode\|versionName\|okhttp' app/build.gradle.kts
-          grep -n 'Version 2.4 Precision Fast\|dhanpulse_cf_android_trades_v24\|FAST PRECISION\|precision threshold' app/src/main/assets/index.html
+          grep -n 'Version 2.5 News Intelligence Lab\|dhanpulse_cf_android_trades_v25\|News and Candle Intelligence\|Background Shadow Test\|NEWS RISK' app/src/main/assets/index.html
+          grep -n 'fetchNewsForVisibleWeb\|public void fetchNews' app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java
+          grep -n 'fetchNewsForHeadlessWeb\|public void fetchNews' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
           grep -n 'dhanpulse_monitor_v234_lockscreen\|IMPORTANCE_HIGH\|FOREGROUND_SERVICE_IMMEDIATE' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
           ! grep -q 'setLargeIcon' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
           python - <<'PY'
@@ -134,13 +142,13 @@ jobs:
 
       - name: Prepare APK artifact
         run: |
-          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.4.0_Precision_Fast.apk
-          sha256sum DhanPulse_Crypto_Forex_v2.4.0_Precision_Fast.apk
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.5.0_News_Intelligence_Lab.apk
+          sha256sum DhanPulse_Crypto_Forex_v2.5.0_News_Intelligence_Lab.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Crypto-Forex-v2.4.0-Precision-Fast
-          path: DhanPulse_Crypto_Forex_v2.4.0_Precision_Fast.apk
+          name: DhanPulse-Crypto-Forex-v2.5.0-News-Intelligence-Lab
+          path: DhanPulse_Crypto_Forex_v2.5.0_News_Intelligence_Lab.apk
           if-no-files-found: error
           retention-days: 30
