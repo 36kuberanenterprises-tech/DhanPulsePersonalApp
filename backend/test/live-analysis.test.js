@@ -21,6 +21,22 @@ test('expiry changes at 15:30 IST on its trading date', () => {
   assert.equal(resolveNearestFuture(expiryRows, 'NIFTY', Date.parse('2026-09-24T10:01:00Z'))?.token, '101');
 });
 
+test('SENSEX futures and option window cannot select the separate SENSEX50 index', () => {
+  const now = Date.parse('2026-10-01T04:15:00Z');
+  const rows = [
+    { token: '500', name: 'SENSEX50', symbol: 'SENSEX5026OCTFUT', exch_seg: 'BFO', instrumenttype: 'FUTIDX', expiry: '26OCT2026' },
+    { token: '501', name: 'SENSEX50', symbol: 'SENSEX5001OCT2624000CE', exch_seg: 'BFO', instrumenttype: 'OPTIDX', strike: '2400000', expiry: '01OCT2026' },
+    { token: '600', name: 'SENSEX', symbol: 'SENSEX26OCTFUT', exch_seg: 'BFO', instrumenttype: 'FUTIDX', expiry: '26OCT2026' },
+    { token: '601', name: 'SENSEX', symbol: 'SENSEX02OCT2672000CE', exch_seg: 'BFO', instrumenttype: 'OPTIDX', strike: '7200000', expiry: '02OCT2026' },
+    { token: '602', name: 'SENSEX', symbol: 'SENSEX02OCT2672000PE', exch_seg: 'BFO', instrumenttype: 'OPTIDX', strike: '7200000', expiry: '02OCT2026' }
+  ];
+  assert.equal(resolveNearestFuture(rows, 'SENSEX', now)?.token, '600');
+  const window = resolveOptionWindow(rows, 'SENSEX', 72_000, 5, now);
+  assert.equal(window.expiry, '02OCT2026');
+  assert.deepEqual(window.contracts.map(x => x.token), ['601', '602']);
+  assert.equal(resolveNearestFuture(rows.filter(x => x.token !== '600'), 'SENSEX', now), null);
+});
+
 test('broker feed time is read as India time, not UTC', () => {
   const now = Date.parse('2026-09-25T04:30:45Z');
   assert.equal(quoteFeedAgeMs({ exchFeedTime: '25-Sep-2026 10:00:05' }, now), 40_000);

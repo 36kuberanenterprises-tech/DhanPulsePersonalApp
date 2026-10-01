@@ -22,7 +22,12 @@ async function jsonFetch(url, init, label) {
   const r = await fetch(url, init);
   const text = await r.text();
   let data;
-  try { data = JSON.parse(text); } catch { throw new Error(`${label}: non JSON response (${r.status})`); }
+  try { data = JSON.parse(text); } catch {
+    // The broker sometimes returns a plain-text access or rate-limit reason.
+    // Keep a short, safe diagnostic instead of replacing it with "non JSON".
+    const reason = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+    throw new Error(`${label}: non JSON response (${r.status})${reason ? ': ' + reason : ''}`);
+  }
   if (!r.ok || data?.status === false) throw new Error(`${label}: ${data?.message || r.statusText} ${data?.errorcode || ''}`.trim());
   return data;
 }
@@ -247,7 +252,9 @@ function matchesUnderlying(row, symbol) {
   const name = String(row.name || '').toUpperCase().replace(/\s+/g, ' ').trim();
   const ts = String(row.symbol || '').toUpperCase().replace(/\s+/g, ' ').trim();
   if (symbol === 'BANKNIFTY') return name === 'BANKNIFTY' || name === 'NIFTY BANK' || ts.startsWith('BANKNIFTY');
-  if (symbol === 'SENSEX') return name === 'SENSEX' || ts.startsWith('SENSEX');
+  // SENSEX50 is a separate index with a very different price and its own
+  // futures and options. Prefix matching silently selected that contract.
+  if (symbol === 'SENSEX') return name === 'SENSEX' && !ts.startsWith('SENSEX50');
   return name === 'NIFTY' || name === 'NIFTY 50' || ((ts.startsWith('NIFTY')) && !ts.startsWith('NIFTY BANK') && !ts.startsWith('BANKNIFTY'));
 }
 
@@ -280,7 +287,8 @@ export function resolveNearestFuture(rows, symbol, now = Date.now()) {
   return rows
     .filter(r => mcx
       ? r.exch_seg === 'MCX' && r.instrumenttype === 'FUTIDX' && String(r.name || '').toUpperCase() === symbol
-      : /FUT/i.test(String(r.instrumenttype || '')) && matchesUnderlying(r, symbol))
+      : /FUT/i.test(String(r.instrumenttype || '')) &&
+        (symbol !== 'SENSEX' || r.exch_seg === 'BFO') && matchesUnderlying(r, symbol))
     .filter(r => contractActive(r, now))
     .sort((a, b) => dateValue(a.expiry, a.exch_seg, a.instrumenttype) - dateValue(b.expiry, b.exch_seg, b.instrumenttype))[0] || null;
 }

@@ -96,11 +96,11 @@ test('independent opposing families veto a call while raw PCR remains context', 
   assert.equal(decide({ ...putFamily, higherVote: 'CE' }).direction, 'WAIT');
 });
 
-test('unknown OI, stale higher candle, missing futures basis and illiquid option cause WAIT', () => {
+test('unknown OI, implausible futures basis and illiquid option cause WAIT', () => {
   const family = trendingFamily();
   for (const change of [
     { pcr: null, oiCoverage: '2/5 paired strikes' },
-    { futurePrice: null },
+    { futurePrice: 18_000 },
     { selected: { contract: { ...liquidCall.contract, ask: 105 } } },
     { selected: { contract: { ...liquidCall.contract, bidQty: 3 } } },
     { now: new Date('2026-09-28T09:47:00Z') }
@@ -117,4 +117,12 @@ test('unknown OI, stale higher candle, missing futures basis and illiquid option
   });
   assert.equal(delayed.direction, 'WAIT');
   assert.match(delayed.reason, /delayed/);
+});
+
+test('missing matching SENSEX future is caution for a manual setup, never a fabricated basis', () => {
+  const decision = decide(trendingFamily(), { futurePrice: null });
+  assert.equal(decision.setupAllowed, true);
+  assert.equal(decision.autoEntryAllowed, false);
+  assert.equal(decision.contextChecks.find(x => x.name === 'Futures basis')?.vote, 'NEUTRAL');
+  assert.match(decision.cautions.join(' '), /basis is unavailable/);
 });
