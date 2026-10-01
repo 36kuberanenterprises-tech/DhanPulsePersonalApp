@@ -122,7 +122,9 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key, 
       lastError = e;
       const msg = String(e?.message || '');
       if (/\b403\b|forbidden/i.test(msg)) {
-        const reason = 'Angel One denied historical candles (HTTP 403). Check historical API access and the server network route.';
+        const reason = /exceeding access rate|rate limit/i.test(msg)
+          ? 'Angel One rejected historical candles for exceeding access rate (HTTP 403). Retrying after cooldown.'
+          : 'Angel One denied historical candles (HTTP 403). Check historical API access and the server network route.';
         candleRetryAfter.set(key, Date.now() + 60_000);
         candleRetryReason.set(key, reason);
         throw new Error(reason);

@@ -323,9 +323,12 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
   historyFailures.delete(key);
   return candles;
   })().catch(error => {
-    if (/\b403\b|forbidden/i.test(String(error?.message || ''))) {
+    const message = String(error?.message || '');
+    if (/\b403\b|forbidden/i.test(message)) {
       historyFailures.set(key, { retryAt: Date.now() + 60_000,
-        reason: 'Angel One denied five minute history (HTTP 403); check historical API access and the server network route' });
+        reason: /exceeding access rate|rate limit/i.test(message)
+          ? 'Angel One rejected five minute history for exceeding access rate (HTTP 403); retrying after cooldown'
+          : 'Angel One denied five minute history (HTTP 403); check historical API access and the server network route' });
     }
     throw error;
   }).finally(() => historyLocks.delete(key));
@@ -409,11 +412,14 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
             sectorReturn: sectorMap.get(stock.sector)?.changePct,
             sectorCount: sectorMap.get(stock.sector)?.count || 0 });
         } catch (error) {
-          const forbidden = /\b403\b|forbidden/i.test(String(error?.message || ''));
+          const message = String(error?.message || '');
+          const forbidden = /\b403\b|forbidden/i.test(message);
+          const rateDenied = forbidden && /exceeding access rate|rate limit/i.test(message);
           const blocked = /rate|timeout/i.test(String(error?.message || ''));
           analysed[i] = { symbol: stock.symbol, sector: stock.sector, token: String(stock.instrument.token),
             price: round(stock.price), quoteTime: stock.quote?.exchFeedTime || null, status: 'WAIT', side: 'WAIT',
-            reason: forbidden ? 'Angel One denied five minute history (HTTP 403); check historical API access and server network route'
+            reason: rateDenied ? 'Angel One rejected five minute history for exceeding access rate (HTTP 403); retrying after cooldown'
+              : forbidden ? 'Angel One denied five minute history (HTTP 403); check historical API access and server network route'
               : blocked ? 'Broker restricted five minute history; retrying later' : 'Broker five minute history unavailable; retrying later',
             setup: null, plan: null };
         }

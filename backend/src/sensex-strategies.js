@@ -160,9 +160,10 @@ export function buildSensexDecision({ family, pcr, oiCoverage, support, resistan
   add('Regime and volatility', family.regime.suitable ? 'OK' : 'BLOCK', family.regime.detail);
   add('15 minute context', htfOpposite ? 'BLOCK' : family.higherVote === 'WAIT' ? 'NEUTRAL' : 'OK',
     htfOpposite ? '15 minute direction is opposite to the active family.' : `15 minute direction: ${family.higherVote}`);
-  add('Futures basis', basisPct == null || Math.abs(basisPct) > 1.5 ? 'BLOCK' : 'OK',
-    basisPct == null ? 'Fresh SENSEX futures price is unavailable; funding basis cannot be checked.' :
+  add('Futures basis', basisPct == null ? 'NEUTRAL' : Math.abs(basisPct) > 1.5 ? 'BLOCK' : 'OK',
+    basisPct == null ? 'Matching SENSEX futures price is unavailable; basis cannot be checked. Manual review required.' :
       `SENSEX futures basis ${round(basisPct, 3)}% against spot${Math.abs(basisPct) > 1.5 ? ' is outside the filter' : ''}. This is a cost of carry proxy, not a funding rate.`);
+  if (basisPct == null) cautions.push('SENSEX futures basis is unavailable. Review this context before a manual entry.');
   const extremePcr = Number.isFinite(pcr) && (pcr > 1.8 || pcr < 0.6);
   add('Open interest and PCR', !Number.isFinite(pcr) || cover < 3 ? 'BLOCK' : 'OK',
     !Number.isFinite(pcr) || cover < 3 ? 'At least three fresh paired strikes are required for OI context.' :
