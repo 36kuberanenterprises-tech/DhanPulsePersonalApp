@@ -1,0 +1,147 @@
+name: Build DhanPulse Crypto Forex v2.5.1 Continuous Background APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'v220-src/**'
+      - 'v23-patch/**'
+      - 'v231-patch/**'
+      - 'v232-patch/**'
+      - 'v233-patch/**'
+      - 'v234-patch/**'
+      - 'v240-patch/**'
+      - 'v250-patch/**'
+      - 'v251-patch/**'
+      - '.github/workflows/build-crypto-forex-v251.yml'
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Reconstruct DhanPulse v2.2 base
+        run: |
+          cat \
+            v220-src/project.part00 \
+            v220-src/project.part01 \
+            v220-src/project.part02 \
+            v220-src/project.part03_04a \
+            v220-src/project.part04b0_04b1 \
+            v220-src/project.part04c_04d \
+            v220-src/project.part04e \
+            v220-src/project.part04f \
+            v220-src/project.part05_06 \
+            | base64 -d > /tmp/dhanpulse-v220-project.zip
+          unzip -t /tmp/dhanpulse-v220-project.zip
+          rm -rf crypto-forex-app/buildsrc
+          mkdir -p crypto-forex-app/buildsrc
+          unzip -q /tmp/dhanpulse-v220-project.zip -d crypto-forex-app/buildsrc
+
+      - name: Apply V2.3 research adaptive patch
+        run: |
+          cat v23-patch/part00.txt v23-patch/part01.txt v23-patch/part02.txt v23-patch/part03.txt v23-patch/part04.txt v23-patch/part05.txt v23-patch/part06.txt v23-patch/part07.txt > /tmp/v23_patch.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/v23_patch.py')
+          x=p.read_text()
+          x=x.replace("block='/* V2.3 research adaptive", "block='''/* V2.3 research adaptive", 1)
+          x=x.replace("window.__nativeDecisionAuthority=false;'\ns=s[:start]+block+s[end:]", "window.__nativeDecisionAuthority=false;'''\ns=s[:start]+block+s[end:]", 1)
+          p.write_text(x)
+          PY
+          python /tmp/v23_patch.py
+
+      - name: Apply V2.3.1 patch
+        run: |
+          cat v231-patch/part00.patch v231-patch/part01.patch v231-patch/part02.patch v231-patch/part03.patch > /tmp/v231.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v231.patch
+          mkdir -p app/src/main/res/drawable-nodpi
+          cp app/src/main/assets/dhanpulse_logo_v214.jpg app/src/main/res/drawable-nodpi/dhanpulse_logo.jpg
+
+      - name: Apply V2.3.2 patch
+        run: |
+          cat v232-patch/part00.patch v232-patch/part01.patch v232-patch/part02.patch v232-patch/part03.patch v232-patch/part04.patch > /tmp/v232.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v232.patch
+
+      - name: Apply V2.3.3 native stream patch
+        run: |
+          cat v233-patch/part00.patch v233-patch/part01.patch v233-patch/part02.patch v233-patch/part03.patch v233-patch/part04.patch v233-patch/part05.patch > /tmp/v233.patch
+          printf '\n' >> /tmp/v233.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v233.patch
+
+      - name: Apply V2.3.4 lock screen fix
+        run: |
+          cd crypto-forex-app/buildsrc
+          patch -p1 < ../../v234-patch/v234.patch
+
+      - name: Apply V2.4 precision fast engine
+        run: python v240-patch/apply_v240.py
+
+      - name: Apply V2.5 news intelligence and shadow lab
+        run: |
+          cat v250-patch/part00.py v250-patch/part01.py v250-patch/part02.py > /tmp/apply_v250.py
+          python /tmp/apply_v250.py
+
+      - name: Apply V2.5.1 continuous background fix
+        run: |
+          python v251-patch/apply_v251.py
+          cd crypto-forex-app/buildsrc
+          grep -n 'applicationId\|versionCode\|versionName' app/build.gradle.kts
+          grep -n 'Version 2.5.1 Continuous Background\|dhanpulse_cf_android_trades_v251\|__dhanpulseBackgroundPulse\|v251ResultLabel' app/src/main/assets/index.html
+          grep -n 'backgroundEngineWatchdogRunnable\|startBackgroundEngineWatchdog\|lastHeadlessHeartbeatAt' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+          grep -n 'stopWithTask' app/src/main/AndroidManifest.xml || true
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('app/src/main/assets/index.html').read_text()
+          js=s[s.index('<script>')+8:s.rindex('</script>')]
+          Path('/tmp/app.js').write_text(js)
+          PY
+          node --check /tmp/app.js
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "sdk.dir=$ANDROID_HOME" > crypto-forex-app/buildsrc/local.properties
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build installable debug APK
+        working-directory: crypto-forex-app/buildsrc
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Prepare APK artifact
+        run: |
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_Crypto_Forex_v2.5.1_Continuous_Background.apk
+          sha256sum DhanPulse_Crypto_Forex_v2.5.1_Continuous_Background.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DhanPulse-Crypto-Forex-v2.5.1-Continuous-Background
+          path: DhanPulse_Crypto_Forex_v2.5.1_Continuous_Background.apk
+          if-no-files-found: error
+          retention-days: 30
