@@ -255,6 +255,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                         val pillText = when {
                             status == "MARKET_CLOSED" -> "CLOSED"
                             status == "NO_OPTIONS" -> "NO OPTIONS"
+                            status == "HISTORY_UNAVAILABLE" -> "NO HISTORY"
                             stockDelayed || status == "DATA_STALE" || (!vm.stocksVisible && (vm.refreshWarning != null || vm.analysis == null)) -> "DELAYED"
                             vm.stocksVisible && status == "OPENING_RANGE" -> "OPENING RANGE"
                             vm.stocksVisible && status == "NO_NEW_ENTRIES" -> "ENTRIES CLOSED"
@@ -391,8 +392,12 @@ private fun MarketSection(vm: DhanPulseViewModel) {
     ) {
         item { TradingContextBar(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
-        vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
-        if (vm.loading && a == null) item { LoadingMarketCard() }
+        vm.refreshWarning?.let { item { InfoStrip(when (a?.tradeDecision?.status) {
+            "MARKET_CLOSED" -> "Market closed"
+            "HISTORY_UNAVAILABLE" -> "Broker candles unavailable"
+            else -> "Live refresh delayed"
+        }, it) } }
+        if (a == null && (vm.loading || vm.refreshWarning != null)) item { LoadingMarketCard(vm.refreshWarning) }
         if (a != null) {
             item { SignalCard(a, vm) }
             item { MarketCard(a, vm) }
@@ -444,7 +449,11 @@ private fun McxSection(vm: DhanPulseViewModel, onTrade: () -> Unit) {
         }
         vm.mcxCatalogError?.let { item { InfoStrip("MCX list", it) } }
         vm.error?.let { item { ErrorStrip(it) } }
-        vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
+        vm.refreshWarning?.let { item { InfoStrip(when (a?.tradeDecision?.status) {
+            "MARKET_CLOSED" -> "Market closed"
+            "HISTORY_UNAVAILABLE" -> "Broker candles unavailable"
+            else -> "Live refresh delayed"
+        }, it) } }
         if (vm.loading && a == null) item { LoadingMarketCard() }
         if (index?.hasOptions == false || energy?.hasOptions == false || a?.tradeDecision?.status == "NO_OPTIONS") item {
             InfoStrip(if (energy != null) "No safe option expiry" else "Index only", if (energy != null)
@@ -477,7 +486,11 @@ private fun TradeSection(vm: DhanPulseViewModel) {
     ) {
         item { TradingContextBar(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
-        vm.refreshWarning?.let { item { InfoStrip(if (a?.tradeDecision?.status == "MARKET_CLOSED") "Market closed" else "Live refresh delayed", it) } }
+        vm.refreshWarning?.let { item { InfoStrip(when (a?.tradeDecision?.status) {
+            "MARKET_CLOSED" -> "Market closed"
+            "HISTORY_UNAVAILABLE" -> "Broker candles unavailable"
+            else -> "Live refresh delayed"
+        }, it) } }
         if (vm.selectedMarket == "MCX") item {
             InfoStrip("MCX option buying", if (a?.instrumentType == "ENERGY")
                 "Crude oil and natural gas options use the matching futures quote. Entry needs fresh futures and option quotes, sufficient cash and a ready order route. Exit open options before expiry to avoid futures devolvement. MCX Auto Trade is off."
@@ -492,7 +505,7 @@ private fun TradeSection(vm: DhanPulseViewModel) {
                 item { LatestCallRecordCard(latest) }
             }
             item { SignalPerformanceCard(vm) }
-        } else item { LoadingMarketCard() }
+        } else item { LoadingMarketCard(vm.refreshWarning) }
     }
 }
 
@@ -1326,12 +1339,14 @@ private fun SectionTitle(title: String, subtitle: String) {
 }
 
 @Composable
-private fun LoadingMarketCard() {
+private fun LoadingMarketCard(message: String? = null) {
     Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(20.dp)).background(Panel), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(color = Purple)
-            Spacer(Modifier.height(10.dp))
-            Text("Reading live market data...", color = Muted)
+            if (message == null) {
+                CircularProgressIndicator(color = Purple)
+                Spacer(Modifier.height(10.dp))
+            }
+            Text(message ?: "Reading live market data...", color = Muted)
         }
     }
 }
@@ -1353,6 +1368,7 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 val d = a.tradeDecision
                 val heroText = when {
                     d.status == "MARKET_CLOSED" -> "CLOSED"
+                    d.status == "HISTORY_UNAVAILABLE" -> "NO CANDLES"
                     d.status == "DATA_STALE" -> "DELAYED"
                     d.status == "REJECTED_CONFLICT" -> "FILTERED"
                     d.direction == "WAIT" -> "WATCHING"
