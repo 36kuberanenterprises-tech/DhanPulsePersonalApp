@@ -526,7 +526,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       ? await confirmedBrokerCandles(session, uExchange, String(underlying.token), interval, now, segment)
       : await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE', segment);
   } catch (e) {
-    if (segment !== 'MCX' && !sensexFamiliesEnabled) throw e;
+    if (segment !== 'MCX' && symbol !== 'SENSEX') throw e;
     // Some broker index tokens supply a quote but reject historical candles.
     // Keep the index visible without fabricating a trend or an option call.
     return {

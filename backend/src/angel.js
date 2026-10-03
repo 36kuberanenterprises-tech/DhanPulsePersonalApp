@@ -2,6 +2,29 @@ import { ProxyAgent, request as undiciRequest } from 'undici';
 const ROOT = 'https://apiconnect.angelone.in';
 const MASTER_URL = 'https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json';
 const REGISTERED_PUBLIC_IP = process.env.CLIENT_PUBLIC_IP || '34.70.199.153';
+// All index, stock scanner and backtest history calls share one broker limit.
+// Reserve starts centrally so parallel screens cannot burst this endpoint.
+const CANDLE_REQUEST_GAP_MS = 1100;
+const CANDLE_RATE_COOLDOWN_MS = 60_000;
+let nextCandleRequestAt = 0;
+let candleRateBlockedUntil = 0;
+let candleRequestQueue = Promise.resolve();
+
+async function reserveCandleRequest() {
+  const permit = candleRequestQueue.then(async () => {
+    if (Date.now() < candleRateBlockedUntil) {
+      throw new Error('Candle data: Angel One rejected historical requests for exceeding access rate (HTTP 403). Retrying after cooldown.');
+    }
+    const delay = Math.max(0, nextCandleRequestAt - Date.now());
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    if (Date.now() < candleRateBlockedUntil) {
+      throw new Error('Candle data: Angel One rejected historical requests for exceeding access rate (HTTP 403). Retrying after cooldown.');
+    }
+    nextCandleRequestAt = Date.now() + CANDLE_REQUEST_GAP_MS;
+  });
+  candleRequestQueue = permit.catch(() => {});
+  return permit;
+}
 
 function baseHeaders(apiKey, jwt) {
   const h = {
@@ -69,10 +92,18 @@ export async function marketData(session, exchangeTokens, mode = 'FULL') {
 }
 
 export async function candleData(session, payload) {
-  return jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
-    method: 'POST', headers: baseHeaders(session.apiKey, session.jwt),
-    body: JSON.stringify(payload)
-  }, 'Candle data');
+  await reserveCandleRequest();
+  try {
+    return await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
+      method: 'POST', headers: baseHeaders(session.apiKey, session.jwt),
+      body: JSON.stringify(payload)
+    }, 'Candle data');
+  } catch (error) {
+    if (/exceeding access rate|rate limit|too many requests|AB1021/i.test(String(error?.message || ''))) {
+      candleRateBlockedUntil = Math.max(candleRateBlockedUntil, Date.now() + CANDLE_RATE_COOLDOWN_MS);
+    }
+    throw error;
+  }
 }
 
 
