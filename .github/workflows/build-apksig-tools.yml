@@ -36,3 +36,4 @@ jobs:
             out/apksigverify
           if-no-files-found: error
           retention-days: 7
+# rebuild marker 2026-10-03 stable signer
