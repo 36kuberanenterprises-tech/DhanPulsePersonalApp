@@ -1,0 +1,235 @@
+name: Build DhanPulse v2.6.9 Delta Holder Verify APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'v220-src/**'
+      - 'v23-patch/**'
+      - 'v231-patch/**'
+      - 'v232-patch/**'
+      - 'v233-patch/**'
+      - 'v234-patch/**'
+      - 'v240-patch/**'
+      - 'v250-patch/**'
+      - 'v251-patch/**'
+      - 'v260-patch/**'
+      - 'v261-patch/**'
+      - 'v262-patch/**'
+      - 'v263-patch/**'
+      - 'v264-patch/**'
+      - 'v265-patch/**'
+      - 'v266-patch/**'
+      - 'v267-patch/**'
+      - 'v268-patch/**'
+      - 'v269-patch/**'
+      - '.github/workflows/build-crypto-forex-v269.yml'
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Reconstruct DhanPulse v2.2 base
+        run: |
+          cat v220-src/project.part00 v220-src/project.part01 v220-src/project.part02 v220-src/project.part03_04a v220-src/project.part04b0_04b1 v220-src/project.part04c_04d v220-src/project.part04e v220-src/project.part04f v220-src/project.part05_06 | base64 -d > /tmp/dhanpulse-v220-project.zip
+          unzip -t /tmp/dhanpulse-v220-project.zip
+          rm -rf crypto-forex-app/buildsrc
+          mkdir -p crypto-forex-app/buildsrc
+          unzip -q /tmp/dhanpulse-v220-project.zip -d crypto-forex-app/buildsrc
+
+      - name: Apply V2.3 research adaptive patch
+        run: |
+          cat v23-patch/part00.txt v23-patch/part01.txt v23-patch/part02.txt v23-patch/part03.txt v23-patch/part04.txt v23-patch/part05.txt v23-patch/part06.txt v23-patch/part07.txt > /tmp/v23_patch.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/v23_patch.py')
+          x=p.read_text()
+          x=x.replace("block='/* V2.3 research adaptive", "block='''/* V2.3 research adaptive", 1)
+          x=x.replace("window.__nativeDecisionAuthority=false;'\ns=s[:start]+block+s[end:]", "window.__nativeDecisionAuthority=false;'''\ns=s[:start]+block+s[end:]", 1)
+          p.write_text(x)
+          PY
+          python /tmp/v23_patch.py
+
+      - name: Apply V2.3.1 patch
+        run: |
+          cat v231-patch/part00.patch v231-patch/part01.patch v231-patch/part02.patch v231-patch/part03.patch > /tmp/v231.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v231.patch
+          mkdir -p app/src/main/res/drawable-nodpi
+          cp app/src/main/assets/dhanpulse_logo_v214.jpg app/src/main/res/drawable-nodpi/dhanpulse_logo.jpg
+
+      - name: Apply V2.3.2 patch
+        run: |
+          cat v232-patch/part00.patch v232-patch/part01.patch v232-patch/part02.patch v232-patch/part03.patch v232-patch/part04.patch > /tmp/v232.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v232.patch
+
+      - name: Apply V2.3.3 native stream patch
+        run: |
+          cat v233-patch/part00.patch v233-patch/part01.patch v233-patch/part02.patch v233-patch/part03.patch v233-patch/part04.patch v233-patch/part05.patch > /tmp/v233.patch
+          printf '\n' >> /tmp/v233.patch
+          cd crypto-forex-app/buildsrc
+          patch -p1 < /tmp/v233.patch
+
+      - name: Apply V2.3.4 lock screen fix
+        run: |
+          cd crypto-forex-app/buildsrc
+          patch -p1 < ../../v234-patch/v234.patch
+
+      - name: Apply V2.4 precision fast engine
+        run: python v240-patch/apply_v240.py
+
+      - name: Apply V2.5 news intelligence and shadow lab
+        run: |
+          cat v250-patch/part00.py v250-patch/part01.py v250-patch/part02.py > /tmp/apply_v250.py
+          python /tmp/apply_v250.py
+
+      - name: Apply V2.5.1 continuous background fix
+        run: python v251-patch/apply_v251.py
+
+      - name: Apply V2.6 ICT early structure engine
+        run: |
+          cat v260-patch/part00.py v260-patch/part01.py v260-patch/part02.py v260-patch/part03.py > /tmp/apply_v260_ict.py
+          python /tmp/apply_v260_ict.py
+
+      - name: Apply V2.6.1 history preservation
+        run: python v261-patch/apply_v261.py
+
+      - name: Apply V2.6.2 stable migration
+        run: python v262-patch/apply_v262.py
+
+      - name: Apply V2.6.3 opportunity engine
+        run: python v263-patch/apply_v263.py
+
+      - name: Apply V2.6.4 clear trade gate
+        run: python v264-patch/apply_v264.py
+
+      - name: Apply V2.6.5 live trade clarity
+        run: python v265-patch/apply_v265.py
+
+      - name: Apply Delta only market conversion
+        run: |
+          cat v261-patch/delta_part00.gz.b64 v261-patch/delta_part01.gz.b64 | base64 -d | gzip -dc > /tmp/apply_delta.py
+          echo "ed06dff56181bae9b3edff473c7081770e34d7a18c0dd7eb15ed0d4d2132ce07  /tmp/apply_delta.py" | sha256sum -c -
+          python /tmp/apply_delta.py
+
+      - name: Apply V2.6.6 Delta compatibility
+        run: python v266-patch/apply_v266.py
+
+      - name: Apply V2.6.7 Delta production only lock
+        run: |
+          python v267-patch/apply_v267.py
+          cd crypto-forex-app/buildsrc
+          grep -nE 'applicationId|versionCode|versionName' app/build.gradle.kts
+          grep -nE 'Version 2.6.7 Delta Production Only|Delta Exchange India PROD|api.india.delta.exchange|public-socket.india.delta.exchange|dhanpulse_cf_android_trades_master' app/src/main/assets/index.html
+          grep -nE 'public-socket.india.delta.exchange|api.india.delta.exchange|DELTA WS|DELTA REST' app/src/main/java/com/dhanpulse/cryptofxv11/DhanPulseMonitorService.java
+          ! grep -RqiE 'binance|twelvedata|gdeltproject|dhanpulse_td_key|ws\.twelvedata|fapi\.binance|fstream\.binance|api\.gdeltproject' app/src/main
+          ! grep -RqiE 'cdn-ind\.testnet|testnet\.deltaex|demo\.delta' app/src/main
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('app/src/main/assets/index.html').read_text()
+          js=s[s.index('<script>')+8:s.rindex('</script>')]
+          Path('/tmp/app.js').write_text(js)
+          b=Path('app/build.gradle.kts').read_text()
+          assert 'applicationId = "com.dhanpulse.cryptofxstablev263"' in b
+          assert 'versionName = "2.6.7"' in b
+          assert 'Version 2.6.7 Delta Production Only' in s
+          assert 'https://api.india.delta.exchange' in s
+          assert 'wss://public-socket.india.delta.exchange' in s
+          assert 'dhanpulse_cf_android_trades_master' in s
+          assert 'BTCUSD' in s and 'ETHUSD' in s
+          assert 'window.__dpProviderStatus' in s
+          PY
+          node --check /tmp/app.js
+
+      - name: Apply V2.6.8 secure Delta account verification
+        run: |
+          python v268-patch/apply_v268.py
+          cd crypto-forex-app/buildsrc
+          grep -nE 'applicationId|versionCode|versionName' app/build.gradle.kts
+          grep -nE 'Version 2.6.8 Delta Account Verify|Delta Account Verification|deltaApiKey|deltaApiSecret|deltaUserId|deltaNetEquity' app/src/main/assets/index.html
+          grep -nE 'DeltaAccountManager|saveAndVerifyDeltaCredentials|refreshDeltaAccount|deltaCredentialStatus' app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java
+          grep -nE 'wallet/balances|users/trading_preferences|sub_accounts|EncryptedSharedPreferences|HmacSHA256' app/src/main/java/com/dhanpulse/cryptofxv11/DeltaAccountManager.java
+          ! grep -RqiE 'binance|twelvedata|gdeltproject|dhanpulse_td_key|ws\.twelvedata|fapi\.binance|fstream\.binance|api\.gdeltproject' app/src/main
+          ! grep -RqiE 'SqPcinceNSjCj610PkPJfiEJEehyfw' app
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('app/src/main/assets/index.html').read_text()
+          js=s[s.index('<script>')+8:s.rindex('</script>')]
+          Path('/tmp/app.js').write_text(js)
+          b=Path('app/build.gradle.kts').read_text()
+          assert 'applicationId = "com.dhanpulse.cryptofxstablev263"' in b
+          assert 'versionName = "2.6.8"' in b
+          assert 'androidx.security:security-crypto:1.0.0' in b
+          assert 'Delta Account Verification' in s
+          assert 'window.__deltaAccountResult' in s
+          assert 'https://api.india.delta.exchange' in Path('app/src/main/java/com/dhanpulse/cryptofxv11/DeltaAccountManager.java').read_text()
+          PY
+          node --check /tmp/app.js
+
+      - name: Apply V2.6.9 verified Delta holder name
+        run: |
+          python v269-patch/apply_v269.py
+          cd crypto-forex-app/buildsrc
+          grep -nE 'versionCode|versionName' app/build.gradle.kts
+          grep -nE 'Version 2.6.9 Delta Holder Verify|deltaHolderName|Account Holder' app/src/main/assets/index.html
+          grep -nE 'holderName|first_name|last_name|sub_accounts' app/src/main/java/com/dhanpulse/cryptofxv11/DeltaAccountManager.java
+          ! grep -RqiE 'binance|twelvedata|gdeltproject|dhanpulse_td_key|ws\.twelvedata|fapi\.binance|fstream\.binance|api\.gdeltproject' app/src/main
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('app/src/main/assets/index.html').read_text()
+          js=s[s.index('<script>')+8:s.rindex('</script>')]
+          Path('/tmp/app.js').write_text(js)
+          b=Path('app/build.gradle.kts').read_text()
+          assert 'versionName = "2.6.9"' in b
+          assert 'id="deltaHolderName"' in s
+          m=Path('app/src/main/java/com/dhanpulse/cryptofxv11/DeltaAccountManager.java').read_text()
+          assert 'holderName' in m and '/v2/sub_accounts' in m
+          PY
+          node --check /tmp/app.js
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "sdk.dir=$ANDROID_HOME" > crypto-forex-app/buildsrc/local.properties
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build installable debug APK
+        working-directory: crypto-forex-app/buildsrc
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Prepare APK artifact
+        run: |
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_v2.6.9_Delta_Holder_Verify.apk
+          sha256sum DhanPulse_v2.6.9_Delta_Holder_Verify.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DhanPulse-v2.6.9-Delta-Holder-Verify
+          path: DhanPulse_v2.6.9_Delta_Holder_Verify.apk
+          if-no-files-found: error
+          retention-days: 30
