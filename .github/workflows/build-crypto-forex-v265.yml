@@ -161,7 +161,7 @@ jobs:
           assert 'versionName = "2.6.5"' in b
           assert 'V2.6.5 Live Trade Clarity.' in s
           assert 'v265ValidPlan' in s
-          assert 'legacy research records are shown only in Strategy Backtest History' in s
+          assert 'Legacy research records are shown only in Strategy Backtest History' in s
           PY
           node --check /tmp/app.js
 
