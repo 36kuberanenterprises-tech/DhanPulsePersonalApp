@@ -129,8 +129,8 @@ jobs:
         run: |
           python v264-patch/apply_v264.py
           cd crypto-forex-app/buildsrc
-          grep -n 'applicationId\\|versionCode\\|versionName' app/build.gradle.kts
-          grep -n 'Version 2.6.4 Clear Trade Gate\\|Selected ATR %\\|1m ATR %\\|LEGACY IMPORT' app/src/main/assets/index.html
+          grep -nE 'applicationId|versionCode|versionName' app/build.gradle.kts
+          grep -nE 'Version 2.6.4 Clear Trade Gate|Selected ATR %|1m ATR %|LEGACY IMPORT' app/src/main/assets/index.html
           python - <<'PY'
           from pathlib import Path
           s=Path('app/src/main/assets/index.html').read_text()
