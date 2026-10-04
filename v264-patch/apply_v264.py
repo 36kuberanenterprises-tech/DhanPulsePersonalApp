@@ -146,3 +146,5 @@ bs = re.sub(r'applicationId\s*=\s*"[^"]+"', 'applicationId = "com.dhanpulse.cryp
 bs = re.sub(r'versionCode\s*=\s*\d+', 'versionCode = 35', bs, count=1)
 bs = re.sub(r'versionName\s*=\s*"[^"]+"', 'versionName = "2.6.4"', bs, count=1)
 b.write_text(bs)
+
+# workflow retrigger
