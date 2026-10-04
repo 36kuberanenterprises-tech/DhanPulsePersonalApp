@@ -407,3 +407,10 @@ if 'private void deliverDeltaAccountResult' not in m:
     m = m.replace(method_anchor, '\n' + deliver + '    @Override\n    protected void onDestroy()', 1)
 
 ma.write_text(m)
+
+# Enable AndroidX for encrypted credential storage.
+gp = root / 'gradle.properties'
+gps = gp.read_text() if gp.exists() else ''
+if 'android.useAndroidX=true' not in gps:
+    gps += ('\n' if gps and not gps.endswith('\n') else '') + 'android.useAndroidX=true\n'
+gp.write_text(gps)
