@@ -54,7 +54,7 @@ s = s.replace('Delta Live Stream', 'Delta Production Live Stream')
 # Late runtime guard. It intentionally exposes no credential fields and documents the single provider.
 guard = r'''
 /* V2.6.7 Delta Production Only provider lock.
-   No Binance, Twelve Data, GDELT, testnet or other market/news provider is used.
+   Only Delta Exchange India production endpoints are used.
    Public Delta Exchange India market data needs no API credential. */
 var V267={version:'2.6.7',provider:'DELTA_EXCHANGE_INDIA_PRODUCTION',
   rest:'https://api.india.delta.exchange',
