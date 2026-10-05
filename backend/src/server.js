@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
-import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs } from './angel.js';
+import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, getEgressIp } from './angel.js';
 import { analyse, marketDataState } from './analysis.js';
 import { openAngelPriceStream, streamInstrument } from './live-stream.js';
 import { runBacktest } from './backtest.js';
@@ -27,26 +27,6 @@ const nextIndiaMidnight = now => {
   const indiaTime = new Date(now + IST_OFFSET_MS);
   return Date.UTC(indiaTime.getUTCFullYear(), indiaTime.getUTCMonth(), indiaTime.getUTCDate() + 1) - IST_OFFSET_MS;
 };
-let egressIpCache = { at: 0, ip: null };
-
-async function getEgressIp() {
-  if (egressIpCache.ip && Date.now() - egressIpCache.at < 10 * 60 * 1000) return egressIpCache.ip;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
-  try {
-    const r = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
-    if (!r.ok) return null;
-    const data = await r.json();
-    const ip = String(data?.ip || '').trim() || null;
-    if (ip) egressIpCache = { at: Date.now(), ip };
-    return ip;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function orderGatewayState() {
   const registeredPublicIp = String(process.env.CLIENT_PUBLIC_IP || '34.70.199.153').trim();
   const registeredSecondaryIp = String(process.env.CLIENT_SECONDARY_PUBLIC_IP || '').trim() || null;

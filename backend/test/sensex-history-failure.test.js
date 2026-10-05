@@ -19,6 +19,7 @@ test('a SENSEX history rate rejection is shown as unavailable for new and older 
   try {
     globalThis.fetch = async url => {
       const path = String(url);
+      if (path.includes('api.ipify.org')) return new Response('{"ip":"74.220.52.132"}');
       if (path.includes('OpenAPIScripMaster.json')) return new Response(JSON.stringify(master), { status: 200 });
       if (path.includes('/market/v1/quote/')) return new Response(JSON.stringify({ status: true,
         data: { fetched: [{ symbolToken: '99919000', ltp: 55_100, exchFeedTime: feedTime },

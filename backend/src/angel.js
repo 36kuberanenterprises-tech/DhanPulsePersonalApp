@@ -2,6 +2,27 @@ import { ProxyAgent, request as undiciRequest } from 'undici';
 const ROOT = 'https://apiconnect.angelone.in';
 const MASTER_URL = 'https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json';
 const REGISTERED_PUBLIC_IP = process.env.CLIENT_PUBLIC_IP || '34.70.199.153';
+let egressIpCache = { at: 0, ip: null };
+let egressIpInFlight = null;
+export async function getEgressIp() {
+  if (egressIpCache.ip && Date.now() - egressIpCache.at < 10 * 60_000) return egressIpCache.ip;
+  if (egressIpInFlight) return egressIpInFlight;
+  egressIpInFlight = (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    try {
+      const r = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+      if (!r.ok) return null;
+      const ip = String((await r.json())?.ip || '').trim();
+      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return null;
+      egressIpCache = { at: Date.now(), ip };
+      return ip;
+    } catch { return null; }
+    finally { clearTimeout(timer); }
+  })();
+  try { return await egressIpInFlight; }
+  finally { egressIpInFlight = null; }
+}
 // All index, stock scanner and backtest history calls share one broker limit.
 // Reserve starts centrally so parallel screens cannot burst this endpoint.
 const CANDLE_REQUEST_GAP_MS = 1100;
@@ -42,7 +63,7 @@ async function reserveCandleRequest() {
   return permit;
 }
 
-function baseHeaders(apiKey, jwt) {
+function baseHeaders(apiKey, jwt, publicIp = REGISTERED_PUBLIC_IP) {
   const h = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -50,7 +71,7 @@ function baseHeaders(apiKey, jwt) {
     'X-UserType': 'USER',
     'X-SourceID': 'WEB',
     'X-ClientLocalIP': process.env.CLIENT_LOCAL_IP || '127.0.0.1',
-    'X-ClientPublicIP': REGISTERED_PUBLIC_IP,
+    'X-ClientPublicIP': publicIp,
     'X-MACAddress': process.env.CLIENT_MAC || '00:00:00:00:00:00'
   };
   if (jwt) h.Authorization = `Bearer ${jwt.replace(/^Bearer\s+/i, '')}`;
@@ -112,9 +133,11 @@ export async function marketData(session, exchangeTokens, mode = 'FULL', orderSa
 export async function candleData(session, payload) {
   await reserveCandleRequest();
   await reserveBrokerRead();
+  const publicIp = await getEgressIp();
+  if (!publicIp) throw new Error('Candle data: unable to verify server outbound IP; history request paused.');
   try {
     return await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
-      method: 'POST', headers: baseHeaders(session.apiKey, session.jwt),
+      method: 'POST', headers: baseHeaders(session.apiKey, session.jwt, publicIp),
       body: JSON.stringify(payload)
     }, 'Candle data');
   } catch (error) {
