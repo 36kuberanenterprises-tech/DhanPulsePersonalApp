@@ -382,6 +382,50 @@ function selectBestContract(chain, optionType, spot, requireDepth = false) {
   };
 }
 
+async function optionEvidenceWithoutHistory(session, rows, symbol, spot, now, marketStatus, quotes, trackedRow) {
+  const empty = { expiry: null, atm: null, nearAtmPcr: null, pcrCoverage: '0/0 paired strikes',
+    totalCeOi: null, totalPeOi: null, support: null, resistance: null, contracts: [] };
+  if (!(spot > 0) || !Number.isFinite(spot)) return { optionChain: empty, trackedContract: null };
+
+  const window = resolveOptionWindow(rows, symbol, spot, 5, now.getTime());
+  optionWindowCache.set(symbol, window);
+  const byToken = new Map(quotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
+  const missing = window.contracts.filter(c => !byToken.has(String(c.token)));
+  if (missing.length) {
+    const tokens = {};
+    for (const c of missing) (tokens[c.exch_seg] ||= []).push(String(c.token));
+    try {
+      await sleep(1100);
+      for (const q of parseFetched(await marketData(session, tokens, 'FULL'))) {
+        byToken.set(String(q.symbolToken ?? q.symboltoken ?? q.token), q);
+      }
+    } catch { /* The index quote remains visible when option quotes are denied. */ }
+  }
+  const chain = window.contracts.map(c => {
+    const q = byToken.get(String(c.token)) || {};
+    const age = quoteFeedAgeMs(q, now.getTime());
+    const fresh = marketStatus === 'LIVE' && age != null && age >= -30_000 && age <= 90_000;
+    const ltp = quoteLtp(q);
+    const symbolName = String(c.symbol || '');
+    return { token: String(c.token), tradingSymbol: c.symbol, exchange: c.exch_seg, strike: c.strikeN,
+      optionType: /PE$/i.test(symbolName) ? 'PE' : 'CE', ltp: fresh && ltp > 0 ? round(ltp) : null,
+      oi: fresh ? quoteOi(q) : 0, lotSize: Number(c.lotsize || 0),
+      bid: null, ask: null, bidQty: 0, askQty: 0 };
+  }).sort((a, b) => a.strike - b.strike || a.optionType.localeCompare(b.optionType));
+  const { ceOi, peOi, pcr, coverage } = nearAtmOi(chain, spot);
+  const sr = pickSupportResistance(chain, spot);
+  const trackedQuote = trackedRow ? byToken.get(String(trackedRow.token)) : null;
+  const trackedAge = quoteFeedAgeMs(trackedQuote, now.getTime());
+  const trackedContract = trackedRow && trackedQuote && quoteLtp(trackedQuote) > 0 &&
+    trackedAge != null && trackedAge >= -30_000 && trackedAge <= 90_000 ? {
+      token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
+      exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
+    } : null;
+  return { optionChain: { expiry: window.expiry, atm: window.atm, nearAtmPcr: round(pcr),
+    pcrCoverage: coverage, totalCeOi: ceOi || null, totalPeOi: peOi || null,
+    support: sr.support, resistance: sr.resistance, contracts: chain }, trackedContract };
+}
+
 export function buildTradeDecision({ engine, trend, htf, oi, pcr = null, regime, sr, spot, atrValue, selected, segment = 'EQUITY', energy = false, now = new Date(), expiry = null, allowOiCaution = false }) {
   const direction = engine.signal;
   const votes = [
@@ -537,22 +581,31 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   } catch (e) {
     if (segment !== 'MCX' && symbol !== 'SENSEX') throw e;
     // Some broker index tokens supply a quote but reject historical candles.
-    // Keep the index visible without fabricating a trend or an option call.
+    // Show independently verified option quotes without inventing a price trend
+    // or allowing a trade from OI alone.
+    const evidence = await optionEvidenceWithoutHistory(session, rows, symbol, spot, now,
+      marketStatus, fetchedQuotes, trackedRow);
+    const fq = future ? byTokenQuote.get(String(future.token)) : null;
+    const futureAge = quoteFeedAgeMs(fq, now.getTime());
+    const average = Number(fq?.avgPrice ?? fq?.averagePrice ?? 0);
+    const futureAverage = marketStatus === 'LIVE' && futureAge != null && futureAge >= -30_000 &&
+      futureAge <= 90_000 && quoteLtp(fq) > 0 && average > 0 ? round(average) : null;
     return {
       symbol, segment, instrumentType: energy ? 'ENERGY' : 'INDEX', timestamp: now.toISOString(), timeframe: interval,
       signal: 'WAIT', dataFresh: false,
       ruleScore: { bullish: 0, bearish: 0, considered: 0 },
       market: { ltp: round(spot), instrumentLabel, feedTime: uq.exchFeedTime || null, lastCandleTime: null,
-        ema9: null, ema15: null, vwap: null, vwapSource: 'Historical market candles unavailable',
+        ema9: null, ema15: null, vwap: futureAverage,
+        vwapSource: futureAverage == null ? 'Futures traded average unavailable; broker candles are also unavailable'
+          : `Broker traded average: ${future.symbol || future.name} (quote reference only; candles unavailable)`,
         rsi: null, macdHistogram: null, supertrend: null, atr: null },
-      optionChain: { expiry: null, atm: null, nearAtmPcr: null, pcrCoverage: '0/0 paired strikes',
-        totalCeOi: null, totalPeOi: null, support: null, resistance: null, contracts: [] },
-      suggestedContract: null, trackedContract: null,
+      optionChain: evidence.optionChain,
+      suggestedContract: null, trackedContract: evidence.trackedContract,
       tradeDecision: { direction: 'WAIT', status: 'HISTORY_UNAVAILABLE', setupAllowed: false, autoEntryAllowed: false,
         supportingVotes: 0, totalVotes: 0, alignmentPct: 0, regime: 'UNKNOWN', regimeSuitable: false,
         strategyVotes: [], conflicts: [], cautions: [], selectedContractReason: null, selectedContractScore: null,
         message: `${energy ? 'Futures' : 'Index'} quote is visible, but broker candles for ${symbol} are unavailable. Calls are paused until history is available. ${e.message}` },
-      levels: null, rules: [], notes: ['No directional option buying call is generated without historical market candles.']
+      levels: null, rules: [], notes: ['Option quotes and OI are reference data only. No directional option buying call is generated without historical market candles.']
     };
   }
   if (!Number.isFinite(spot) || spot <= 0) spot = Number(candles[candles.length - 1]?.close);
