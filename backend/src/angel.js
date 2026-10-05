@@ -36,6 +36,8 @@ let candleRateBlockedUntil = 0;
 let candleRequestQueue = Promise.resolve();
 let nextBrokerReadAt = 0;
 let brokerReadQueue = Promise.resolve();
+const recentCandleStarts = [];
+let candleStartsSinceLaunch = 0;
 
 async function reserveBrokerRead() {
   const permit = brokerReadQueue.then(async () => {
@@ -135,12 +137,25 @@ export async function candleData(session, payload) {
   await reserveBrokerRead();
   const publicIp = await getEgressIp();
   if (!publicIp) throw new Error('Candle data: unable to verify server outbound IP; history request paused.');
+  const startedAt = Date.now();
+  while (recentCandleStarts.length && recentCandleStarts[0] < startedAt - 60_000) recentCandleStarts.shift();
+  recentCandleStarts.push(startedAt);
+  candleStartsSinceLaunch++;
   try {
     return await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
       method: 'POST', headers: baseHeaders(session.apiKey, session.jwt, publicIp),
       body: JSON.stringify(payload)
     }, 'Candle data');
   } catch (error) {
+    console.warn('CANDLE_REJECTED', JSON.stringify({
+      exchange: payload.exchange,
+      symboltoken: payload.symboltoken,
+      interval: payload.interval,
+      publicIp,
+      requestsThisProcess: candleStartsSinceLaunch,
+      requestsLastMinute: recentCandleStarts.length,
+      reason: String(error?.message || '').slice(0, 200)
+    }));
     if (/exceeding access rate|rate limit|too many requests|AB1021/i.test(String(error?.message || ''))) {
       candleRateBlockedUntil = Math.max(candleRateBlockedUntil, Date.now() + CANDLE_RATE_COOLDOWN_MS);
     }
