@@ -195,21 +195,30 @@ async function liveCandles(session, exchange, token, interval, livePrice, now, a
   return state.candles;
 }
 
-async function confirmedBrokerCandles(session, exchange, token, interval, now, segment = 'EQUITY') {
+export async function confirmedBrokerCandles(session, exchange, token, interval, now, segment = 'EQUITY') {
   const key = [exchange, token, interval, 'confirmed'].join('|');
   const duration = (INTERVAL_MINUTES[interval] || 5) * 60_000;
   const expected = bucketStartFor(new Date(now.getTime() - 20_000), interval, segment).getTime() - duration;
   let state = liveCandleCache.get(key);
   const latestCompleted = state?.candles.filter(c => Date.parse(c.timestamp) + duration + 20_000 <= now.getTime()).at(-1);
-  if (!state || (Date.parse(latestCompleted?.timestamp) < expected && Date.now() - state.loadedAt >= 20_000) ||
-      (!latestCompleted && Date.now() - (state?.loadedAt || 0) >= 20_000)) {
+  // Poll at most once per candle. A broker that publishes a candle late must
+  // not trigger another historical request on every three-second app refresh.
+  if (!state || ((!latestCompleted || Date.parse(latestCompleted.timestamp) < expected) &&
+      Date.now() - (state.lastAttemptAt || state.loadedAt) >= duration)) {
     let lock = candleLoadLocks.get(key);
     if (!lock) {
       lock = loadHistoricalBase(session, exchange, token, interval, now, key, segment)
         .finally(() => candleLoadLocks.delete(key));
       candleLoadLocks.set(key, lock);
     }
-    state = await lock;
+    try { state = await lock; }
+    catch (error) {
+      // Existing broker-confirmed bars may still explain the market. The
+      // strategy's freshness check will return WAIT until a current bar arrives.
+      if (!state?.candles.length) throw error;
+      state = { ...state, lastAttemptAt: Date.now() };
+      liveCandleCache.set(key, state);
+    }
   }
   return state.candles;
 }
