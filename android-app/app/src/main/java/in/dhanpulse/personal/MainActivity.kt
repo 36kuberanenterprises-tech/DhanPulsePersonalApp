@@ -2362,7 +2362,10 @@ fun OptionCard(a: AnalysisResponse) {
             Text("Option intelligence", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
             Text("Market evidence only • CE and PE OI are not trade calls", color = Muted, style = MaterialTheme.typography.bodySmall)
             Text("EXPIRY  ${o.expiry ?: "NA"}", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Text(if (a.dataFresh == false) "Last reported option quotes for reference only. No live OI vote or new calls." else "PCR uses fresh paired CE and PE quotes near ATM. Support and resistance use the highest OI strikes in the displayed window.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            Text(if (a.tradeDecision.status == "HISTORY_UNAVAILABLE")
+                "Available option quotes are market reference only. Without index candles, OI and PCR cannot authorise a call."
+                else if (a.dataFresh == false) "Last reported option quotes for reference only. No live OI vote or new calls."
+                else "PCR uses fresh paired CE and PE quotes near ATM. Support and resistance use the highest OI strikes in the displayed window.", color = Muted, style = MaterialTheme.typography.labelSmall)
             o.pcrCoverage?.let { Text("PCR coverage: $it", color = Muted, fontSize = 10.sp) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LevelTile("SUPPORT", n(o.support), Green, Modifier.weight(1f))
