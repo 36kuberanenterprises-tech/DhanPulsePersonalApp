@@ -44,13 +44,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var keepScreenOn by mutableStateOf(displayPrefs.getBoolean("keep_screen_on", false))
         private set
 
-    fun setThemeMode(mode: String) {
+    fun updateThemeMode(mode: String) {
         if (mode !in setOf("SYSTEM", "LIGHT", "DARK")) return
         themeMode = mode
         displayPrefs.edit().putString("theme_mode", mode).apply()
     }
 
-    fun setKeepScreenOn(enabled: Boolean) {
+    fun updateKeepScreenOn(enabled: Boolean) {
         keepScreenOn = enabled
         displayPrefs.edit().putBoolean("keep_screen_on", enabled).apply()
     }

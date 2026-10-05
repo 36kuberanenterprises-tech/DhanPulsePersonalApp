@@ -1342,7 +1342,7 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                 Column {
                     listOf("SYSTEM" to "System", "LIGHT" to "Light", "DARK" to "Dark").forEach { (mode, label) ->
                         Row(
-                            Modifier.fillMaxWidth().clickable { vm.setThemeMode(mode); showThemeDialog = false }
+                            Modifier.fillMaxWidth().clickable { vm.updateThemeMode(mode); showThemeDialog = false }
                                 .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1378,7 +1378,7 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                     }
                     HorizontalDivider(color = Line)
                     Row(
-                        Modifier.fillMaxWidth().clickable { vm.setKeepScreenOn(!vm.keepScreenOn) }.padding(vertical = 6.dp),
+                        Modifier.fillMaxWidth().clickable { vm.updateKeepScreenOn(!vm.keepScreenOn) }.padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
