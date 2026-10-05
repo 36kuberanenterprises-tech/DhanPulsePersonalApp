@@ -1,10 +1,12 @@
 package `in`.dhanpulse.personal
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +35,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -49,17 +52,34 @@ import `in`.dhanpulse.personal.ui.DhanPulseViewModel
 import kotlin.math.abs
 
 
-private val AppBg = Color(0xFF08101C)
-private val Panel = Color(0xFF101A29)
-private val Panel2 = Color(0xFF162235)
-private val Line = Color(0xFF25354A)
-private val Ink = Color(0xFFF5F8FC)
-private val Muted = Color(0xFF8FA3BA)
-private val Purple = Color(0xFF7A5AF8)
-private val Blue = Color(0xFF4B9BFF)
-private val Green = Color(0xFF25D39A)
-private val Red = Color(0xFFFF6474)
-private val Amber = Color(0xFFFFBD5C)
+private data class DisplayPalette(
+    val appBg: Color, val panel: Color, val panel2: Color, val line: Color,
+    val ink: Color, val muted: Color, val purple: Color, val blue: Color,
+    val green: Color, val red: Color, val amber: Color
+)
+
+private val DarkPalette = DisplayPalette(
+    Color(0xFF08101C), Color(0xFF101A29), Color(0xFF162235), Color(0xFF25354A),
+    Color(0xFFF5F8FC), Color(0xFF8FA3BA), Color(0xFF7A5AF8), Color(0xFF4B9BFF),
+    Color(0xFF25D39A), Color(0xFFFF6474), Color(0xFFFFBD5C)
+)
+private val LightPalette = DisplayPalette(
+    Color(0xFFF6F8FC), Color.White, Color(0xFFEBF0F7), Color(0xFFD4DEEA),
+    Color(0xFF132238), Color(0xFF52647A), Color(0xFF6548D7), Color(0xFF155FAF),
+    Color(0xFF087951), Color(0xFFB93C52), Color(0xFF95610E)
+)
+private val LocalDisplayPalette = staticCompositionLocalOf { DarkPalette }
+private val AppBg: Color @Composable get() = LocalDisplayPalette.current.appBg
+private val Panel: Color @Composable get() = LocalDisplayPalette.current.panel
+private val Panel2: Color @Composable get() = LocalDisplayPalette.current.panel2
+private val Line: Color @Composable get() = LocalDisplayPalette.current.line
+private val Ink: Color @Composable get() = LocalDisplayPalette.current.ink
+private val Muted: Color @Composable get() = LocalDisplayPalette.current.muted
+private val Purple: Color @Composable get() = LocalDisplayPalette.current.purple
+private val Blue: Color @Composable get() = LocalDisplayPalette.current.blue
+private val Green: Color @Composable get() = LocalDisplayPalette.current.green
+private val Red: Color @Composable get() = LocalDisplayPalette.current.red
+private val Amber: Color @Composable get() = LocalDisplayPalette.current.amber
 
 private fun mcxName(symbol: String): String = when (symbol) {
     "CRUDEOIL" -> "Crude Oil"
@@ -69,23 +89,40 @@ private fun mcxName(symbol: String): String = when (symbol) {
     else -> symbol
 }
 
-private val AppColors = darkColorScheme(
-    primary = Purple,
-    secondary = Blue,
-    background = AppBg,
-    surface = Panel,
-    surfaceVariant = Panel2,
-    outline = Line,
-    onBackground = Ink,
-    onSurface = Ink,
-    onSurfaceVariant = Muted,
-    error = Red,
-    tertiary = Amber
-)
+private fun displayColorScheme(p: DisplayPalette, dark: Boolean): ColorScheme {
+    val defaults = if (dark) darkColorScheme() else lightColorScheme()
+    return defaults.copy(
+        primary = p.purple, onPrimary = Color.White, secondary = p.blue,
+        background = p.appBg, surface = p.panel, surfaceVariant = p.panel2,
+        outline = p.line, onBackground = p.ink, onSurface = p.ink,
+        onSurfaceVariant = p.muted, error = p.red, tertiary = p.amber
+    )
+}
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme(colorScheme = AppColors) { Surface(Modifier.fillMaxSize(), color = AppBg) { DhanPulseApp() } } }
+        setContent {
+            val vm: DhanPulseViewModel = viewModel()
+            val dark = when (vm.themeMode) {
+                "DARK" -> true
+                "LIGHT" -> false
+                else -> isSystemInDarkTheme()
+            }
+            val palette = if (dark) DarkPalette else LightPalette
+            SideEffect {
+                if (vm.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                WindowInsetsControllerCompat(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+            CompositionLocalProvider(LocalDisplayPalette provides palette) {
+                MaterialTheme(colorScheme = displayColorScheme(palette, dark)) {
+                    Surface(Modifier.fillMaxSize(), color = AppBg) { DhanPulseApp(vm) }
+                }
+            }
+        }
     }
 }
 
@@ -102,7 +139,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF0B1424), AppBg)))
+            .background(Brush.verticalGradient(listOf(Panel2, AppBg)))
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = 22.dp)
@@ -884,6 +921,7 @@ private fun CallMilestoneRow(label: String, hitAt: Long?, color: Color) {
     }
 }
 
+@Composable
 private fun callResultColor(status: String): Color = when (status) {
     "T3_HIT", "T2_HIT", "T1_HIT" -> Green
     "SL_HIT" -> Red
@@ -1295,12 +1333,64 @@ private fun BacktestContextBar(vm: DhanPulseViewModel) {
 
 @Composable
 private fun AccountSection(vm: DhanPulseViewModel) {
+    var showThemeDialog by remember { mutableStateOf(false) }
+    if (showThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Theme") },
+            text = {
+                Column {
+                    listOf("SYSTEM" to "System", "LIGHT" to "Light", "DARK" to "Dark").forEach { (mode, label) ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { vm.updateThemeMode(mode); showThemeDialog = false }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = vm.themeMode == mode, onClick = null)
+                            Spacer(Modifier.width(12.dp))
+                            Text(label)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showThemeDialog = false }) { Text("Close") } }
+        )
+    }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { SectionTitle("Account", "Connection, funds and safety controls") }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Settings", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Row(
+                        Modifier.fillMaxWidth().clickable { showThemeDialog = true }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Theme", color = Ink, fontWeight = FontWeight.Bold)
+                            Text("Follow your phone or choose a look", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(vm.themeMode.lowercase().replaceFirstChar { it.uppercase() } + "  ›", color = Muted)
+                    }
+                    HorizontalDivider(color = Line)
+                    Row(
+                        Modifier.fillMaxWidth().clickable { vm.updateKeepScreenOn(!vm.keepScreenOn) }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Keep Screen On", color = Ink, fontWeight = FontWeight.Bold)
+                            Text("While this app is visible", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = vm.keepScreenOn, onCheckedChange = null)
+                    }
+                    Text("Your session still logs out after one hour without interaction.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
         vm.account?.let { item { AccountCard(it, vm::fetchAccount) } }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {

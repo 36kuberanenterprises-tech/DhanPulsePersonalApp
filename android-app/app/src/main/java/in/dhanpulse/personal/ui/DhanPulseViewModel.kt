@@ -32,9 +32,28 @@ import kotlin.math.round
 class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val backendUrl = "https://dhanpulse-personal-api.onrender.com"
     private val sessionStore = SecurePrefs(app)
+    private val displayPrefs = app.getSharedPreferences("dhanpulse_display_settings", 0)
     private val indiaZone = ZoneId.of("Asia/Kolkata")
     private val inactivityLimitMs = 60 * 60 * 1000L
     private var lastActivityWrite = 0L
+
+    var themeMode by mutableStateOf(
+        displayPrefs.getString("theme_mode", "SYSTEM")?.takeIf { it in setOf("SYSTEM", "LIGHT", "DARK") } ?: "SYSTEM"
+    )
+        private set
+    var keepScreenOn by mutableStateOf(displayPrefs.getBoolean("keep_screen_on", false))
+        private set
+
+    fun updateThemeMode(mode: String) {
+        if (mode !in setOf("SYSTEM", "LIGHT", "DARK")) return
+        themeMode = mode
+        displayPrefs.edit().putString("theme_mode", mode).apply()
+    }
+
+    fun updateKeepScreenOn(enabled: Boolean) {
+        keepScreenOn = enabled
+        displayPrefs.edit().putBoolean("keep_screen_on", enabled).apply()
+    }
 
     var sessionId by mutableStateOf<String?>(null)
     var profile by mutableStateOf<UserProfile?>(null)
