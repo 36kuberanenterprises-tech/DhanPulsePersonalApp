@@ -15,8 +15,13 @@ app.use(express.json({ limit: '256kb' }));
 
 const sessions = new Map();
 const analysisCache = new Map();
+const analysisInFlight = new Map();
+const accountCache = new Map();
+const accountInFlight = new Map();
 const liveConnections = new Map();
 const LIVE_ANALYSIS_MIN_MS = 2500;
+const ACCOUNT_CACHE_MS = 15_000;
+const ACCOUNT_ERROR_RETRY_MS = 30_000;
 const IST_OFFSET_MS = 330 * 60 * 1000;
 const nextIndiaMidnight = now => {
   const indiaTime = new Date(now + IST_OFFSET_MS);
@@ -253,11 +258,13 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   const trackedToken = String(req.query.trackedToken || '').trim();
   if (trackedToken && !/^\d{1,12}$/.test(trackedToken)) return res.status(400).json({ error: 'Invalid tracked option token' });
 
-  const sessionId = req.header('X-Session-Id');
   // Keep prior clients on their existing policy; the SENSEX model requires an explicit client opt in.
   const requestedPolicy = req.header('X-DhanPulse-Analysis-Policy');
   const analysisPolicy = ['oi-caution-v1', 'sensex-families-v1'].includes(requestedPolicy) ? requestedPolicy : null;
-  const key = sessionId + '|' + String(req.params.symbol || '').toUpperCase() + '|' + interval + '|' + trackedToken + '|' + (analysisPolicy || 'strict');
+  // Several installed preview versions can be logged into the same account.
+  // Share an identical analysis and its in-flight request across those sessions.
+  const key = req.smartSession.clientCode + '|' + req.smartSession.apiKey + '|' +
+    String(req.params.symbol || '').toUpperCase() + '|' + interval + '|' + trackedToken + '|' + (analysisPolicy || 'strict');
 
   const recent = analysisCache.get(key);
   if (recent && Date.now() - recent.at < (recent.value.dataFresh === false ? 60_000 : LIVE_ANALYSIS_MIN_MS)) {
@@ -265,7 +272,13 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
   }
 
   try {
-    const result = await analyse(req.smartSession, req.params.symbol, interval, trackedToken || null, analysisPolicy);
+    let pending = analysisInFlight.get(key);
+    if (!pending) {
+      pending = analyse(req.smartSession, req.params.symbol, interval, trackedToken || null, analysisPolicy);
+      analysisInFlight.set(key, pending);
+      pending.finally(() => { if (analysisInFlight.get(key) === pending) analysisInFlight.delete(key); }).catch(() => {});
+    }
+    const result = await pending;
     analysisCache.set(key, { at: Date.now(), value: result });
     res.json(result);
   } catch (e) {
@@ -405,16 +418,31 @@ app.get('/api/order/diagnostics', requireSession, async (req, res) => {
 });
 
 app.get('/api/account', requireSession, async (req, res) => {
+  const key = req.smartSession.clientCode + '|' + req.smartSession.apiKey;
+  const cached = accountCache.get(key);
+  if (cached?.value && Date.now() - cached.at < ACCOUNT_CACHE_MS) return res.json(cached.value);
+  if (cached?.retryAt > Date.now()) return res.status(503).json({ error: cached.error });
   try {
-    const [rms, pos, master] = await Promise.all([
-      rmsLimit(req.smartSession),
-      positions(req.smartSession),
-      instrumentMaster().catch(() => [])
-    ]);
-    res.json(summarizeAccount(rms, pos, master));
+    let pending = accountInFlight.get(key);
+    if (!pending) {
+      pending = Promise.all([
+        rmsLimit(req.smartSession),
+        positions(req.smartSession),
+        instrumentMaster().catch(() => [])
+      ]).then(([rms, pos, master]) => summarizeAccount(rms, pos, master));
+      accountInFlight.set(key, pending);
+      pending.finally(() => { if (accountInFlight.get(key) === pending) accountInFlight.delete(key); }).catch(() => {});
+    }
+    const value = await pending;
+    accountCache.set(key, { value, at: Date.now() });
+    res.json(value);
   } catch (e) {
-    console.error('Account refresh failed:', e?.message || e);
-    res.status(503).json({ error: e.message || 'Account data temporarily unavailable' });
+    const error = e.message || 'Account data temporarily unavailable';
+    if (/exceeding access rate|rate limit|too many requests|AB1021/i.test(error)) {
+      if (cached?.retryAt <= Date.now() || !cached?.retryAt) console.error('Account refresh failed:', error);
+      accountCache.set(key, { error, retryAt: Date.now() + ACCOUNT_ERROR_RETRY_MS });
+    } else console.error('Account refresh failed:', error);
+    res.status(503).json({ error });
   }
 });
 
@@ -470,7 +498,7 @@ app.post('/api/order', requireSession, async (req, res) => {
         rows.find(r => r.exch_seg === 'MCX' && r.instrumenttype === 'AMXIDX' &&
           String(r.symbol || '').toUpperCase() === String(contract.name || '').toUpperCase());
       if (!underlying) return res.status(409).json({ error: 'Matching MCX underlying future or index is unavailable. Buy order paused.', traceId });
-      const quotes = parseFetched(await marketData(req.smartSession, { MCX: [token, String(underlying.token)] }, 'FULL'));
+      const quotes = parseFetched(await marketData(req.smartSession, { MCX: [token, String(underlying.token)] }, 'FULL', true));
       const optionQuote = quotes.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === token);
       const underlyingQuote = quotes.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === String(underlying.token));
       const fresh = q => {
@@ -480,7 +508,7 @@ app.post('/api/order', requireSession, async (req, res) => {
       if (!fresh(optionQuote) || !fresh(underlyingQuote)) {
         return res.status(409).json({ error: 'MCX underlying or option quote is unavailable or delayed. Buy order paused.', traceId });
       }
-      const funds = await rmsLimit(req.smartSession);
+      const funds = await rmsLimit(req.smartSession, true);
       const cash = n(funds?.data?.availablecash);
       const premiumCost = quoteLtp(optionQuote) * quantity;
       if (cash < premiumCost || (contract.instrumenttype === 'OPTFUT' && premiumCost > cash * 0.90)) {
@@ -492,7 +520,7 @@ app.post('/api/order', requireSession, async (req, res) => {
 
     let positionProductType = null;
     if (side === 'SELL') {
-      const pos = await positions(req.smartSession);
+      const pos = await positions(req.smartSession, true);
       const current = (Array.isArray(pos?.data) ? pos.data : []).find(p => String(p.symboltoken || p.token) === token);
       const buyQty = n(current?.buyqty);
       const sellQty = n(current?.sellqty);
@@ -523,6 +551,7 @@ app.post('/api/order', requireSession, async (req, res) => {
     };
 
     const order = await routedPlaceOrder(req.smartSession, orderPayload);
+    accountCache.delete(req.smartSession.clientCode + '|' + req.smartSession.apiKey);
     const orderId = order?.data?.orderid || order?.orderId || order?.orderid || null;
     const uniqueOrderId = order?.data?.uniqueorderid || order?.uniqueOrderId || order?.uniqueorderid || null;
 
@@ -533,7 +562,7 @@ app.post('/api/order', requireSession, async (req, res) => {
     if (orderId) {
       try {
         await new Promise(r => setTimeout(r, 700));
-        const book = await orderBook(req.smartSession);
+        const book = await orderBook(req.smartSession, true);
         const rows = Array.isArray(book?.data) ? book.data : [];
         const item = rows.find(x => String(x.orderid || x.orderId || '') === String(orderId));
         if (item) {
@@ -547,7 +576,7 @@ app.post('/api/order', requireSession, async (req, res) => {
 
     let account = null;
     try {
-      const [rms, pos] = await Promise.all([rmsLimit(req.smartSession), positions(req.smartSession)]);
+      const [rms, pos] = await Promise.all([rmsLimit(req.smartSession, true), positions(req.smartSession, true)]);
       account = summarizeAccount(rms, pos);
     } catch {}
 
@@ -579,9 +608,14 @@ app.post('/api/order', requireSession, async (req, res) => {
 
 app.post('/api/auth/logout', requireSession, (req, res) => {
   const id = req.header('X-Session-Id');
+  const session = sessions.get(id);
   liveConnections.get(id)?.();
   sessions.delete(id);
-  for (const key of analysisCache.keys()) if (key.startsWith(id + '|')) analysisCache.delete(key);
+  if (session) {
+    const prefix = session.clientCode + '|' + session.apiKey;
+    for (const key of analysisCache.keys()) if (key.startsWith(prefix + '|')) analysisCache.delete(key);
+    accountCache.delete(prefix);
+  }
   res.json({ ok: true });
 });
 

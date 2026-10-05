@@ -6,9 +6,25 @@ const REGISTERED_PUBLIC_IP = process.env.CLIENT_PUBLIC_IP || '34.70.199.153';
 // Reserve starts centrally so parallel screens cannot burst this endpoint.
 const CANDLE_REQUEST_GAP_MS = 1100;
 const CANDLE_RATE_COOLDOWN_MS = 60_000;
+// Account, quote, diagnostics, and history reads all compete for the same
+// broker account. Pace their starts across app versions and screens; an order
+// and its safety checks must never wait behind the market-data queue.
+const BROKER_READ_GAP_MS = 500;
 let nextCandleRequestAt = 0;
 let candleRateBlockedUntil = 0;
 let candleRequestQueue = Promise.resolve();
+let nextBrokerReadAt = 0;
+let brokerReadQueue = Promise.resolve();
+
+async function reserveBrokerRead() {
+  const permit = brokerReadQueue.then(async () => {
+    const delay = Math.max(0, nextBrokerReadAt - Date.now());
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    nextBrokerReadAt = Date.now() + BROKER_READ_GAP_MS;
+  });
+  brokerReadQueue = permit.catch(() => {});
+  return permit;
+}
 
 async function reserveCandleRequest() {
   const permit = candleRequestQueue.then(async () => {
@@ -79,12 +95,14 @@ export async function login({ apiKey, clientCode, pin, totp }) {
 }
 
 export async function profile(session) {
+  await reserveBrokerRead();
   return jsonFetch(`${ROOT}/rest/secure/angelbroking/user/v1/getProfile`, {
     method: 'GET', headers: baseHeaders(session.apiKey, session.jwt)
   }, 'Profile');
 }
 
-export async function marketData(session, exchangeTokens, mode = 'FULL') {
+export async function marketData(session, exchangeTokens, mode = 'FULL', orderSafetyCheck = false) {
+  if (!orderSafetyCheck) await reserveBrokerRead();
   return jsonFetch(`${ROOT}/rest/secure/angelbroking/market/v1/quote/`, {
     method: 'POST', headers: baseHeaders(session.apiKey, session.jwt),
     body: JSON.stringify({ mode, exchangeTokens })
@@ -93,6 +111,7 @@ export async function marketData(session, exchangeTokens, mode = 'FULL') {
 
 export async function candleData(session, payload) {
   await reserveCandleRequest();
+  await reserveBrokerRead();
   try {
     return await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
       method: 'POST', headers: baseHeaders(session.apiKey, session.jwt),
@@ -107,13 +126,15 @@ export async function candleData(session, payload) {
 }
 
 
-export async function rmsLimit(session) {
+export async function rmsLimit(session, orderSafetyCheck = false) {
+  if (!orderSafetyCheck) await reserveBrokerRead();
   return jsonFetch(`${ROOT}/rest/secure/angelbroking/user/v1/getRMS`, {
     method: 'GET', headers: baseHeaders(session.apiKey, session.jwt)
   }, 'RMS limit');
 }
 
-export async function positions(session) {
+export async function positions(session, orderSafetyCheck = false) {
+  if (!orderSafetyCheck) await reserveBrokerRead();
   return jsonFetch(`${ROOT}/rest/secure/angelbroking/order/v1/getPosition`, {
     method: 'GET', headers: baseHeaders(session.apiKey, session.jwt)
   }, 'Positions');
@@ -128,7 +149,8 @@ export async function placeOrder(session, payload, proxyUrl = null) {
   return proxyUrl ? jsonFetchViaProxy(url, options, 'Place order', proxyUrl) : jsonFetch(url, options, 'Place order');
 }
 
-export async function orderBook(session) {
+export async function orderBook(session, orderSafetyCheck = false) {
+  if (!orderSafetyCheck) await reserveBrokerRead();
   return jsonFetch(`${ROOT}/rest/secure/angelbroking/order/v1/getOrderBook`, {
     method: 'GET', headers: baseHeaders(session.apiKey, session.jwt)
   }, 'Order book');
