@@ -12,7 +12,8 @@ test('confirmed SENSEX candles are not repolled every refresh; failed refresh re
   ]);
   try {
     Date.now = () => clock;
-    globalThis.fetch = async () => {
+    globalThis.fetch = async url => {
+      if (String(url).includes('api.ipify.org')) return new Response('{"ip":"74.220.52.132"}');
       calls++;
       return calls === 1
         ? new Response(JSON.stringify({ status: true, data: history }), { status: 200 })
