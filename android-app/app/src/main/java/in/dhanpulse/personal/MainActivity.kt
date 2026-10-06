@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 38810)
-Total output lines: 2556
-
 package `in`.dhanpulse.personal
 
 import android.os.Bundle
@@ -951,7 +948,865 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Call Performance", color = Ink, fontWeight = FontWeight.…13810 tokens truncated…ty", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("Call Performance", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text("Quote crossings sampled while the app is refreshing; not actual fills", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("${s.generated} calls", color = Blue, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatTile("GENERATED", s.generated.toString(), Blue, Modifier.weight(1f))
+                StatTile("ENTERED", s.entered.toString(), Ink, Modifier.weight(1f))
+                StatTile("OPEN", s.open.toString(), Amber, Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatTile("CANCELLED", s.cancelled.toString(), Muted, Modifier.weight(1f))
+                StatTile("UNRESOLVED", s.unresolved.toString(), Muted, Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatTile("T1 HIT", s.target1Hits.toString(), Green, Modifier.weight(1f))
+                StatTile("T2 HIT", s.target2Hits.toString(), Green, Modifier.weight(1f))
+                StatTile("T3 HIT", s.target3Hits.toString(), Green, Modifier.weight(1f))
+                StatTile("SL HIT", s.stopLossHits.toString(), Red, Modifier.weight(1f))
+            }
+
+            if (s.entered > 0) {
+                val t1Rate = 100.0 * s.target1Hits / s.entered
+                val t2Rate = 100.0 * s.target2Hits / s.entered
+                val t3Rate = 100.0 * s.target3Hits / s.entered
+                Text("Hit rate from entered calls: T1 ${String.format("%.1f", t1Rate)}% • T2 ${String.format("%.1f", t2Rate)}% • T3 ${String.format("%.1f", t3Rate)}%", color = Muted, style = MaterialTheme.typography.labelSmall)
+            }
+
+            if (showRecent && vm.visibleCalls.isNotEmpty()) {
+                HorizontalDivider(color = Line)
+                Text("RECENT CALLS", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                vm.visibleCalls.take(12).forEach { call -> SignalHistoryRow(call) }
+            }
+
+            Text("Every generated call is stored with strike, premium, entry, SL, T1, T2, T3 and final status. Open Research → Call Book to see the full record.", color = Muted, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+private fun StatTile(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Panel2).padding(9.dp)) {
+        Text(label, color = Muted, fontSize = 7.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = color, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+    }
+}
+
+@Composable
+private fun SignalHistoryRow(call: `in`.dhanpulse.personal.model.SignalCall) {
+    val color = when (call.status) {
+        "T3_HIT", "T2_HIT", "T1_HIT" -> Green
+        "SL_HIT" -> Red
+        "UNRESOLVED", "CANCELLED" -> Muted
+        else -> Amber
+    }
+    Surface(color = Panel2, shape = RoundedCornerShape(12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(call.tradingSymbol, color = Ink, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                Text("${call.side} • Entry ${n(call.entry)} • SL ${n(call.stopLoss)}", color = Muted, fontSize = 9.sp)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(call.status.replace("_", " "), color = color, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
+                Text("LTP ${n(call.lastPremium)}", color = Muted, fontSize = 9.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrderGatewayCard(vm: DhanPulseViewModel) {
+    val g = vm.orderGateway
+    val ready = g?.executionReady == true
+    val color = if (ready) Green else if (vm.orderGatewayBusy) Amber else Red
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.28f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Real Order Gateway", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("Android → Backend → Angel One", color = Muted, style = MaterialTheme.typography.labelSmall)
+                }
+                StatusPill(if (vm.orderGatewayBusy) "CHECKING" else if (ready) "READY" else "BLOCKED", color)
+            }
+            if (g == null) {
+                Text("Checking broker session and static-IP order route.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text(g.message, color = if (ready) Green else Red, style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Registered IP", color = Muted, fontSize = 10.sp)
+                    Text(g.registeredPublicIp ?: "NA", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(if (g.relayConfigured) "Relay" else "Backend egress", color = Muted, fontSize = 10.sp)
+                    Text(g.relayHost ?: g.actualEgressIp ?: "Unknown", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("SmartAPI session", color = Muted, fontSize = 10.sp)
+                    Text(if (g.brokerSessionOk) "ACTIVE" else "CHECK LOGIN", color = if (g.brokerSessionOk) Green else Red, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            FilledTonalButton(
+                onClick = vm::fetchOrderDiagnostics,
+                enabled = !vm.orderGatewayBusy,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("CHECK ORDER ROUTE", fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+private fun stockRs(value: Double?): String = if (value == null) "NA" else "Rs. " + String.format("%,.2f", value)
+
+private fun stockTime(raw: String?): String = runCatching {
+    java.time.Instant.parse(raw ?: "").atZone(java.time.ZoneId.of("Asia/Kolkata"))
+        .format(java.time.format.DateTimeFormatter.ofPattern("dd MMM, HH:mm:ss")) + " IST"
+}.getOrDefault("Time unavailable")
+
+@Composable
+private fun StocksSection(vm: DhanPulseViewModel) {
+    val scan = vm.stockScan
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { SectionTitle("Daily Stock Scanner", "NSE cash shares • 5 minute setups • paper tracking") }
+        item {
+            InfoStrip("Research only", "Uses Rs. 20,000 model capital for paper risk sizing, independent of broker cash. No live stock orders. Paper entry and exit prices are quote samples, not exchange fills. Keep the app open to refresh; missed moves are marked unresolved.")
+        }
+        if (vm.stockScanLoading && scan == null) item { LoadingMarketCard() }
+        vm.stockScanError?.let { message -> item { InfoStrip("Scanner unavailable", message) } }
+        if (scan != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        if (vm.stockScanLoading) Text("Updating quotes and stock checks...", color = Amber, style = MaterialTheme.typography.bodySmall)
+                        Text("${scan.marketStatus.replace('_', ' ')} • ${stockTime(scan.timestamp)}", color = if (scan.marketStatus == "SCANNING") Green else Amber, fontWeight = FontWeight.Bold)
+                        Text("${scan.scanned} stock quotes screened • ${scan.evaluated} detailed checks • Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"}", color = Ink)
+                        Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (scan.strongestSector != null && scan.weakestSector != null) {
+                            HorizontalDivider(color = Line)
+                            Text("Strongest: ${scan.strongestSector.name} ${String.format("%+.2f%%", scan.strongestSector.changePct)} (${scan.strongestSector.count} stocks)", color = Green, style = MaterialTheme.typography.bodySmall)
+                            Text("Weakest: ${scan.weakestSector.name} ${String.format("%+.2f%%", scan.weakestSector.changePct)} (${scan.weakestSector.count} stocks)", color = Red, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("Best BUY: ${scan.bestBuy?.symbol ?: "None confirmed"}  •  Best SELL: ${scan.bestSell?.symbol ?: "None confirmed"}", color = Ink, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+        vm.stockPaperMessage?.let { message -> item { InfoStrip("Paper journal", message) } }
+        if (vm.openPaperStock != null && !java.time.LocalTime.now(java.time.ZoneId.of("Asia/Kolkata")).isBefore(java.time.LocalTime.of(15, 0))) {
+            item { InfoStrip("Exit reminder", "Close or mark the open paper position now. Angel One MIS positions are due for square off around 3:10 pm; this journal does not place an order.") }
+        }
+        vm.openPaperStock?.let { open -> item { PaperStockCard(vm, open) } }
+        if (scan != null) {
+            item { SectionTitle("Candidates", "WAIT is a decision when data or setup is incomplete") }
+            if (scan.candidates.isEmpty()) item { EmptyStateCard("No entry candidates now", scan.note) }
+            items(scan.candidates, key = { it.symbol }) { candidate -> StockCandidateCard(vm, candidate) }
+        }
+        if (vm.paperStockTrades.isNotEmpty()) {
+            item { SectionTitle("Paper journal", "Estimated results from manually recorded quote samples") }
+            items(vm.paperStockTrades.take(20), key = { it.id }) { trade ->
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("${trade.symbol} ${trade.side} • ${trade.quantity} shares", color = Ink, fontWeight = FontWeight.Bold)
+                        Text("${stockRs(trade.entry)} entry • ${if (trade.closedAt == null) "OPEN" else trade.exitReason ?: "CLOSED"}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text("${stockTime(java.time.Instant.ofEpochMilli(trade.openedAt).toString())} • Net ${stockRs(trade.netPnl)}", color = if ((trade.netPnl ?: 0.0) < 0) Red else Green, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockOptionsSection(vm: DhanPulseViewModel) {
+    var search by remember { mutableStateOf("") }
+    var selectedToken by remember(vm.selectedStockOptionSymbol) { mutableStateOf("") }
+    var lots by remember(vm.selectedStockOptionSymbol) { mutableStateOf(1) }
+    var pendingSide by remember { mutableStateOf<String?>(null) }
+    val snapshot = vm.stockOptionSnapshot?.takeIf { it.symbol == vm.selectedStockOptionSymbol }
+    val contracts = snapshot?.contracts.orEmpty()
+    val contract = contracts.firstOrNull { it.token == selectedToken }
+        ?: contracts.filter { it.optionType == "CE" }.minByOrNull { abs(it.strike - (snapshot?.atm ?: it.strike)) }
+    val longQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
+    val gatewayReady = vm.orderGateway?.executionReady == true
+
+    pendingSide?.let { side ->
+        AlertDialog(
+            onDismissRequest = { pendingSide = null },
+            title = { Text(if (side == "BUY") "Confirm stock option BUY" else "Confirm position EXIT") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(contract?.tradingSymbol ?: "Option")
+                Text("$side • $lots lot • ${(contract?.lotSize ?: 0) * lots} qty • MARKET INTRADAY")
+                Text("Stock options may involve physical settlement near expiry. Exit open positions before expiry.", color = Amber)
+            } },
+            confirmButton = { Button(onClick = {
+                contract?.let { vm.placeStockOptionOrder(side, it, lots) }
+                pendingSide = null
+            }, enabled = !vm.orderBusy && contract != null && (side == "SELL" || vm.canBuyStockOption(contract, lots))) {
+                Text(if (side == "BUY") "BUY NOW" else "EXIT NOW")
+            } },
+            dismissButton = { TextButton(onClick = { pendingSide = null }) { Text("Cancel") } }
+        )
+    }
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item { SectionTitle("Stock Options", "NFO stock options • manual trading") }
+        item { InfoStrip("Expiry safety", "New buys stop ahead of expiry because stock options can require physical settlement. Review Positions and close any open option before expiry. Auto Trade is off here.") }
+        item {
+            OutlinedTextField(value = search, onValueChange = { search = it.uppercase() },
+                label = { Text("Search F&O stock") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            val matches = vm.stockOptionSymbols.filter { search.isNotBlank() && it.contains(search, ignoreCase = true) }.take(8)
+            matches.forEach { symbol ->
+                TextButton(onClick = { vm.selectStockOptionSymbol(symbol); search = "" }) { Text(symbol) }
+            }
+            Text("Selected: ${vm.selectedStockOptionSymbol} • ${vm.stockOptionSymbols.size} available stocks", color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        if (vm.stockOptionLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        vm.stockOptionError?.let { issue -> item { InfoStrip("Quote unavailable", issue) } }
+        if (snapshot != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("${snapshot.symbol} • NSE spot ${n(snapshot.spot)}", color = Ink, fontWeight = FontWeight.Bold)
+                        Text("Expiry ${snapshot.expiry ?: "Unavailable"} • ATM ${n(snapshot.atm)}", color = Muted)
+                        if (!snapshot.spotFresh) Text("Stock quote delayed. New buys paused.", color = Amber)
+                    }
+                }
+            }
+            item { Text("Choose a contract", color = Ink, fontWeight = FontWeight.Bold) }
+            items(contracts, key = { it.token }) { option ->
+                val chosen = option.token == (contract?.token ?: "")
+                Surface(onClick = { selectedToken = option.token }, color = if (chosen) Purple.copy(alpha = 0.16f) else Panel,
+                    shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (chosen) Purple else Line)) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("${n(option.strike)} ${option.optionType} • lot ${option.lotSize}", color = Ink, fontWeight = FontWeight.Bold)
+                            Text(option.tradingSymbol, color = Muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                        Text(option.ltp?.let { n(it) } ?: "WAIT", color = if (option.fresh) Green else Amber)
+                    }
+                }
+            }
+        }
+        if (contract != null) item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), border = BorderStroke(1.dp, Purple)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(contract.tradingSymbol, color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("Bid ${n(contract.bid)} • Ask ${n(contract.ask)} • Premium ${n(contract.ltp)}", color = Muted)
+                    Text("$lots lot • ${contract.lotSize * lots} qty • estimated ask cost ${n((contract.ask ?: 0.0) * contract.lotSize * lots)}", color = Ink)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalButton(onClick = { if (lots > 1) lots-- }) { Text("−") }
+                        Spacer(Modifier.width(8.dp))
+                        FilledTonalButton(onClick = { if (lots < 20) lots++ }) { Text("+") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { pendingSide = "BUY" }, enabled = vm.canBuyStockOption(contract, lots), modifier = Modifier.weight(1f)) { Text("BUY ${contract.optionType}") }
+                        Button(onClick = { pendingSide = "SELL" }, enabled = gatewayReady && longQty >= contract.lotSize * lots && !vm.orderBusy,
+                            modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Red)) { Text("EXIT") }
+                    }
+                    if (!gatewayReady) Text(vm.orderGateway?.message ?: "Order route unavailable", color = Amber)
+                    if (!contract.buyAllowed) Text("New buys are blocked near expiry or outside market hours.", color = Amber)
+                    vm.orderMessage?.let { Text(it, color = Ink) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
+    val ready = stock.status == "READY" && stock.plan != null
+    val plan = stock.plan
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, if (ready) Green.copy(alpha = 0.45f) else Line)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(stock.symbol, color = Ink, fontWeight = FontWeight.ExtraBold)
+                Text(if (ready) stock.side else "WAIT", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
+            }
+            Text("${stock.sector} • ${stock.setup?.replace('_', ' ') ?: "No setup"} • LTP ${stockRs(stock.price)}", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text(stock.reason, color = if (ready) Green else Muted, style = MaterialTheme.typography.bodySmall)
+            if (ready && plan != null) {
+                HorizontalDivider(color = Line)
+                Text("Entry ${stockRs(plan.entry)} • Stop ${stockRs(plan.stop)}", color = Ink)
+                Text("T1 ${stockRs(plan.target1)} • T2 ${stockRs(plan.target2)} • T3 ${stockRs(plan.target3)}", color = Ink, style = MaterialTheme.typography.bodySmall)
+                Text("${plan.quantity} shares • risk up to ${stockRs(plan.estimatedLoss)} incl. estimated costs ${stockRs(plan.estimatedCosts)}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text("VWAP ${stockRs(stock.vwap)} • relative volume ${stock.volumeRatio?.let { String.format("%.2fx", it) } ?: "NA"} • quote ${stock.quoteTime ?: "NA"}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { vm.startPaperStock(stock) }, enabled = vm.openPaperStock == null, modifier = Modifier.fillMaxWidth()) {
+                    Text("Record paper entry")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaperStockCard(vm: DhanPulseViewModel, trade: PaperStockTrade) {
+    val quote = vm.stockScan?.trackedQuote?.takeIf { it.token == trade.token && it.fresh }
+    val price = quote?.price
+    val sign = if (trade.side == "BUY") 1 else -1
+    val pnl = price?.let { (it - trade.entry) * trade.quantity * sign - trade.estimatedCosts }
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Blue.copy(alpha = 0.5f))) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Open paper position • ${trade.symbol} ${trade.side}", color = Blue, fontWeight = FontWeight.ExtraBold)
+            Text("Entry ${stockRs(trade.entry)} • ${trade.quantity} shares • stop ${stockRs(trade.stop)}", color = Ink)
+            Text("Latest quote ${stockRs(price)} • estimated net ${stockRs(pnl)}", color = if ((pnl ?: 0.0) < 0) Red else Green)
+            Text("This estimate includes allowance for charges and spread. It does not prove that a target or stop filled.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { vm.closePaperStock() }, enabled = price != null, modifier = Modifier.fillMaxWidth()) { Text("Close paper at latest quote") }
+            TextButton(onClick = { vm.closePaperStock(unresolved = true) }) { Text("Mark unresolved", color = Amber) }
+        }
+    }
+}
+
+@Composable
+private fun PositionsSection(vm: DhanPulseViewModel) {
+    val account = vm.account
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            SectionTitle("Positions", "Live Angel One positions and P&L")
+        }
+        if (account == null) {
+            item { InfoStrip("Position data", "Account data is loading. Tap Refresh at the top if needed.") }
+        } else {
+            item { AccountCard(account, vm::fetchAccount) }
+            val open = account.positions.filter { it.netQty != 0.0 }
+            if (open.isEmpty()) item { EmptyStateCard("No open positions", "Your open F&O positions will appear here with live P&L.") }
+            items(open) { pos -> PositionCard(pos, vm) }
+        }
+    }
+}
+
+@Composable
+private fun ResearchSection(vm: DhanPulseViewModel) {
+    var researchTab by remember { mutableStateOf("CALLS") }
+    LaunchedEffect(researchTab) { if (researchTab == "BACKTEST") vm.fetchBacktestCatalog() }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            listOf("CALLS" to "Call Book", "BACKTEST" to "Backtest").forEach { (key, label) ->
+                val selected = researchTab == key
+                Surface(
+                    onClick = { researchTab = key },
+                    modifier = Modifier.weight(1f),
+                    color = if (selected) Purple.copy(alpha = 0.18f) else Panel,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, if (selected) Purple.copy(alpha = 0.45f) else Line)
+                ) {
+                    Text(
+                        label,
+                        color = if (selected) Ink else Muted,
+                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+
+        if (researchTab == "CALLS") {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item { SectionTitle("Call Book", "Every generated premium call with strike, entry, SL, targets and result") }
+                item { SignalPerformanceCard(vm) }
+                if (vm.visibleCalls.isEmpty()) {
+                    item { EmptyStateCard("No calls recorded yet", "A call will be added after the same CE/PE setup is confirmed on two live scans.") }
+                } else {
+                    items(vm.visibleCalls, key = { it.id }) { call ->
+                        FullCallRecordCard(call)
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item { SectionTitle("Backtest Lab", "Historical strategy validation and robustness") }
+                item { BacktestContextBar(vm) }
+                item { BacktestLabCard(vm) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BacktestContextBar(vm: DhanPulseViewModel) {
+    var symbolOpen by remember { mutableStateOf(false) }
+    var symbolQuery by remember { mutableStateOf("") }
+    var timeframeOpen by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("INDEX" to "Indices", "MCX_INDEX" to "MCX", "STOCK" to "Stocks").forEach { (group, label) ->
+                FilledTonalButton(
+                    onClick = { vm.selectBacktestGroup(group); symbolOpen = false },
+                    enabled = !vm.backtestBusy,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = if (vm.backtestGroup == group) Purple.copy(alpha = 0.25f) else Panel2,
+                        contentColor = if (vm.backtestGroup == group) Ink else Muted)
+                ) { Text(label, fontSize = 11.sp, maxLines = 1) }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.weight(1.4f)) {
+                Surface(onClick = { symbolQuery = ""; symbolOpen = true }, color = Panel, shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
+                        Text("BACKTEST SYMBOL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(vm.backtestChoice?.label ?: "Load symbols", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                DropdownMenu(expanded = symbolOpen, onDismissRequest = { symbolOpen = false }) {
+                    if (vm.backtestChoices.size > 15) OutlinedTextField(
+                        value = symbolQuery,
+                        onValueChange = { symbolQuery = it },
+                        label = { Text("Find symbol") },
+                        singleLine = true,
+                        modifier = Modifier.width(250.dp).padding(horizontal = 8.dp)
+                    )
+                    val matches = vm.backtestChoices.filter {
+                        symbolQuery.isBlank() || it.label.contains(symbolQuery, ignoreCase = true)
+                    }
+                    matches.take(40).forEach { choice ->
+                        DropdownMenuItem(text = { Text("${choice.label} • ${choice.exchange}") },
+                            enabled = !vm.backtestBusy,
+                            onClick = { vm.selectBacktestChoice(choice); symbolOpen = false })
+                    }
+                    if (matches.isEmpty()) DropdownMenuItem(text = { Text("No matching broker symbol") }, enabled = false, onClick = {})
+                    if (matches.size > 40) DropdownMenuItem(text = { Text("Type to narrow the list") }, enabled = false, onClick = {})
+                }
+            }
+            Box(Modifier.weight(1f)) {
+                Surface(onClick = { if (vm.backtestGroup != "STOCK") timeframeOpen = true }, color = Panel,
+                    shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp)) {
+                        Text("TIMEFRAME", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(timeframeShort(vm.backtestTimeframe), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                DropdownMenu(expanded = timeframeOpen, onDismissRequest = { timeframeOpen = false }) {
+                    listOf("ONE_MINUTE" to "1 minute", "THREE_MINUTE" to "3 minutes", "FIVE_MINUTE" to "5 minutes",
+                        "TEN_MINUTE" to "10 minutes", "FIFTEEN_MINUTE" to "15 minutes").forEach { (interval, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { vm.selectBacktestTimeframe(interval); timeframeOpen = false })
+                    }
+                }
+            }
+        }
+        if (vm.backtestCatalogBusy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Blue)
+        vm.backtestCatalogError?.let { ErrorStrip(it) }
+        if (vm.backtestChoices.isEmpty() && !vm.backtestCatalogBusy) {
+            InfoStrip("No instruments available", "Refresh the broker instrument list or choose another research group.")
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("${vm.backtestChoices.size} available • ${vm.backtestCatalog?.source ?: "Angel One list loading"}",
+                color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = { vm.fetchBacktestCatalog(force = true) }) { Text("Refresh list", color = Blue) }
+        }
+        if (vm.backtestGroup == "MCX_INDEX") InfoStrip("MCX research", "Index price history is tested with MCX hours. This does not calculate historical option premium profit.")
+        if (vm.backtestGroup == "INDEX") InfoStrip("Index research", "The broker's available index symbols are listed here. Extra indices test underlying prices and do not approve live Auto Trade.")
+        if (vm.backtestGroup == "STOCK") InfoStrip("Stock research", "The cash share model tests volume, VWAP and entry setups. Past Nifty and sector strength filters are not included.")
+        if (vm.backtestGroup == "MCX_INDEX" && vm.backtestCatalog?.energy?.isNotEmpty() == true) {
+            InfoStrip("Crude oil and natural gas", "Energy futures need an expiry by expiry history before a one to five year result can be trusted. These contracts are not offered as a continuous backtest yet.")
+        }
+    }
+}
+
+@Composable
+private fun AccountSection(vm: DhanPulseViewModel) {
+    var showThemeDialog by remember { mutableStateOf(false) }
+    if (showThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Theme") },
+            text = {
+                Column {
+                    listOf("SYSTEM" to "System", "LIGHT" to "Light", "DARK" to "Dark").forEach { (mode, label) ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { vm.updateThemeMode(mode); showThemeDialog = false }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = vm.themeMode == mode, onClick = null)
+                            Spacer(Modifier.width(12.dp))
+                            Text(label)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showThemeDialog = false }) { Text("Close") } }
+        )
+    }
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { SectionTitle("Account", "Connection, funds and safety controls") }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Settings", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Row(
+                        Modifier.fillMaxWidth().clickable { showThemeDialog = true }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Theme", color = Ink, fontWeight = FontWeight.Bold)
+                            Text("Follow your phone or choose a look", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(vm.themeMode.lowercase().replaceFirstChar { it.uppercase() } + "  ›", color = Muted)
+                    }
+                    HorizontalDivider(color = Line)
+                    Row(
+                        Modifier.fillMaxWidth().clickable { vm.updateKeepScreenOn(!vm.keepScreenOn) }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Keep Screen On", color = Ink, fontWeight = FontWeight.Bold)
+                            Text("While this app is visible", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = vm.keepScreenOn, onCheckedChange = null)
+                    }
+                    Text("Your session still logs out after one hour without interaction.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        vm.account?.let { item { AccountCard(it, vm::fetchAccount) } }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Trading controls", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    AccountSettingRow("Broker", "Angel One SmartAPI")
+                    AccountSettingRow("App version", BuildConfig.VERSION_NAME)
+                    AccountSettingRow("Login", "Until midnight IST; logout after 1 hour without use")
+                    AccountSettingRow("Auto Trade", if (vm.autoTradeEnabled) "ON" else "OFF")
+                    AccountSettingRow("Auto lots", vm.autoLots.toString())
+                    AccountSettingRow("Account / P&L refresh", "Every 15 seconds")
+                    AccountSettingRow("Live analysis refresh", "Every 3 seconds")
+                    AccountSettingRow("Order gateway", if (vm.orderGateway?.executionReady == true) "READY" else "BLOCKED")
+                    HorizontalDivider(color = Line)
+                    Text("Manual trading stays available even when Auto Trade is blocked by the research gate.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        item {
+            Button(
+                onClick = { vm.logout() },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Red.copy(alpha = 0.16f), contentColor = Red),
+                shape = RoundedCornerShape(14.dp)
+            ) { Text("Logout", fontWeight = FontWeight.ExtraBold) }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String, subtitle: String) {
+    Column {
+        Text(title, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        Text(subtitle, color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun LoadingMarketCard(message: String? = null) {
+    Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(20.dp)).background(Panel), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (message == null) {
+                CircularProgressIndicator(color = Purple)
+                Spacer(Modifier.height(10.dp))
+            }
+            Text(message ?: "Reading live market data...", color = Muted)
+        }
+    }
+}
+
+@Composable
+private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
+    val c = when (a.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, c.copy(alpha = 0.30f))) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text("Trader Desk", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text(if (a.dataFresh == false) "Last reported market snapshot • new calls paused" else "Signal, execution and risk • live scan every 3 sec", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill(a.signal, c)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("${if (a.instrumentType == "ENERGY") "Futures" else "Index"} ${n(vm.liveDisplayPrice(a) ?: a.market.ltp)}", color = Ink, fontWeight = FontWeight.Bold)
+                val d = a.tradeDecision
+                val heroText = when {
+                    d.status == "MARKET_CLOSED" -> "CLOSED"
+                    d.status == "HISTORY_UNAVAILABLE" -> "NO CANDLES"
+                    d.status == "DATA_STALE" -> "DELAYED"
+                    d.status == "REJECTED_CONFLICT" -> "FILTERED"
+                    d.direction == "WAIT" -> "WATCHING"
+                    d.status == "OI_CAUTION" -> "OI CAUTION"
+                    d.setupAllowed -> "SETUP PASSED"
+                    else -> "CONFIRMING"
+                }
+                val heroColor = when {
+                    d.status == "REJECTED_CONFLICT" -> Red
+                    d.direction == "WAIT" -> Amber
+                    d.status == "OI_CAUTION" -> Amber
+                    d.setupAllowed -> Green
+                    else -> Blue
+                }
+                Text(heroText, color = heroColor, fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SignalRulesPanel(a: AnalysisResponse) {
+    var open by remember(a.symbol, a.timeframe) { mutableStateOf(false) }
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().clickable { open = !open }.padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Signal checks", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("${a.rules.size} ${if (a.symbol == "SENSEX" && a.tradeDecision.contextChecks.isNotEmpty()) "strategy families" else "engine conditions"}", color = Muted, fontSize = 10.sp)
+                    if (!a.tradeDecision.setupAllowed) Text(a.tradeDecision.message, color = Amber, fontSize = 10.sp)
+                    a.tradeDecision.cautions.forEach { Text(it, color = Amber, fontSize = 10.sp) }
+                }
+                Text(if (open) "Hide" else "View", color = Blue, fontWeight = FontWeight.Bold)
+            }
+            if (open) {
+                HorizontalDivider(color = Line)
+                a.rules.forEach { rule ->
+                    val stateColor = when (rule.state.uppercase()) { "BULLISH" -> Green; "BEARISH" -> Red; "NEUTRAL" -> Amber; else -> Muted }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.width(4.dp).height(34.dp).clip(RoundedCornerShape(4.dp)).background(stateColor))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(rule.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            rule.detail?.let { Text(it, color = Muted, fontSize = 9.sp) }
+                        }
+                        StatusPill(rule.state.uppercase(), stateColor)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PositionCard(pos: `in`.dhanpulse.personal.model.PositionSummary, vm: DhanPulseViewModel) {
+    val pnlColor = if (pos.pnl >= 0) Green else Red
+    val energyLong = pos.exchange == "MCX" && pos.netQty > 0 && (pos.lotSize ?: 0) > 0 &&
+        listOf("CRUDEOIL", "NATURALGAS", "NATGASMINI").any { pos.tradingSymbol?.startsWith(it) == true }
+    var confirmExit by remember(pos.token) { mutableStateOf(false) }
+    if (confirmExit) AlertDialog(
+        onDismissRequest = { confirmExit = false },
+        title = { Text("Exit open energy option") },
+        text = { Text("Exit ${(pos.netQty / (pos.lotSize ?: 1)).toInt().coerceAtMost(20)} lot(s) of ${pos.tradingSymbol}? Confirm current quantity and price before placing a market order.") },
+        confirmButton = { Button(onClick = { vm.exitEnergyPosition(pos); confirmExit = false }, enabled = !vm.orderBusy) { Text("SELL TO EXIT") } },
+        dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("Cancel") } }
+    )
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(pos.tradingSymbol ?: "Position", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("${pos.exchange ?: ""} • ${pos.netQty.toInt()} qty • ${pos.productType ?: ""}", color = Muted, fontSize = 10.sp)
+                }
+                Text(money(pos.pnl), color = pnlColor, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Avg ${n(if (pos.netQty >= 0) pos.buyAvgPrice else pos.sellAvgPrice)}", color = Muted, fontSize = 10.sp)
+                Text("LTP ${n(pos.ltp)}", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            if (energyLong) {
+                Text("Option expires ${pos.optionExpiry ?: "as per broker"}. Open energy options may become futures positions at expiry. Exit before then.", color = Amber, fontSize = 10.sp)
+                Button(onClick = { confirmExit = true }, enabled = !vm.orderBusy && vm.orderGateway?.executionReady == true) {
+                    Text(if (vm.orderGateway?.executionReady == true) "EXIT ENERGY OPTION" else "EXIT THROUGH ANGEL ONE")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyStateCard(title: String, body: String) {
+    Surface(color = Panel, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(title, color = Ink, fontWeight = FontWeight.ExtraBold)
+            Spacer(Modifier.height(5.dp))
+            Text(body, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun AccountSettingRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = Muted, style = MaterialTheme.typography.bodySmall)
+        Text(value, color = Ink, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
+    val color = when (a.signal.uppercase()) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    val streamPrice = vm.liveDisplayPrice(a)
+    Box(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
+            .background(Brush.linearGradient(listOf(color.copy(alpha = 0.20f), Panel2, Panel)))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(24.dp)).padding(20.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column {
+                    Text(a.symbol.replace("BANKNIFTY", "BANK NIFTY"), color = Muted, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Text("CURRENT MARKET BIAS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Surface(onClick = vm::fetchAnalysis, color = Panel2, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Line)) {
+                    Text("Refresh", color = Ink, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontWeight = FontWeight.Bold)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(a.signal, color = color, fontSize = 48.sp, fontWeight = FontWeight.Black)
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(1f)) {
+                    Text(if (streamPrice != null) "STREAM LTP" else "QUOTE LTP", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(n(streamPrice ?: a.market.ltp), color = Ink, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                }
+            }
+            Text(if (streamPrice != null) "Broker price stream active. Analysis follows the selected ${timeframeShort(vm.selectedTimeframe)} timeframe."
+                else "Price stream ${vm.liveStreamStatus.lowercase().replace('_', ' ')}. Analysis uses broker quotes and the selected timeframe.",
+                color = if (streamPrice != null) Green else Muted, fontSize = 10.sp)
+            Text(if (a.signal == "WAIT") "Market bias only • no trade call" else if (a.signal == "CE") "Bullish market bias • not yet a trade call" else "Bearish market bias • not yet a trade call", color = Muted)
+            HorizontalDivider(color = Line)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                ScoreMetric("BULL", a.ruleScore.bullish.toString(), Green)
+                ScoreMetric("BEAR", a.ruleScore.bearish.toString(), Red)
+                ScoreMetric("CHECKS", a.ruleScore.considered.toString(), Blue)
+            }
+            a.suggestedContract?.let {
+                Surface(color = color.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, color.copy(alpha = 0.25f))) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column {
+                            Text("CANDIDATE STRIKE • NOT A CALL", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                            Text(it.tradingSymbol ?: "Candidate contract", color = Ink, fontWeight = FontWeight.Bold, softWrap = true)
+                        }
+                        Text("LTP ${n(it.ltp)}", color = color, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TradePlanCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
+    val levels = a.levels
+    val contract = a.suggestedContract
+    val active = a.tradeDecision.setupAllowed && a.tradeDecision.direction == a.signal && (a.signal == "CE" || a.signal == "PE")
+    val actionColor = when (a.signal) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    var lots by remember(contract?.token) { mutableStateOf(1) }
+    var pendingSide by remember { mutableStateOf<String?>(null) }
+    val currentLongQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
+    val gatewayReady = vm.orderGateway?.executionReady == true
+    val canExit = currentLongQty > 0.0 && gatewayReady
+
+    pendingSide?.let { side ->
+        AlertDialog(
+            onDismissRequest = { if (!vm.orderBusy) pendingSide = null },
+            title = { Text(if (side == "BUY") "Confirm BUY" else "Confirm SELL / EXIT") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(contract?.tradingSymbol ?: "Selected option")
+                    Text("Lots: $lots   Quantity: ${(contract?.lotSize ?: 0) * lots}")
+                    Text("Order type: MARKET • Product: INTRADAY")
+                    if (side == "SELL") Text("SELL is restricted to your existing long quantity. Naked option selling is blocked.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { contract?.let { vm.placeOrder(side, it, lots) }; pendingSide = null },
+                    enabled = !vm.orderBusy && (side == "SELL" || vm.canBuyContract(contract)),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (side == "BUY") Green else Red)
+                ) { Text(if (side == "BUY") "Confirm BUY" else "Confirm EXIT", color = Color.White, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { pendingSide = null }, enabled = !vm.orderBusy) { Text("Cancel") } }
+        )
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, if (active) actionColor.copy(alpha = 0.35f) else Line)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Trade plan", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text("Entry, stop, targets and manual execution", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                StatusPill(a.signal, actionColor)
+            }
+
+            if (!active || levels == null || contract == null) {
+                Surface(color = Amber.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.25f))) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("WAIT", color = Amber, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(a.tradeDecision.message.ifBlank { "No fresh entry until the trade decision passes all checks." }, color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else {
+                Surface(color = actionColor.copy(alpha = 0.08f), shape = RoundedCornerShape(14.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("OPTION CONTRACT", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(contract.tradingSymbol ?: "Selected near ATM contract", color = Ink, fontWeight = FontWeight.ExtraBold)
+                            Text("Lot size ${contract.lotSize ?: 0}", color = Muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("OPTION ENTRY", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(n(contract.ltp), color = actionColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LevelTile("INDEX ENTRY", n(levels.underlyingEntry), Blue, Modifier.weight(1f))
+                    LevelTile("STOP LOSS", n(levels.stop), Red, Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LevelTile("TARGET 1", n(levels.target1), Green, Modifier.weight(1f))
+                    LevelTile("TARGET 2", n(levels.target2), Green, Modifier.weight(1f))
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("ORDER SIZE", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text("${(contract.lotSize ?: 0) * lots} qty", color = Ink, fontWeight = FontWeight.ExtraBold)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         FilledTonalButton(onClick = { if (lots > 1) lots-- }, enabled = !vm.orderBusy) { Text("−") }
