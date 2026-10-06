@@ -231,7 +231,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
     LaunchedEffect(vm.sessionId) {
         while (vm.sessionId != null) {
             delay(30_000)
-            vm.checkSessionTimeout()
+            vm.checkVisibleSession()
         }
     }
     var section by remember { mutableStateOf("MARKET") }
