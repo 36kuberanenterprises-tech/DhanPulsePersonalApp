@@ -62,6 +62,19 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var stocksVisible by mutableStateOf(false)
         private set
+    var stockOptionsVisible by mutableStateOf(false)
+        private set
+    var stockOptionSymbols by mutableStateOf<List<String>>(emptyList())
+        private set
+    var selectedStockOptionSymbol by mutableStateOf("RELIANCE")
+        private set
+    var stockOptionSnapshot by mutableStateOf<StockOptionSnapshot?>(null)
+        private set
+    var stockOptionError by mutableStateOf<String?>(null)
+        private set
+    var stockOptionLoading by mutableStateOf(false)
+        private set
+    private var stockOptionInFlight = false
     var stockScan by mutableStateOf<StockScanResponse?>(null)
         private set
     var stockScanLoading by mutableStateOf(false)
@@ -234,7 +247,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             startAutoRefresh()
             startLivePriceStream()
             if (selectedMarket == "MCX") fetchMcxCatalog()
-            if (stocksVisible) fetchStockScanner() else fetchAnalysis()
+            if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) fetchStockOptions() else fetchAnalysis()
             fetchAccount()
         }
     }
@@ -1083,6 +1096,99 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         startAutoRefresh()
     }
 
+    fun showStockOptions(visible: Boolean) {
+        if (stockOptionsVisible == visible) return
+        stockOptionsVisible = visible
+        if (visible) {
+            if (autoTradeEnabled) updateAutoTradeEnabled(false)
+            stopLivePriceStream()
+            fetchStockOptionCatalog()
+            fetchStockOptions()
+        } else startLivePriceStream()
+        startAutoRefresh()
+    }
+
+    fun fetchStockOptionCatalog() {
+        val s = sessionId ?: return
+        viewModelScope.launch {
+            try {
+                stockOptionSymbols = client().stockOptionCatalog(s).symbols
+                if (stockOptionSymbols.isNotEmpty() && selectedStockOptionSymbol !in stockOptionSymbols) {
+                    selectedStockOptionSymbol = stockOptionSymbols.first()
+                    fetchStockOptions()
+                }
+            } catch (e: Exception) { stockOptionError = friendlyError(e, "Stock options unavailable") }
+        }
+    }
+
+    fun selectStockOptionSymbol(symbol: String) {
+        if (symbol !in stockOptionSymbols) return
+        selectedStockOptionSymbol = symbol
+        stockOptionSnapshot = null
+        fetchStockOptions()
+    }
+
+    fun fetchStockOptions() {
+        val s = sessionId ?: return
+        if (stockOptionInFlight) return
+        val symbol = selectedStockOptionSymbol
+        stockOptionInFlight = true
+        stockOptionLoading = true
+        viewModelScope.launch {
+            try {
+                val response = client().stockOptions(s, symbol)
+                if (symbol == selectedStockOptionSymbol) {
+                    stockOptionSnapshot = response
+                    stockOptionError = null
+                }
+            } catch (e: Exception) {
+                if (symbol == selectedStockOptionSymbol) stockOptionError = friendlyError(e, "Stock option quotes unavailable")
+            } finally {
+                stockOptionInFlight = false
+                stockOptionLoading = false
+                if (symbol != selectedStockOptionSymbol) fetchStockOptions()
+            }
+        }
+    }
+
+    fun canBuyStockOption(contract: StockOptionContract?, lots: Int): Boolean {
+        val c = contract ?: return false
+        val snapshot = stockOptionSnapshot ?: return false
+        val age = runCatching { System.currentTimeMillis() - Instant.parse(snapshot.updatedAt).toEpochMilli() }.getOrNull() ?: return false
+        val bid = c.bid ?: return false
+        val ask = c.ask ?: return false
+        return snapshot.symbol == selectedStockOptionSymbol && age in 0L..30_000L && snapshot.spotFresh &&
+            c.fresh && c.buyAllowed && bid > 0 && ask >= bid && (ask - bid) / ask <= 0.05 &&
+            c.lotSize > 0 && lots in 1..20 && (account?.availableCash ?: 0.0) >= ask * c.lotSize * lots &&
+            orderGateway?.executionReady == true && !orderBusy
+    }
+
+    fun placeStockOptionOrder(side: String, contract: StockOptionContract, lots: Int) {
+        if (side == "BUY" && !canBuyStockOption(contract, lots)) {
+            orderMessage = "Refresh the quotes, funds and order route before buying."
+            return
+        }
+        if (contract.exchange != "NFO" || contract.lotSize <= 0) return
+        if (side == "SELL" && (account?.positions?.firstOrNull { it.token == contract.token }?.netQty ?: 0.0) < contract.lotSize * lots) {
+            orderMessage = "No matching long stock option position to exit."
+            return
+        }
+        val s = sessionId ?: return
+        orderBusy = true
+        orderMessage = null
+        viewModelScope.launch {
+            try {
+                val result = client().placeOrder(s, OrderRequest(side, contract.token, contract.tradingSymbol, "NFO", lots))
+                orderMessage = "$side order submitted" + (result.orderId?.let { " • ID $it" } ?: "") +
+                    (result.orderStatus?.let { " • $it" } ?: "")
+                result.account?.let { account = it }
+                fetchAccount()
+                fetchStockOptions()
+            } catch (e: Exception) { orderMessage = friendlyError(e, "Stock option order failed") }
+            orderBusy = false
+        }
+    }
+
     fun fetchStockScanner() {
         val s = sessionId ?: return
         if (stockRefreshInFlight) return
@@ -1208,10 +1314,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val time = indiaTime.toLocalTime()
                 val marketOpen = day in 1..5 && !time.isBefore(if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)) &&
                     time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
-                if (!stocksVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
+                if (!stocksVisible && !stockOptionsVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
                 if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
-                delay(if (stocksVisible) { if (marketOpen) 15_000 else 60_000 } else { if (marketOpen) 3_000 else 60_000 })
-                if (stocksVisible) fetchStockScanner() else fetchAnalysis()
+                delay(if (stocksVisible || stockOptionsVisible) { if (marketOpen) 15_000 else 60_000 } else { if (marketOpen) 3_000 else 60_000 })
+                if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) fetchStockOptions() else fetchAnalysis()
                 tick++
                 if (tick % 5 == 0) fetchAccount()
                 if (tick % 20 == 0) fetchOrderDiagnostics()
