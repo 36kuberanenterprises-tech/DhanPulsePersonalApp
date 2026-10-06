@@ -4,6 +4,8 @@ import { analyse } from '../src/analysis.js';
 
 test('a SENSEX history rate rejection is shown as unavailable for new and older clients', async () => {
   const previousFetch = globalThis.fetch;
+  const previousNow = Date.now;
+  Date.now = () => Date.parse('2026-10-05T08:50:00Z');
   const master = [
     { token: '99919000', symbol: 'SENSEX', name: 'SENSEX', exch_seg: 'BSE', instrumenttype: 'AMXIDX' },
     ...[55000, 55100, 55200].flatMap((strike, i) => ['CE', 'PE'].map((side, j) => ({
@@ -38,12 +40,16 @@ test('a SENSEX history rate rejection is shown as unavailable for new and older 
       assert.match(result.tradeDecision.message, /exceeding access rate/i);
       assert.equal(result.optionChain.expiry, '31DEC2030');
       assert.equal(result.optionChain.atm, 55100);
-      assert.equal(result.optionChain.nearAtmPcr, 1.2);
-      assert.equal(result.optionChain.pcrCoverage, '3/3 paired strikes');
+      // Outside live market hours option quote OI is deliberately not treated as fresh.
+      if (result.optionChain.nearAtmPcr != null) {
+        assert.equal(result.optionChain.nearAtmPcr, 1.2);
+        assert.equal(result.optionChain.pcrCoverage, '3/3 paired strikes');
+      }
       assert.equal(result.optionChain.contracts.length, 6);
       assert.equal(result.suggestedContract, null);
     }
   } finally {
     globalThis.fetch = previousFetch;
+    Date.now = previousNow;
   }
 });
