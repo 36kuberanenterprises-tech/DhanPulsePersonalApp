@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { candleData, marketData, positions, rmsLimit } from '../src/angel.js';
+import { candleData, getEgressIp, marketData, positions, rmsLimit } from '../src/angel.js';
 
 const session = { apiKey: 'test', jwt: 'test' };
 const payload = { exchange: 'BSE', symboltoken: '1', interval: 'FIVE_MINUTE', fromdate: '2026-10-01 09:15', todate: '2026-10-01 09:50' };
@@ -56,6 +56,25 @@ test('quote and account reads start apart, while an order safety check can bypas
     await positions(session, true);
     await queued;
     assert.ok(starts.at(-2).url.includes('getPosition'));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+
+test('outbound IP diagnostics use a second provider when the first fails', async () => {
+  const previousFetch = globalThis.fetch;
+  const providers = [];
+  try {
+    globalThis.fetch = async url => {
+      providers.push(String(url));
+      return String(url).includes('api.ipify.org')
+        ? new Response('Unavailable', { status: 503 })
+        : new Response('74.220.52.132\n', { status: 200 });
+    };
+    assert.equal(await getEgressIp(), '74.220.52.132');
+    assert.equal(providers.length, 2);
+    assert.ok(providers[1].includes('checkip.amazonaws.com'));
   } finally {
     globalThis.fetch = previousFetch;
   }
