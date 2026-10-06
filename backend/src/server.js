@@ -3,12 +3,13 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import { sealSession, openSession } from './session-token.js';
-import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, getEgressIp } from './angel.js';
+import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, normalizeStrike, getEgressIp } from './angel.js';
 import { analyse, marketDataState } from './analysis.js';
 import { openAngelPriceStream, streamInstrument } from './live-stream.js';
 import { runBacktest } from './backtest.js';
 import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
+import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
 
 const app = express();
 app.use(cors());
@@ -233,6 +234,46 @@ app.get('/api/stocks/scanner', requireSession, async (req, res) => {
     console.error('Stock scanner failed:', e?.message || e);
     res.status(503).json({ error: 'Stock scanner data is temporarily unavailable. ' + (e?.message || 'Please retry.') });
   }
+});
+
+app.get('/api/stocks/options/catalog', requireSession, async (_req, res) => {
+  try { res.json({ symbols: stockOptionCatalog(await instrumentMaster()), updatedAt: new Date().toISOString() }); }
+  catch (e) { res.status(503).json({ error: e.message || 'Stock option catalogue unavailable' }); }
+});
+
+app.get('/api/stocks/options/:symbol', requireSession, async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || '').toUpperCase().trim();
+    if (!/^[A-Z0-9&-]{1,25}$/.test(symbol)) return res.status(400).json({ error: 'Invalid stock symbol' });
+    const rows = await instrumentMaster();
+    if (!stockOptionCatalog(rows).includes(symbol)) return res.status(404).json({ error: 'No active NFO stock options for this symbol' });
+    const underlying = rows.find(r => r.exch_seg === 'NSE' && String(r.symbol || '').toUpperCase() === `${symbol}-EQ`)
+      || rows.find(r => r.exch_seg === 'NSE' && String(r.symbol || '').toUpperCase() === symbol && !r.instrumenttype);
+    if (!underlying) return res.status(503).json({ error: 'Matching NSE cash stock token unavailable' });
+    const spotRaw = parseFetched(await marketData(req.smartSession, { NSE: [String(underlying.token)] }));
+    const spotQuote = spotRaw.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === String(underlying.token));
+    const spot = quoteLtp(spotQuote);
+    const spotAge = quoteFeedAgeMs(spotQuote);
+    if (!(spot > 0)) return res.status(503).json({ error: 'NSE stock quote unavailable' });
+    const window = stockOptionWindow(rows, symbol, spot);
+    const optionTokens = window.contracts.map(r => String(r.token));
+    const optionQuotes = optionTokens.length ? parseFetched(await marketData(req.smartSession, { NFO: optionTokens })) : [];
+    const byToken = new Map(optionQuotes.map(q => [String(q.symbolToken ?? q.symboltoken ?? q.token), q]));
+    const contracts = window.contracts.map(row => {
+      const q = byToken.get(String(row.token));
+      const age = quoteFeedAgeMs(q);
+      const fresh = age != null && age >= -30_000 && age <= 90_000;
+      const buy = Number(q?.depth?.buy?.[0]?.price || 0);
+      const sell = Number(q?.depth?.sell?.[0]?.price || 0);
+      return { token: String(row.token), tradingSymbol: row.symbol, exchange: 'NFO',
+        strike: normalizeStrike(row.strike), optionType: row.symbol.endsWith('PE') ? 'PE' : 'CE',
+        lotSize: Number(row.lotsize || 0), ltp: fresh ? quoteLtp(q) : null,
+        bid: fresh && buy > 0 ? buy : null, ask: fresh && sell > 0 ? sell : null,
+        fresh, expiry: row.expiry, buyAllowed: stockOptionBuyWindow(row).allowed };
+    });
+    res.json({ symbol, spot, spotFresh: spotAge != null && spotAge >= -30_000 && spotAge <= 90_000,
+      expiry: window.expiry, atm: window.atm, contracts, updatedAt: new Date().toISOString() });
+  } catch (e) { res.status(503).json({ error: e.message || 'Stock option quotes unavailable' }); }
 });
 
 app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
@@ -466,6 +507,26 @@ app.post('/api/order', requireSession, async (req, res) => {
     );
     if (!contract) return res.status(400).json({ error: 'Selected option contract is not valid in the instrument master', traceId });
 
+    if (contract.exch_seg === 'NFO' && contract.instrumenttype === 'OPTSTK' && side === 'BUY') {
+      const window = stockOptionBuyWindow(contract);
+      if (!window.allowed) return res.status(409).json({ error: window.reason, traceId });
+      const stock = rows.find(r => r.exch_seg === 'NSE' &&
+        String(r.symbol || '').toUpperCase() === `${String(contract.name || '').toUpperCase()}-EQ`);
+      if (!stock) return res.status(409).json({ error: 'Matching NSE stock quote unavailable. Buy paused.', traceId });
+      const qs = parseFetched(await marketData(req.smartSession,
+        { NSE: [String(stock.token)], NFO: [token] }, 'FULL', true));
+      const stockQ = qs.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === String(stock.token));
+      const optionQ = qs.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === token);
+      const fresh = q => { const age = quoteFeedAgeMs(q); return age != null && age >= -30_000 && age <= 90_000 && quoteLtp(q) > 0; };
+      const bid = Number(optionQ?.depth?.buy?.[0]?.price || 0);
+      const ask = Number(optionQ?.depth?.sell?.[0]?.price || 0);
+      if (!fresh(stockQ) || !fresh(optionQ) || !(ask > 0 && bid > 0 && ask >= bid) ||
+          (ask - bid) / ask > 0.05) return res.status(409).json({ error: 'Fresh NSE and option quotes with a usable spread are required. Buy paused.', traceId });
+      const requiredCash = ask * Math.max(1, Number(contract.lotsize || 0)) * lots;
+      const funds = await rmsLimit(req.smartSession, true);
+      if (!(n(funds?.data?.availablecash) >= requiredCash)) return res.status(409).json({ error: 'Available cash is below the option ask premium for these lots.', traceId });
+    }
+
     if (exchange === 'MCX' && side === 'BUY') {
       const supportedIndex = contract.instrumenttype === 'OPTIDX' && mcxIndexCatalog(rows).some(x => x.symbol === String(contract.name || '').toUpperCase() && x.hasOptions);
       const supportedEnergy = contract.instrumenttype === 'OPTFUT' && mcxEnergyCatalog(rows).some(x => x.symbol === String(contract.name || '').toUpperCase() && x.hasOptions);
@@ -511,10 +572,10 @@ app.post('/api/order', requireSession, async (req, res) => {
       const netQty = n(current?.netqty ?? current?.netquantity ?? (buyQty - sellQty));
       if (netQty <= 0) return res.status(400).json({ error: 'SELL is enabled only to exit an existing long option position. No long position found.', traceId });
       if (quantity > netQty) return res.status(400).json({ error: `Exit quantity ${quantity} is higher than current long quantity ${netQty}`, traceId });
-      if (exchange === 'MCX') {
+      if (exchange === 'MCX' || contract.instrumenttype === 'OPTSTK') {
         positionProductType = String(current?.producttype || '').toUpperCase();
         if (!['CARRYFORWARD', 'INTRADAY'].includes(positionProductType)) {
-          return res.status(400).json({ error: 'The MCX position product type is unavailable. Exit it through your broker.', traceId });
+          return res.status(400).json({ error: 'The position product type is unavailable. Exit it through your broker.', traceId });
         }
       }
     }
@@ -526,7 +587,7 @@ app.post('/api/order', requireSession, async (req, res) => {
       transactiontype: side,
       exchange,
       ordertype: 'MARKET',
-      producttype: exchange === 'MCX' ? (positionProductType || 'CARRYFORWARD') : 'INTRADAY',
+      producttype: positionProductType || (exchange === 'MCX' ? 'CARRYFORWARD' : 'INTRADAY'),
       duration: 'DAY',
       price: '0',
       squareoff: '0',

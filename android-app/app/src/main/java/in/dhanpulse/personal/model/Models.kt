@@ -68,6 +68,18 @@ data class StockScanResponse(
     val candidates: List<StockCandidate> = emptyList(),
     val trackedQuote: StockQuote? = null, val note: String = ""
 )
+data class StockOptionCatalog(val symbols: List<String> = emptyList(), val updatedAt: String? = null)
+data class StockOptionContract(
+    val token: String = "", val tradingSymbol: String = "", val exchange: String = "NFO",
+    val strike: Double = 0.0, val optionType: String = "CE", val lotSize: Int = 0,
+    val ltp: Double? = null, val bid: Double? = null, val ask: Double? = null,
+    val fresh: Boolean = false, val expiry: String? = null, val buyAllowed: Boolean = false
+)
+data class StockOptionSnapshot(
+    val symbol: String = "", val spot: Double = 0.0, val spotFresh: Boolean = false,
+    val expiry: String? = null, val atm: Double? = null,
+    val contracts: List<StockOptionContract> = emptyList(), val updatedAt: String? = null
+)
 data class PaperStockTrade(
     val id: Long, val symbol: String, val token: String, val side: String,
     val setup: String, val openedAt: Long, val entry: Double, val stop: Double,

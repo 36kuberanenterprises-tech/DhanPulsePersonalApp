@@ -19,6 +19,12 @@ interface DhanPulseApi {
         @Query("trackedToken") trackedToken: String? = null
     ): StockScanResponse
 
+    @GET("api/stocks/options/catalog")
+    suspend fun stockOptionCatalog(@Header("X-Session-Id") sessionId: String): StockOptionCatalog
+
+    @GET("api/stocks/options/{symbol}")
+    suspend fun stockOptions(@Header("X-Session-Id") sessionId: String, @Path("symbol") symbol: String): StockOptionSnapshot
+
     @POST("api/auth/login")
     suspend fun login(@Body request: LoginRequest): LoginResponse
 

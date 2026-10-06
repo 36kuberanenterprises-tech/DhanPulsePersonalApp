@@ -248,6 +248,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             if (it == "MCX") vm.showMarket("MCX")
             if (it == "MARKET") vm.showMarket("EQUITY")
             vm.showStocks(it == "STOCKS")
+            vm.showStockOptions(it == "STOCK_OPTIONS")
             section = it
         } }
     ) { inner ->
@@ -258,6 +259,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             when (section) {
                 "MCX" -> McxSection(vm) { section = "TRADE" }
                 "STOCKS" -> StocksSection(vm)
+                "STOCK_OPTIONS" -> StockOptionsSection(vm)
                 "TRADE" -> TradeSection(vm)
                 "POSITIONS" -> PositionsSection(vm)
                 "RESEARCH" -> ResearchSection(vm)
@@ -284,7 +286,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
-                        val status = if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
+                        val status = if (vm.stockOptionsVisible) null else if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
                         val stockAge = if (vm.stocksVisible) runCatching {
                             vm.stockScan?.timestamp?.let { System.currentTimeMillis() - java.time.Instant.parse(it).toEpochMilli() }
                         }.getOrNull() else null
@@ -293,7 +295,9 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                             status == "MARKET_CLOSED" -> "CLOSED"
                             status == "NO_OPTIONS" -> "NO OPTIONS"
                             status == "HISTORY_UNAVAILABLE" -> "NO HISTORY"
-                            stockDelayed || status == "DATA_STALE" || (!vm.stocksVisible && (vm.refreshWarning != null || vm.analysis == null)) -> "DELAYED"
+                            vm.stockOptionsVisible && (vm.stockOptionError != null || vm.stockOptionSnapshot?.spotFresh != true) -> "DELAYED"
+                            stockDelayed || status == "DATA_STALE" || (!vm.stocksVisible && !vm.stockOptionsVisible && (vm.refreshWarning != null || vm.analysis == null)) -> "DELAYED"
+                            vm.stockOptionsVisible -> "QUOTES"
                             vm.stocksVisible && status == "OPENING_RANGE" -> "OPENING RANGE"
                             vm.stocksVisible && status == "NO_NEW_ENTRIES" -> "ENTRIES CLOSED"
                             vm.stocksVisible -> "SCANNING"
@@ -304,11 +308,11 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                             if (pillText == "LIVE" || pillText == "SCANNING") Green else Amber
                         )
                     }
-                    Text((vm.profile?.name ?: "Angel One connected") + if (vm.stocksVisible) " • NSE Stocks" else if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
+                    Text((vm.profile?.name ?: "Angel One connected") + if (vm.stockOptionsVisible) " • Stock Options" else if (vm.stocksVisible) " • NSE Stocks" else if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
                     Text("v${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 9.sp)
                 }
             }
-            Surface(onClick = { if (vm.stocksVisible) vm.fetchStockScanner() else vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
+            Surface(onClick = { if (vm.stockOptionsVisible) vm.fetchStockOptions() else if (vm.stocksVisible) vm.fetchStockScanner() else vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
                 Text("Refresh", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
         }
@@ -321,6 +325,7 @@ private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
         "MARKET" to "Market",
         "MCX" to "MCX",
         "STOCKS" to "Stocks",
+        "STOCK_OPTIONS" to "Options",
         "TRADE" to "Trade",
         "POSITIONS" to "Positions",
         "RESEARCH" to "Research",
@@ -1117,6 +1122,102 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                         Text("${stockRs(trade.entry)} entry • ${if (trade.closedAt == null) "OPEN" else trade.exitReason ?: "CLOSED"}", color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text("${stockTime(java.time.Instant.ofEpochMilli(trade.openedAt).toString())} • Net ${stockRs(trade.netPnl)}", color = if ((trade.netPnl ?: 0.0) < 0) Red else Green, style = MaterialTheme.typography.bodySmall)
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockOptionsSection(vm: DhanPulseViewModel) {
+    var search by remember { mutableStateOf("") }
+    var selectedToken by remember(vm.selectedStockOptionSymbol) { mutableStateOf("") }
+    var lots by remember(vm.selectedStockOptionSymbol) { mutableStateOf(1) }
+    var pendingSide by remember { mutableStateOf<String?>(null) }
+    val snapshot = vm.stockOptionSnapshot?.takeIf { it.symbol == vm.selectedStockOptionSymbol }
+    val contracts = snapshot?.contracts.orEmpty()
+    val contract = contracts.firstOrNull { it.token == selectedToken }
+        ?: contracts.filter { it.optionType == "CE" }.minByOrNull { abs(it.strike - (snapshot?.atm ?: it.strike)) }
+    val longQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
+    val gatewayReady = vm.orderGateway?.executionReady == true
+
+    pendingSide?.let { side ->
+        AlertDialog(
+            onDismissRequest = { pendingSide = null },
+            title = { Text(if (side == "BUY") "Confirm stock option BUY" else "Confirm position EXIT") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(contract?.tradingSymbol ?: "Option")
+                Text("$side • $lots lot • ${(contract?.lotSize ?: 0) * lots} qty • MARKET INTRADAY")
+                Text("Stock options may involve physical settlement near expiry. Exit open positions before expiry.", color = Amber)
+            } },
+            confirmButton = { Button(onClick = {
+                contract?.let { vm.placeStockOptionOrder(side, it, lots) }
+                pendingSide = null
+            }, enabled = !vm.orderBusy && contract != null && (side == "SELL" || vm.canBuyStockOption(contract, lots))) {
+                Text(if (side == "BUY") "BUY NOW" else "EXIT NOW")
+            } },
+            dismissButton = { TextButton(onClick = { pendingSide = null }) { Text("Cancel") } }
+        )
+    }
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item { SectionTitle("Stock Options", "NFO stock options • manual trading") }
+        item { InfoStrip("Expiry safety", "New buys stop ahead of expiry because stock options can require physical settlement. Review Positions and close any open option before expiry. Auto Trade is off here.") }
+        item {
+            OutlinedTextField(value = search, onValueChange = { search = it.uppercase() },
+                label = { Text("Search F&O stock") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            val matches = vm.stockOptionSymbols.filter { search.isNotBlank() && it.contains(search, ignoreCase = true) }.take(8)
+            matches.forEach { symbol ->
+                TextButton(onClick = { vm.selectStockOptionSymbol(symbol); search = "" }) { Text(symbol) }
+            }
+            Text("Selected: ${vm.selectedStockOptionSymbol} • ${vm.stockOptionSymbols.size} available stocks", color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        if (vm.stockOptionLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        vm.stockOptionError?.let { issue -> item { InfoStrip("Quote unavailable", issue) } }
+        if (snapshot != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("${snapshot.symbol} • NSE spot ${n(snapshot.spot)}", color = Ink, fontWeight = FontWeight.Bold)
+                        Text("Expiry ${snapshot.expiry ?: "Unavailable"} • ATM ${n(snapshot.atm)}", color = Muted)
+                        if (!snapshot.spotFresh) Text("Stock quote delayed. New buys paused.", color = Amber)
+                    }
+                }
+            }
+            item { Text("Choose a contract", color = Ink, fontWeight = FontWeight.Bold) }
+            items(contracts, key = { it.token }) { option ->
+                val chosen = option.token == (contract?.token ?: "")
+                Surface(onClick = { selectedToken = option.token }, color = if (chosen) Purple.copy(alpha = 0.16f) else Panel,
+                    shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (chosen) Purple else Line)) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("${n(option.strike)} ${option.optionType} • lot ${option.lotSize}", color = Ink, fontWeight = FontWeight.Bold)
+                            Text(option.tradingSymbol, color = Muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                        Text(option.ltp?.let { n(it) } ?: "WAIT", color = if (option.fresh) Green else Amber)
+                    }
+                }
+            }
+        }
+        if (contract != null) item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), border = BorderStroke(1.dp, Purple)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(contract.tradingSymbol, color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("Bid ${n(contract.bid)} • Ask ${n(contract.ask)} • Premium ${n(contract.ltp)}", color = Muted)
+                    Text("$lots lot • ${contract.lotSize * lots} qty • estimated ask cost ${n((contract.ask ?: 0.0) * contract.lotSize * lots)}", color = Ink)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalButton(onClick = { if (lots > 1) lots-- }) { Text("−") }
+                        Spacer(Modifier.width(8.dp))
+                        FilledTonalButton(onClick = { if (lots < 20) lots++ }) { Text("+") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { pendingSide = "BUY" }, enabled = vm.canBuyStockOption(contract, lots), modifier = Modifier.weight(1f)) { Text("BUY ${contract.optionType}") }
+                        Button(onClick = { pendingSide = "SELL" }, enabled = gatewayReady && longQty >= contract.lotSize * lots && !vm.orderBusy,
+                            modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Red)) { Text("EXIT") }
+                    }
+                    if (!gatewayReady) Text(vm.orderGateway?.message ?: "Order route unavailable", color = Amber)
+                    if (!contract.buyAllowed) Text("New buys are blocked near expiry or outside market hours.", color = Amber)
+                    vm.orderMessage?.let { Text(it, color = Ink) }
                 }
             }
         }
