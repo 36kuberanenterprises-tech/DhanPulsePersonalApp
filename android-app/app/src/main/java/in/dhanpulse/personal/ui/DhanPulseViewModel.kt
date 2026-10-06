@@ -360,10 +360,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until live analysis refresh succeeds."
                 } else {
                     val msg = friendlyError(e, "Analysis failed")
-                    if (msg.contains("403") || msg.contains("rate limit", ignoreCase = true) ||
-                        msg.contains("exceeding access rate", ignoreCase = true)) {
+                    if ((msg.contains("Candle", ignoreCase = true) || msg.contains("historical", ignoreCase = true)) &&
+                        (msg.contains("403") || msg.contains("rate limit", ignoreCase = true) ||
+                            msg.contains("exceeding access rate", ignoreCase = true))) {
                         error = null
-                        refreshWarning = "Broker candle history is unavailable: $msg. SENSEX calls are paused until fresh candles return."
+                        refreshWarning = "$requestedSymbol candle history is unavailable: ${msg.trimEnd('.', ' ')}. Calls and Auto Trade are paused until fresh candles return."
                     } else if (msg.contains("Market history", ignoreCase = true)) {
                         error = null
                         refreshWarning = "Preparing prior-session candles. Live quotes will continue automatically."
