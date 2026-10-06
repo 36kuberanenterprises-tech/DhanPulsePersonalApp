@@ -69,9 +69,15 @@ jobs:
         working-directory: android-app
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Check installer app label
+        run: |
+          version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
+          test -n "$version"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse $version Preview'"
+
       - name: Rename APK
         run: |
-          version=$(sed -nE 's/.*versionName = "([^"]+)".*/\1/p' android-app/app/build.gradle.kts)
+          version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
           cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-Personal-v${version}-Preview.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
