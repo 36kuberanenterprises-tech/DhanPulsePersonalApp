@@ -4,6 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val appVersion = "2.9.3"
+
 android {
     namespace = "in.dhanpulse.personal"
     compileSdk = 35
@@ -12,17 +14,17 @@ android {
         applicationId = "in.dhanpulse.personal"
         minSdk = 26
         targetSdk = 35
-        versionCode = 45
-        versionName = "2.9.2"
+        versionCode = 46
+        versionName = appVersion
     }
 
     buildTypes {
         getByName("debug") {
             applicationIdSuffix = ".preview281"
-            manifestPlaceholders["appLabel"] = "DhanPulse 2.8.1 Preview"
+            manifestPlaceholders["appLabel"] = "DhanPulse $appVersion Preview"
         }
         getByName("release") {
-            manifestPlaceholders["appLabel"] = "DhanPulse"
+            manifestPlaceholders["appLabel"] = "DhanPulse $appVersion"
         }
     }
 
