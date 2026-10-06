@@ -1,5 +1,5 @@
 import { candleData, instrumentMaster, marketData, parseCandles, parseFetched, quoteFeedAgeMs, quoteLtp, resolveUnderlying } from './angel.js';
-import { atr, ema } from './indicators.js';
+import { atr, ema, supertrend, macd, rsi } from './indicators.js';
 
 const IST = 330 * 60_000;
 const FIVE_MINUTES = 300_000;
@@ -199,6 +199,47 @@ function priorDayHighLow(candles, now) {
   return { high: Math.max(...rows.map(c => c.high)), low: Math.min(...rows.map(c => c.low)) };
 }
 
+export function stockFamilyConsensus(candles, price, trend, vwap, volumeRatio, now = new Date()) {
+  const bars = completedCandles(candles, now);
+  if (bars.length < 45 || !(price > 0) || !(vwap > 0) || volumeRatio == null)
+    return { direction: 'WAIT', conflict: false, regime: 'UNKNOWN', families: [], reason: 'Completed price and volume history is unavailable' };
+  const last = bars.at(-1), prev = bars.at(-2);
+  const a = atr(bars, 14);
+  const closes = bars.map(c => c.close);
+  const e9 = ema(closes, 9), e15 = ema(closes, 15);
+  const st = supertrend(bars, 10, 3);
+  if (!(a > 0) || !(e9 > 0) || !(e15 > 0) || !st || a / price < 0.0005 || a / price > 0.03)
+    return { direction: 'WAIT', conflict: false, regime: 'VOLATILITY_BLOCK', families: [], reason: 'Stock volatility or trend data is unsuitable' };
+  const gap = Math.abs(e9 - e15) / a;
+  const regime = gap <= 0.18 ? 'RANGE' : gap >= 0.35 ? 'TREND' : 'TRANSITION';
+  const prior12 = bars.slice(-13, -1), prior20 = bars.slice(-21, -1);
+  const hi12 = Math.max(...prior12.map(c => c.high)), lo12 = Math.min(...prior12.map(c => c.low));
+  const hi20 = Math.max(...prior20.map(c => c.high)), lo20 = Math.min(...prior20.map(c => c.low));
+  const avg = prior20.reduce((sum, c) => sum + c.close, 0) / prior20.length;
+  const sd = Math.sqrt(prior20.reduce((sum, c) => sum + (c.close - avg) ** 2, 0) / prior20.length);
+  const momentum = macd(closes);
+  const strength = rsi(closes, 14);
+  const votes = [
+    ['Trend continuation', regime === 'TREND' && trend === 'BUY' && e9 > e15 && st.direction === 'BULLISH' && price > vwap && last.close > prev.close,
+      regime === 'TREND' && trend === 'SELL' && e9 < e15 && st.direction === 'BEARISH' && price < vwap && last.close < prev.close],
+    ['Breakout', regime !== 'RANGE' && prev.close <= hi12 && last.close > hi12 + a * 0.08 && last.close - hi12 <= a * 0.8,
+      regime !== 'RANGE' && prev.close >= lo12 && last.close < lo12 - a * 0.08 && lo12 - last.close <= a * 0.8],
+    ['Pullback', regime === 'TREND' && e9 > e15 && prev.low <= e9 + a * 0.15 && last.close > prev.high,
+      regime === 'TREND' && e9 < e15 && prev.high >= e9 - a * 0.15 && last.close < prev.low],
+    ['Liquidity reversal', regime !== 'TREND' && last.low < lo20 - a * 0.08 && last.close > lo20 && last.close > last.open,
+      regime !== 'TREND' && last.high > hi20 + a * 0.08 && last.close < hi20 && last.close < last.open],
+    ['Short horizon mean reversion', regime === 'RANGE' && sd > 0 && last.low < avg - 1.8 * sd && last.close > avg - 1.8 * sd && strength <= 45,
+      regime === 'RANGE' && sd > 0 && last.high > avg + 1.8 * sd && last.close < avg + 1.8 * sd && strength >= 55],
+    ['Momentum ignition', regime !== 'RANGE' && volumeRatio >= 1.5 && last.close - last.open >= a * 0.55 && momentum?.histogram > 0,
+      regime !== 'RANGE' && volumeRatio >= 1.5 && last.open - last.close >= a * 0.55 && momentum?.histogram < 0]
+  ].map(([name, buy, sell]) => ({ name, side: buy && !sell ? 'BUY' : sell && !buy ? 'SELL' : 'WAIT' }));
+  const active = votes.filter(v => v.side !== 'WAIT');
+  const conflict = active.some(v => v.side === 'BUY') && active.some(v => v.side === 'SELL');
+  const direction = conflict || !active.length ? 'WAIT' : active[0].side;
+  return { direction, conflict, regime, families: votes,
+    reason: conflict ? 'Independent stock strategy families disagree' : !active.length ? 'No independent family confirmed the completed move' : active.map(v => v.name).join(' + ') };
+}
+
 export function evaluateStock({ symbol, sector, quote, candles, now, cash, niftyReturn, sectorReturn, sectorCount }) {
   const price = quoteLtp(quote);
   const base = { symbol, sector, token: String(quote?.symbolToken || quote?.symboltoken || quote?.token || ''), price: round(price),
@@ -243,11 +284,14 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
         prior.close <= vwap && last.close < prior.low,
       stop: Math.max(last.high, prior.high) + a * 0.08 }
   ];
+  const consensus = stockFamilyConsensus(verified, price, trend, vwap, volumeRatio, now);
+  if (consensus.conflict) return refuse(consensus.reason);
   if (!moves.some(move => move.aligned)) return refuse('Market, sector, VWAP and 15 minute trend do not agree');
   for (const move of moves) {
     if (!move.aligned) continue;
     const setup = move.breakout ? 'OPENING_RANGE' : move.pullback ? 'FIRST_PULLBACK' : null;
     if (!setup) continue;
+    if (consensus.direction !== move.side) return refuse(consensus.reason);
     if (volumeRatio < (setup === 'OPENING_RANGE' ? 1.2 : 1.0)) return refuse('Traded volume is below the same time comparison');
     const distance = Math.abs(price - move.stop);
     if ((move.side === 'BUY' && price <= move.stop) || (move.side === 'SELL' && price >= move.stop) ||
@@ -262,7 +306,7 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
     return { ...base, status: 'READY', side: move.side, setup, reason: setup === 'OPENING_RANGE'
       ? 'Opening range close, sector trend and comparable volume agree'
       : 'First trend pullback confirmed with sector and VWAP',
-      vwap: round(vwap), volumeRatio: round(volumeRatio), trend,
+      vwap: round(vwap), volumeRatio: round(volumeRatio), trend, regime: consensus.regime, families: consensus.families,
       plan: { entry: round(price), stop: round(move.stop), target1: round(price + sign * distance),
         target2: round(price + sign * distance * 2), target3: round(price + sign * distance * 3),
         ...sizing, estimated: true } };

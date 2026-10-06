@@ -10,6 +10,7 @@ import { runBacktest } from './backtest.js';
 import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
 import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
+import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
 
 const app = express();
 app.use(cors());
@@ -233,6 +234,36 @@ app.get('/api/stocks/scanner', requireSession, async (req, res) => {
   } catch (e) {
     console.error('Stock scanner failed:', e?.message || e);
     res.status(503).json({ error: 'Stock scanner data is temporarily unavailable. ' + (e?.message || 'Please retry.') });
+  }
+});
+
+app.get('/api/stocks/opportunity', requireSession, async (req, res) => {
+  try {
+    const scan = await scanStocks(req.smartSession);
+    const setup = chooseStockSetup(scan);
+    if (setup.status !== 'READY') return res.json({ ...setup, timestamp: scan.timestamp, option: null });
+    const rows = await instrumentMaster();
+    const stock = setup.stock;
+    const window = stockOptionWindow(rows, stock.symbol, stock.price);
+    const tokens = window.contracts.map(row => String(row.token));
+    let option = null;
+    if (tokens.length && stock.price > 0) {
+      try {
+        const quotes = parseFetched(await marketData(req.smartSession, { NSE: [stock.token], NFO: tokens }, 'FULL'));
+        const spotQuote = quotes.find(q => String(q.symbolToken ?? q.symboltoken ?? q.token) === stock.token);
+        const age = quoteFeedAgeMs(spotQuote);
+        if (age != null && age >= -30_000 && age <= 45_000 && Math.abs(quoteLtp(spotQuote) - stock.price) <= Math.max(0.01, stock.price * 0.0025)) {
+          const funds = await rmsLimit(req.smartSession);
+          option = chooseStockOption(window.contracts, quotes, stock, quoteLtp(spotQuote), n(funds?.data?.availablecash));
+        }
+      } catch (e) { console.warn('Stock option recommendation unavailable:', e?.message || e); }
+    }
+    res.json({ status: 'READY', timestamp: scan.timestamp, stock, option,
+      reason: option ? 'Stock setup and liquid matching option passed the checks. Review before trading.' :
+        'Stock setup passed; no matching option passed live spread, depth, OI, expiry and risk checks.',
+      executionReady: (await orderGatewayState()).executionReady });
+  } catch (e) {
+    res.status(503).json({ error: 'Stock opportunity unavailable: ' + (e?.message || 'retry later') });
   }
 });
 

@@ -56,8 +56,10 @@ data class StockCandidate(
     val price: Double? = null, val quoteTime: String? = null,
     val status: String = "WAIT", val side: String = "WAIT", val setup: String? = null,
     val reason: String = "", val plan: StockPlan? = null,
-    val vwap: Double? = null, val volumeRatio: Double? = null, val trend: String? = null
+    val vwap: Double? = null, val volumeRatio: Double? = null, val trend: String? = null,
+    val regime: String? = null, val families: List<StockFamilyVote> = emptyList()
 )
+data class StockFamilyVote(val name: String = "", val side: String = "WAIT")
 data class StockQuote(val token: String = "", val price: Double = 0.0, val quoteTime: String? = null, val fresh: Boolean = false)
 data class StockScanResponse(
     val marketStatus: String = "DATA_STALE", val timestamp: String = "",
@@ -79,6 +81,17 @@ data class StockOptionSnapshot(
     val symbol: String = "", val spot: Double = 0.0, val spotFresh: Boolean = false,
     val expiry: String? = null, val atm: Double? = null,
     val contracts: List<StockOptionContract> = emptyList(), val updatedAt: String? = null
+)
+data class StockOptionIdea(
+    val token: String = "", val tradingSymbol: String = "", val exchange: String = "NFO",
+    val optionType: String = "CE", val strike: Double = 0.0, val lotSize: Int = 0,
+    val bid: Double = 0.0, val ask: Double = 0.0, val expiry: String? = null,
+    val estimatedPremium: Double = 0.0, val estimatedRiskAt20PctStop: Double = 0.0
+)
+data class StockOpportunity(
+    val status: String = "WAIT", val timestamp: String? = null, val reason: String = "",
+    val stock: StockCandidate? = null, val option: StockOptionIdea? = null,
+    val executionReady: Boolean = false
 )
 data class PaperStockTrade(
     val id: Long, val symbol: String, val token: String, val side: String,

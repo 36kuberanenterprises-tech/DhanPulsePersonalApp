@@ -1103,6 +1103,7 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                 }
             }
         }
+        item { StockOpportunityCard(vm, inOptions = false) }
         vm.stockPaperMessage?.let { message -> item { InfoStrip("Paper journal", message) } }
         if (vm.openPaperStock != null && !java.time.LocalTime.now(java.time.ZoneId.of("Asia/Kolkata")).isBefore(java.time.LocalTime.of(15, 0))) {
             item { InfoStrip("Exit reminder", "Close or mark the open paper position now. Angel One MIS positions are due for square off around 3:10 pm; this journal does not place an order.") }
@@ -1137,6 +1138,7 @@ private fun StockOptionsSection(vm: DhanPulseViewModel) {
     val snapshot = vm.stockOptionSnapshot?.takeIf { it.symbol == vm.selectedStockOptionSymbol }
     val contracts = snapshot?.contracts.orEmpty()
     val contract = contracts.firstOrNull { it.token == selectedToken }
+        ?: contracts.firstOrNull { it.token == vm.stockOpportunity?.option?.token && snapshot?.symbol == vm.stockOpportunity?.stock?.symbol }
         ?: contracts.filter { it.optionType == "CE" }.minByOrNull { abs(it.strike - (snapshot?.atm ?: it.strike)) }
     val longQty = vm.account?.positions?.firstOrNull { it.token == contract?.token }?.netQty ?: 0.0
     val gatewayReady = vm.orderGateway?.executionReady == true
@@ -1161,7 +1163,8 @@ private fun StockOptionsSection(vm: DhanPulseViewModel) {
     }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { SectionTitle("Stock Options", "NFO stock options • manual trading") }
+        item { SectionTitle("Stock Options", "NFO stock options • scanner recommendation and manual trading") }
+        item { StockOpportunityCard(vm, inOptions = true) }
         item { InfoStrip("Expiry safety", "New buys stop ahead of expiry because stock options can require physical settlement. Review Positions and close any open option before expiry. Auto Trade is off here.") }
         item {
             OutlinedTextField(value = search, onValueChange = { search = it.uppercase() },
@@ -1225,6 +1228,40 @@ private fun StockOptionsSection(vm: DhanPulseViewModel) {
 }
 
 @Composable
+private fun StockOpportunityCard(vm: DhanPulseViewModel, inOptions: Boolean) {
+    val idea = vm.stockOpportunity
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, if (idea?.status == "READY") Green.copy(alpha = 0.45f) else Line)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("Scanner pick • ${idea?.status ?: "CHECKING"}", color = if (idea?.status == "READY") Green else Amber,
+                fontWeight = FontWeight.ExtraBold)
+            Text(vm.stockOpportunityError ?: idea?.reason ?: "Checking completed stock candles and live quotes.",
+                color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (idea?.status == "READY") {
+                idea.stock?.let { stock ->
+                    Text("${stock.symbol} ${stock.side} • ${stock.setup?.replace('_', ' ') ?: "setup"}", color = Ink, fontWeight = FontWeight.Bold)
+                    Text("Stock entry ${stockRs(stock.plan?.entry)} • stop ${stockRs(stock.plan?.stop)}", color = Muted)
+                }
+                idea.option?.let { option ->
+                    Text("${option.tradingSymbol} • ${option.optionType} • 1 lot • ask ${n(option.ask)}", color = Ink)
+                    Text("Indicative premium ${stockRs(option.estimatedPremium)} • 20% stop risk ${stockRs(option.estimatedRiskAt20PctStop)}", color = Muted)
+                    if (inOptions) TextButton(onClick = { vm.selectStockOptionSymbol(idea.stock?.symbol ?: return@TextButton) }) {
+                        Text("View matching option and review order")
+                    }
+                }
+                if (!inOptions && idea.stock?.status == "READY") {
+                    Button(onClick = { idea.stock?.let(vm::startPaperStock) }, enabled = vm.openPaperStock == null) {
+                        Text("Record selected stock on paper")
+                    }
+                }
+            }
+            Text("A pick is not a fill. Missing candles, stale quotes or strategy conflicts mean WAIT. Live orders require separate confirmation and a ready order route.",
+                color = Amber, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
 private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
     val ready = stock.status == "READY" && stock.plan != null
     val plan = stock.plan
@@ -1242,6 +1279,7 @@ private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
                 Text("T1 ${stockRs(plan.target1)} • T2 ${stockRs(plan.target2)} • T3 ${stockRs(plan.target3)}", color = Ink, style = MaterialTheme.typography.bodySmall)
                 Text("${plan.quantity} shares • risk up to ${stockRs(plan.estimatedLoss)} incl. estimated costs ${stockRs(plan.estimatedCosts)}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 Text("VWAP ${stockRs(stock.vwap)} • relative volume ${stock.volumeRatio?.let { String.format("%.2fx", it) } ?: "NA"} • quote ${stock.quoteTime ?: "NA"}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text("${stock.regime ?: "Unknown"} • ${stock.families.filter { it.side == stock.side }.joinToString { it.name }}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 Button(onClick = { vm.startPaperStock(stock) }, enabled = vm.openPaperStock == null, modifier = Modifier.fillMaxWidth()) {
                     Text("Record paper entry")
                 }

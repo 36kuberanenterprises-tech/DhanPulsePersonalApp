@@ -12,8 +12,8 @@ android {
         applicationId = "in.dhanpulse.personal"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "2.9.0"
+        versionCode = 44
+        versionName = "2.9.1"
     }
 
     buildTypes {
