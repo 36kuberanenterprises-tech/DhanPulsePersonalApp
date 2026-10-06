@@ -73,6 +73,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var stockOptionError by mutableStateOf<String?>(null)
         private set
     var stockOptionLoading by mutableStateOf(false)
+    var stockOpportunity by mutableStateOf<StockOpportunity?>(null)
+    var stockOpportunityError by mutableStateOf<String?>(null)
+    private var stockOpportunityInFlight = false
         private set
     private var stockOptionInFlight = false
     var stockScan by mutableStateOf<StockScanResponse?>(null)
@@ -1104,6 +1107,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             stopLivePriceStream()
             fetchStockOptionCatalog()
             fetchStockOptions()
+            fetchStockOpportunity()
         } else startLivePriceStream()
         startAutoRefresh()
     }
@@ -1148,6 +1152,21 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 stockOptionLoading = false
                 if (symbol != selectedStockOptionSymbol) fetchStockOptions()
             }
+        }
+    }
+
+    fun fetchStockOpportunity() {
+        val s = sessionId ?: return
+        if (stockOpportunityInFlight) return
+        stockOpportunityInFlight = true
+        viewModelScope.launch {
+            try {
+                stockOpportunity = client().stockOpportunity(s)
+                stockOpportunityError = null
+            } catch (e: Exception) {
+                stockOpportunity = null
+                stockOpportunityError = friendlyError(e, "Stock selection unavailable")
+            } finally { stockOpportunityInFlight = false }
         }
     }
 
@@ -1199,6 +1218,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val response = client().stockScanner(s, openPaperStock?.token)
                 stockScan = response
                 stockScanError = null
+                fetchStockOpportunity()
                 resolvePastPaperStock()
             } catch (e: Exception) {
                 stockScanError = friendlyError(e, "Stock scanner unavailable")
