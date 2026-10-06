@@ -1,4 +1,5 @@
 import { ProxyAgent, request as undiciRequest } from 'undici';
+import { isIP } from 'node:net';
 const ROOT = 'https://apiconnect.angelone.in';
 const MASTER_URL = 'https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json';
 const REGISTERED_PUBLIC_IP = process.env.CLIENT_PUBLIC_IP || '34.70.199.153';
@@ -8,17 +9,24 @@ export async function getEgressIp() {
   if (egressIpCache.ip && Date.now() - egressIpCache.at < 10 * 60_000) return egressIpCache.ip;
   if (egressIpInFlight) return egressIpInFlight;
   egressIpInFlight = (async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
-    try {
-      const r = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
-      if (!r.ok) return null;
-      const ip = String((await r.json())?.ip || '').trim();
-      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return null;
-      egressIpCache = { at: Date.now(), ip };
-      return ip;
-    } catch { return null; }
-    finally { clearTimeout(timer); }
+    for (const [url, json] of [
+      ['https://api.ipify.org?format=json', true],
+      ['https://checkip.amazonaws.com/', false]
+    ]) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2000);
+      try {
+        const r = await fetch(url, { signal: controller.signal });
+        if (!r.ok) continue;
+        const body = await r.text();
+        const ip = String(json ? JSON.parse(body)?.ip : body).trim();
+        if (isIP(ip) !== 4) continue;
+        egressIpCache = { at: Date.now(), ip };
+        return ip;
+      } catch { /* Try the next independent IP reflector. */ }
+      finally { clearTimeout(timer); }
+    }
+    return null;
   })();
   try { return await egressIpInFlight; }
   finally { egressIpInFlight = null; }
@@ -150,18 +158,22 @@ export async function candleData(session, payload) {
       body: JSON.stringify(payload)
     }, 'Candle data');
   } catch (error) {
+    if (/exceeding access rate|rate limit|too many requests|AB1021/i.test(String(error?.message || ''))) {
+      candleRateBlockedUntil = Math.max(candleRateBlockedUntil, Date.now() + CANDLE_RATE_COOLDOWN_MS);
+    }
+    // This is an observation through a separate endpoint, not proof of the
+    // source IP Angel One saw for the rejected request.
+    const observedEgressIp = await getEgressIp();
     console.warn('CANDLE_REJECTED', JSON.stringify({
       exchange: payload.exchange,
       symboltoken: payload.symboltoken,
       interval: payload.interval,
       publicIp,
+      observedEgressIp,
       requestsThisProcess: candleStartsSinceLaunch,
       requestsLastMinute: recentCandleStarts.length,
       reason: String(error?.message || '').slice(0, 200)
     }));
-    if (/exceeding access rate|rate limit|too many requests|AB1021/i.test(String(error?.message || ''))) {
-      candleRateBlockedUntil = Math.max(candleRateBlockedUntil, Date.now() + CANDLE_RATE_COOLDOWN_MS);
-    }
     throw error;
   }
 }
