@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
+import { sealSession, openSession } from './session-token.js';
 import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, getEgressIp } from './angel.js';
 import { analyse, marketDataState } from './analysis.js';
 import { openAngelPriceStream, streamInstrument } from './live-stream.js';
@@ -14,6 +15,7 @@ app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 
 const sessions = new Map();
+const revokedSessions = new Map();
 const analysisCache = new Map();
 const analysisInFlight = new Map();
 const accountCache = new Map();
@@ -127,7 +129,7 @@ app.post('/api/auth/login', async (req, res) => {
     const r = await login({ apiKey: resolvedApiKey, clientCode: resolvedClientCode, pin: String(pin), totp: String(totp).trim() });
     const data = r.data || {};
     const session = { apiKey: resolvedApiKey, clientCode: resolvedClientCode, jwt: data.jwtToken, refreshToken: data.refreshToken, feedToken: data.feedToken, createdAt: Date.now(), expiresAt: nextIndiaMidnight(Date.now()) };
-    const id = crypto.randomUUID();
+    const id = sealSession(session);
     sessions.set(id, session);
     let p = null;
     try { p = await profile(session); } catch {}
@@ -137,9 +139,11 @@ app.post('/api/auth/login', async (req, res) => {
 
 function requireSession(req, res, next) {
   const id = req.header('X-Session-Id');
-  const s = sessions.get(id);
+  if (revokedSessions.has(id)) return res.status(401).json({ error: 'Login required' });
+  const s = sessions.get(id) || openSession(id);
   if (!s) return res.status(401).json({ error: 'Login required' });
   if (Date.now() >= s.expiresAt) { sessions.delete(id); return res.status(401).json({ error: 'Session expired. Login again.' }); }
+  sessions.set(id, s);
   req.smartSession = s; next();
 }
 
@@ -589,6 +593,7 @@ app.post('/api/order', requireSession, async (req, res) => {
 app.post('/api/auth/logout', requireSession, (req, res) => {
   const id = req.header('X-Session-Id');
   const session = sessions.get(id);
+  revokedSessions.set(id, session.expiresAt);
   liveConnections.get(id)?.();
   sessions.delete(id);
   if (session) {
@@ -601,6 +606,7 @@ app.post('/api/auth/logout', requireSession, (req, res) => {
 
 setInterval(() => {
   for (const [id, s] of sessions) if (Date.now() >= s.expiresAt) { liveConnections.get(id)?.(); sessions.delete(id); }
+  for (const [id, expiresAt] of revokedSessions) if (Date.now() >= expiresAt) revokedSessions.delete(id);
 }, 30 * 60 * 1000).unref();
 
 const port = Number(process.env.PORT || 8787);
