@@ -439,7 +439,7 @@ private fun MarketSection(vm: DhanPulseViewModel) {
             "HISTORY_UNAVAILABLE" -> "Broker candles unavailable"
             else -> "Live refresh delayed"
         }, it) } }
-        if (a == null && (vm.loading || vm.refreshWarning != null)) item { LoadingMarketCard(vm.refreshWarning) }
+        if (a == null && vm.loading && vm.refreshWarning == null) item { LoadingMarketCard() }
         if (a != null) {
             item { SignalCard(a, vm) }
             item { MarketCard(a, vm) }
@@ -547,7 +547,7 @@ private fun TradeSection(vm: DhanPulseViewModel) {
                 item { LatestCallRecordCard(latest) }
             }
             item { SignalPerformanceCard(vm) }
-        } else item { LoadingMarketCard(vm.refreshWarning) }
+        } else if (vm.refreshWarning == null) item { LoadingMarketCard() }
     }
 }
 
@@ -1531,6 +1531,7 @@ private fun AccountSection(vm: DhanPulseViewModel) {
             }
         }
         vm.account?.let { item { AccountCard(it, vm::fetchAccount) } }
+        item { OrderGatewayCard(vm) }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
