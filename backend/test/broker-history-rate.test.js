@@ -11,18 +11,17 @@ test('parallel broker history requests are paced and a rate rejection pauses the
   const sourceHeaders = [];
   try {
     globalThis.fetch = async (url, init) => {
-      if (String(url).includes('api.ipify.org')) return new Response('{"ip":"74.220.52.132"}');
       starts.push(Date.now());
       sourceHeaders.push(init.headers['X-ClientPublicIP']);
       return new Response(JSON.stringify({ status: true, data: [] }), { status: 200 });
     };
     await Promise.all([candleData(session, payload), candleData(session, payload)]);
     assert.equal(starts.length, 2);
-    assert.deepEqual(sourceHeaders, ['74.220.52.132', '74.220.52.132'], 'historical reads identify the actual outbound IP');
+    assert.deepEqual(sourceHeaders, [process.env.CLIENT_PUBLIC_IP || '34.70.199.153', process.env.CLIENT_PUBLIC_IP || '34.70.199.153'],
+      'history uses the same configured client public IP header as quote reads');
     assert.ok(starts[1] - starts[0] >= 1000, `history calls started only ${starts[1] - starts[0]}ms apart`);
 
     globalThis.fetch = async url => {
-      if (String(url).includes('api.ipify.org')) return new Response('{"ip":"74.220.52.132"}');
       starts.push(Date.now());
       return new Response('Access denied because of exceeding access rate', { status: 403 });
     };

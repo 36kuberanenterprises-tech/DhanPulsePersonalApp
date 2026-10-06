@@ -135,8 +135,11 @@ export async function marketData(session, exchangeTokens, mode = 'FULL', orderSa
 export async function candleData(session, payload) {
   await reserveCandleRequest();
   await reserveBrokerRead();
-  const publicIp = await getEgressIp();
-  if (!publicIp) throw new Error('Candle data: unable to verify server outbound IP; history request paused.');
+  // A third-party IP reflector can fail even while the broker is reachable.
+  // Send read-only history with the same configured client header as quote and
+  // account requests. The broker response remains authoritative; never infer
+  // a candle from a failed request. Live order IP verification is separate.
+  const publicIp = REGISTERED_PUBLIC_IP;
   const startedAt = Date.now();
   while (recentCandleStarts.length && recentCandleStarts[0] < startedAt - 60_000) recentCandleStarts.shift();
   recentCandleStarts.push(startedAt);
