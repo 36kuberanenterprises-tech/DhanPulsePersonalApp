@@ -176,6 +176,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val stockPrefs = app.getSharedPreferences("dhanpulse_stock_paper", 0)
     private var callPendingKey: String? = null
     private var callPendingCount = 0
+    private var appInForeground = false
     private var blockedCallBias: String? = null
     private val pendingCancelCounts = mutableMapOf<String, Int>()
 
@@ -212,6 +213,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun checkVisibleSession() {
+        if (appInForeground) markUserActive() else checkSessionTimeout()
+    }
+
     fun checkSessionTimeout(now: Long = System.currentTimeMillis()): Boolean {
         if (sessionId == null) return false
         val last = sessionStore.lastUserActivity
@@ -223,6 +228,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onAppForeground() {
+        appInForeground = true
         if (!checkSessionTimeout()) {
             markUserActive()
             startAutoRefresh()
@@ -234,6 +240,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onAppBackground() {
+        appInForeground = false
         stopAutoRefresh()
         stopLivePriceStream()
     }
