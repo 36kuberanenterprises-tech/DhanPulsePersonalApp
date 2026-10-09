@@ -315,9 +315,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED")
                 }?.token
                 val result = client().analysis(s, requestedSymbol, requestedTimeframe, trackedToken)
-                if (requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
+                if (s != sessionId || requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
                     analysisRefreshInFlight = false
-                    fetchAnalysis()
+                    loading = false
+                    if (sessionId != null) fetchAnalysis()
                     return@launch
                 }
                 analysis = result
@@ -337,6 +338,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until a fresh broker quote is available."
                 }
             } catch (e: Exception) {
+                if (s != sessionId || requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
+                    analysisRefreshInFlight = false
+                    loading = false
+                    if (sessionId != null) fetchAnalysis()
+                    return@launch
+                }
                 if (e is HttpException && e.code() == 401) {
                     logout("Broker session expired. Please login again.")
                 } else if (analysis != null) {
