@@ -26,6 +26,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      apk_version: ${{ steps.apk_version.outputs.version }}
 
     steps:
       - name: Checkout source
@@ -76,11 +78,13 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse $version Preview'"
 
       - name: Rename APK
+        id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
           cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-Personal-v${version}-Preview.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -89,3 +93,30 @@ jobs:
           path: DhanPulse-Personal-v${{ env.APK_VERSION }}-Preview.apk
           if-no-files-found: error
           retention-days: 30
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified APK
+        uses: actions/download-artifact@v4
+        with:
+          name: DhanPulse-Personal-v${{ needs.build.outputs.apk_version }}-Preview-APK
+
+      - name: Publish direct APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_VERSION: ${{ needs.build.outputs.apk_version }}
+        run: |
+          tag="v${APK_VERSION}"
+          apk="DhanPulse-Personal-${tag}-Preview.apk"
+          test -s "$apk"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Bump the app version for a new APK."
+            exit 1
+          fi
+          gh release create "$tag" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "DhanPulse Personal $tag Preview" --notes "Android preview build. Broker candle access still requires a verified outbound route." --prerelease
