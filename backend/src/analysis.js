@@ -213,11 +213,13 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
     }
     try { state = await lock; }
     catch (error) {
-      // Existing broker-confirmed bars may still explain the market. The
-      // strategy's freshness check will return WAIT until a current bar arrives.
-      if (!state?.candles.length) throw error;
-      state = { ...state, lastAttemptAt: Date.now() };
-      liveCandleCache.set(key, state);
+      // A current completed bar is required for any new call. If the broker
+      // rejects its refresh, expose the broker failure instead of silently
+      // returning stale cached bars as an ordinary strategy WAIT.
+      if (state?.candles.length) {
+        liveCandleCache.set(key, { ...state, lastAttemptAt: Date.now() });
+      }
+      throw error;
     }
   }
   return state.candles;
