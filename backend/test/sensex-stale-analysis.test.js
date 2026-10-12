@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyse } from '../src/analysis.js';
 
-test('a live SENSEX quote with old broker candles is DATA_STALE and cannot issue a call', async () => {
+test('old SENSEX broker candles are DATA_STALE and cannot issue a call', async () => {
   const previousFetch = globalThis.fetch;
   const previousNow = Date.now;
   const now = Date.parse('2026-10-12T04:01:00Z'); // Monday 09:31 IST
@@ -44,7 +44,7 @@ test('a live SENSEX quote with old broker candles is DATA_STALE and cannot issue
     assert.deepEqual(result.tradeDecision.contextChecks, []);
     assert.deepEqual(result.rules, []);
     assert.equal(result.ruleScore.considered, 0);
-    assert.match(result.tradeDecision.message, /quote is live.*candle is delayed/i);
+    assert.match(result.tradeDecision.message, /completed broker candle is delayed/i);
   } finally {
     globalThis.fetch = previousFetch;
     Date.now = previousNow;
