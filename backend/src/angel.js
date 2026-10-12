@@ -144,10 +144,8 @@ export async function marketData(session, exchangeTokens, mode = 'FULL', orderSa
 export async function candleData(session, payload) {
   await reserveCandleRequest();
   await reserveBrokerRead();
-  // A third-party IP reflector can fail even while the broker is reachable.
-  // Send read-only history with the same configured client header as quote and
-  // account requests. The broker response remains authoritative; never infer
-  // a candle from a failed request. Live order IP verification is separate.
+  // Prefer the verified static relay when configured. A broker rejection remains
+  // authoritative; never infer a candle from a failed request.
   const publicIp = REGISTERED_PUBLIC_IP;
   const relayUrl = String(process.env.HISTORY_RELAY_URL || process.env.ORDER_RELAY_URL || '').trim();
   const relaySecret = String(process.env.HISTORY_RELAY_SECRET || process.env.ORDER_RELAY_SECRET || '').trim();
