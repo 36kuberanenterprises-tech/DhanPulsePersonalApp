@@ -711,6 +711,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
     exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
   } : null;
+  const candleDelayed = sensexFamiliesEnabled && /^Latest completed (?:SENSEX|15 minute) candle is delayed$/.test(sensexFamily.reason);
   const computedDecision = sensexFamiliesEnabled ? buildSensexDecision({ family: sensexFamily, pcr, oiCoverage: coverage,
     support: sr.support, resistance: sr.resistance, spot, futurePrice: basisFuturePrice, selected: selection, now }) :
     buildTradeDecision({ engine, trend, htf, oi, pcr, regime, sr, spot, atrValue: a, selected: selection, segment, energy,
@@ -721,12 +722,15 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     message: energy
       ? `${symbol} has no suitable futures option expiry with a matching underlying futures contract. New option buys stop well before expiry to avoid futures devolvement.`
       : `${symbol} is in the connected MCX index list, but Angel One has no current index option contracts for it. Option buying calls are unavailable.`
-  } : marketStatus === 'LIVE' ? computedDecision : {
+  } : marketStatus === 'LIVE' && !candleDelayed ? computedDecision : {
     ...computedDecision,
-    direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: marketStatus, conflicts: [], cautions: [],
-    message: marketStatus === 'MARKET_CLOSED'
-      ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
-      : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
+    direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false,
+    status: candleDelayed ? 'DATA_STALE' : marketStatus, conflicts: [], cautions: [],
+    message: candleDelayed
+      ? 'SENSEX quote is live, but the latest completed broker candle is delayed. New calls are paused until a current completed candle arrives.'
+      : marketStatus === 'MARKET_CLOSED'
+        ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
+        : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
   };
   const suggested = sensexFamiliesEnabled && !tradeDecision.setupAllowed ? null : selection.contract;
   const finalDirection = sensexFamiliesEnabled ? tradeDecision.direction : engine.signal;
@@ -742,7 +746,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
 
   return {
     symbol, segment, instrumentType: energy ? 'ENERGY' : 'INDEX', timestamp: new Date().toISOString(), timeframe: interval,
-    signal: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? finalDirection : 'WAIT', dataFresh: marketStatus === 'LIVE',
+    signal: marketStatus === 'LIVE' && !candleDelayed && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? finalDirection : 'WAIT', dataFresh: marketStatus === 'LIVE' && !candleDelayed,
     ruleScore: sensexFamiliesEnabled ? { bullish: sensexFamily.votes.filter(v => v.vote === 'CE').length,
       bearish: sensexFamily.votes.filter(v => v.vote === 'PE').length, considered: 6 } :
       { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
