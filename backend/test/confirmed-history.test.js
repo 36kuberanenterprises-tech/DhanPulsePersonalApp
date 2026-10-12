@@ -27,12 +27,11 @@ test('confirmed SENSEX candles are not repolled every refresh; failed refresh re
     assert.equal(calls, 1, 'one-minute app refresh must not hit the broker again');
     assert.equal(second.length, 60);
     clock += 5 * 60_000;
-    const retained = await confirmedBrokerCandles(...args, new Date(clock));
+    await assert.rejects(confirmedBrokerCandles(...args, new Date(clock)), /exceeding access rate.*403/i);
     assert.equal(calls, 2, 'the next completed bar may trigger one broker refresh');
-    assert.deepEqual(retained, first, 'failed refresh retains only verified old bars');
     clock += 60_000;
-    await confirmedBrokerCandles(...args, new Date(clock));
-    assert.equal(calls, 2, 'broker rejection must not cause a refresh loop');
+    await assert.rejects(confirmedBrokerCandles(...args, new Date(clock)), /exceeding access rate.*403/i);
+    assert.equal(calls, 2, 'broker rejection remains visible without a refresh loop');
   } finally {
     globalThis.fetch = previousFetch;
     Date.now = previousNow;
