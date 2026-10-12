@@ -40,6 +40,10 @@ test('a live SENSEX quote with old broker candles is DATA_STALE and cannot issue
     assert.equal(result.tradeDecision.setupAllowed, false);
     assert.equal(result.tradeDecision.autoEntryAllowed, false);
     assert.equal(result.suggestedContract, null);
+    assert.deepEqual(result.tradeDecision.strategyVotes, []);
+    assert.deepEqual(result.tradeDecision.contextChecks, []);
+    assert.deepEqual(result.rules, []);
+    assert.equal(result.ruleScore.considered, 0);
     assert.match(result.tradeDecision.message, /quote is live.*candle is delayed/i);
   } finally {
     globalThis.fetch = previousFetch;

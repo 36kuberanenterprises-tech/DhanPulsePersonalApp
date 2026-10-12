@@ -726,6 +726,11 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     ...computedDecision,
     direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false,
     status: candleDelayed ? 'DATA_STALE' : marketStatus, conflicts: [], cautions: [],
+    ...(candleDelayed ? {
+      supportingVotes: 0, totalVotes: 0, alignmentPct: 0,
+      strategyVotes: [], contextChecks: [], regime: 'UNKNOWN', regimeSuitable: false,
+      regimeDetail: sensexFamily.reason, selectedContractReason: null, selectedContractScore: null
+    } : {}),
     message: candleDelayed
       ? 'SENSEX quote is live, but the latest completed broker candle is delayed. New calls are paused until a current completed candle arrives.'
       : marketStatus === 'MARKET_CLOSED'
@@ -747,7 +752,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   return {
     symbol, segment, instrumentType: energy ? 'ENERGY' : 'INDEX', timestamp: new Date().toISOString(), timeframe: interval,
     signal: marketStatus === 'LIVE' && !candleDelayed && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? finalDirection : 'WAIT', dataFresh: marketStatus === 'LIVE' && !candleDelayed,
-    ruleScore: sensexFamiliesEnabled ? { bullish: sensexFamily.votes.filter(v => v.vote === 'CE').length,
+    ruleScore: candleDelayed ? { bullish: 0, bearish: 0, considered: 0 } : sensexFamiliesEnabled ? { bullish: sensexFamily.votes.filter(v => v.vote === 'CE').length,
       bearish: sensexFamily.votes.filter(v => v.vote === 'PE').length, considered: 6 } :
       { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
     market: { ltp: round(spot), instrumentLabel, feedTime: uq.exchFeedTime || null, lastCandleTime: candles[candles.length - 1]?.timestamp || null, ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
@@ -755,7 +760,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     suggestedContract: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? suggested : null, trackedContract,
     tradeDecision,
     levels: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) && (!sensexFamiliesEnabled || tradeDecision.setupAllowed) ? levels : null,
-    rules: sensexFamiliesEnabled ? sensexFamily.votes.map(v => ({ name: v.name, state: v.vote === 'CE' ? 'BULLISH' : v.vote === 'PE' ? 'BEARISH' : 'NEUTRAL', detail: v.detail })) : engine.rules,
+    rules: candleDelayed ? [] : sensexFamiliesEnabled ? sensexFamily.votes.map(v => ({ name: v.name, state: v.vote === 'CE' ? 'BULLISH' : v.vote === 'PE' ? 'BEARISH' : 'NEUTRAL', detail: v.detail })) : engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
       ...(sensexFamiliesEnabled ? ['SENSEX uses six independent price strategy families. Opposing active families, opposing higher timeframe context, and nearby OI barriers return WAIT. PCR by itself is not a directional vote.',
