@@ -714,7 +714,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const expectedCompleted = bucketStartFor(new Date(now.getTime() - 20_000), interval, segment).getTime() - intervalMs;
   const latestCompleted = segment === 'EQUITY' ? candles.filter(c =>
     Date.parse(c.timestamp) + intervalMs + 20_000 <= now.getTime()).at(-1) : null;
-  const candleDelayed = marketStatus === 'LIVE' && ((segment === 'EQUITY' &&
+  const candleDelayed = marketStatus !== 'MARKET_CLOSED' && ((segment === 'EQUITY' &&
     (!latestCompleted || Date.parse(latestCompleted.timestamp) < expectedCompleted)) ||
     (sensexFamiliesEnabled && /^Latest completed (?:SENSEX|15 minute) candle is delayed$/.test(sensexFamily.reason)));
   const computedDecision = sensexFamiliesEnabled ? buildSensexDecision({ family: sensexFamily, pcr, oiCoverage: coverage,
@@ -737,7 +737,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       regimeDetail: sensexFamily?.reason || `Latest completed ${symbol} candle is delayed`, selectedContractReason: null, selectedContractScore: null
     } : {}),
     message: candleDelayed
-      ? `${symbol} quote is live, but the latest completed broker candle is delayed. New calls are paused until a current completed candle arrives.`
+      ? `${symbol} ${marketStatus === 'LIVE' ? 'quote is live, but the' : 'quote feed or'} latest completed broker candle is delayed. New calls are paused until a current completed candle arrives.`
       : marketStatus === 'MARKET_CLOSED'
         ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
         : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
