@@ -42,6 +42,8 @@ jobs:
       - name: Check backend JavaScript syntax
         run: |
           node --check backend/src/angel.js
+          node --check backend/src/broker-relay.js
+          node --check order-relay/src/server.js
           node --check backend/src/analysis.js
           node --check backend/src/sensex-strategies.js
           node --check backend/src/live-stream.js

@@ -326,6 +326,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 refreshWarning = when {
                     result.tradeDecision.status == "MARKET_CLOSED" -> "Market closed. Showing the last available broker prices. New calls and Auto Trade are paused until fresh session data returns."
                     result.tradeDecision.status == "HISTORY_UNAVAILABLE" -> result.tradeDecision.message
+                    result.tradeDecision.status == "DATA_STALE" -> result.tradeDecision.message
                     result.dataFresh == false -> "Market feed is delayed or its time is unavailable. Showing the last available prices; new calls and Auto Trade are paused."
                     else -> null
                 }
