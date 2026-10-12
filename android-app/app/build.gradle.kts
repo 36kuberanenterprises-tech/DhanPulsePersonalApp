@@ -4,7 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val appVersion = "2.9.5"
+val appVersion = "2.9.3"
 
 android {
     namespace = "in.dhanpulse.personal"
@@ -14,7 +14,7 @@ android {
         applicationId = "in.dhanpulse.personal"
         minSdk = 26
         targetSdk = 35
-        versionCode = 48
+        versionCode = 46
         versionName = appVersion
     }
 

@@ -5,7 +5,6 @@ import crypto from 'crypto';
 import { sealSession, openSession } from './session-token.js';
 import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, normalizeStrike, getEgressIp } from './angel.js';
 import { analyse, marketDataState } from './analysis.js';
-import { probeOrderRelay } from './broker-relay.js';
 import { openAngelPriceStream, streamInstrument } from './live-stream.js';
 import { runBacktest } from './backtest.js';
 import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
@@ -44,32 +43,27 @@ async function orderGatewayState() {
 
   const relayConfigured = !!relayUrl;
   const proxyConfigured = !!proxyUrl;
-  const registered = [registeredPublicIp, registeredSecondaryIp].filter(Boolean);
-  const relay = relayConfigured
-    ? await probeOrderRelay(relayUrl, String(process.env.ORDER_RELAY_SECRET || '').trim(), registered)
-    : null;
   const actualEgressIp = (relayConfigured || proxyConfigured) ? null : await getEgressIp();
+
+  const registered = [registeredPublicIp, registeredSecondaryIp].filter(Boolean);
   const proxyAllowed = proxyConfigured && proxyIps.length > 0 && proxyIps.every(ip => registered.includes(ip));
-  const sourceIpReady = relayConfigured ? relay.ready :
-    proxyAllowed || (actualEgressIp != null && registered.includes(actualEgressIp));
+  const sourceIpReady = relayConfigured || proxyAllowed || (actualEgressIp != null && registered.includes(actualEgressIp));
 
   let status = 'IP_CHECK_UNAVAILABLE';
   if (sourceIpReady) status = 'READY';
-  else if (relayConfigured) status = relay.status;
   else if (proxyConfigured && !proxyIps.length) status = 'PROXY_IPS_MISSING';
   else if (proxyConfigured && !proxyAllowed) status = 'PROXY_IP_NOT_REGISTERED';
   else if (actualEgressIp) status = 'STATIC_IP_MISMATCH';
 
   let message;
-  if (relayConfigured) message = relay.message;
-  else if (sourceIpReady) {
-    message = proxyConfigured
-      ? 'Orders will be routed through the configured static outbound proxy.'
-      : 'Backend outbound IP matches an Angel One registered static IP.';
+  if (sourceIpReady) {
+    if (relayConfigured) message = 'Orders will be routed through the configured static-IP relay.';
+    else if (proxyConfigured) message = 'Orders will be routed through the configured static outbound proxy.';
+    else message = 'Backend outbound IP matches an Angel One registered static IP.';
   } else if (status === 'PROXY_IPS_MISSING') {
-    message = 'Static proxy is configured, but its outbound IPs are not configured on the backend yet.';
+    message = 'Static proxy is configured, but its two outbound IPs are not configured on the backend yet.';
   } else if (status === 'PROXY_IP_NOT_REGISTERED') {
-    message = 'Static proxy is configured, but its outbound IPs are not the Angel One registered Primary/Secondary IPs.';
+    message = `Static proxy is configured, but its outbound IPs are not the Angel One registered Primary/Secondary IPs.`;
   } else if (actualEgressIp) {
     message = `Order execution is blocked because backend egress IP ${actualEgressIp} does not match Angel One registered IP ${registered.join(' / ')}.`;
   } else {
@@ -81,7 +75,7 @@ async function orderGatewayState() {
     registeredSecondaryIp,
     actualEgressIp,
     relayConfigured,
-    relayHost: relay?.host || null,
+    relayHost: relayConfigured ? new URL(relayUrl).host : null,
     proxyConfigured,
     proxyIps,
     executionReady: sourceIpReady,

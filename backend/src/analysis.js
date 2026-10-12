@@ -213,20 +213,12 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
     }
     try { state = await lock; }
     catch (error) {
-      // A current completed bar is required for any new call. If the broker
-      // rejects its refresh, expose the broker failure instead of silently
-      // returning stale cached bars as an ordinary strategy WAIT.
-      if (state?.candles.length) {
-        state = { ...state, lastAttemptAt: Date.now(), lastRefreshError: String(error.message || error) };
-        liveCandleCache.set(key, state);
-      }
-      throw error;
+      // Existing broker-confirmed bars may still explain the market. The
+      // strategy's freshness check will return WAIT until a current bar arrives.
+      if (!state?.candles.length) throw error;
+      state = { ...state, lastAttemptAt: Date.now() };
+      liveCandleCache.set(key, state);
     }
-  }
-  // Keep the broker rejection visible during the retry interval as well.
-  // Otherwise subsequent app refreshes would revert to a generic WAIT.
-  if (state?.lastRefreshError && (!latestCompleted || Date.parse(latestCompleted.timestamp) < expected)) {
-    throw new Error(state.lastRefreshError);
   }
   return state.candles;
 }
@@ -583,10 +575,11 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const marketStatus = marketDataState(now, indexFeedAge, Number.isFinite(spot) && spot > 0, segment);
   let candles;
   try {
-    candles = segment === 'EQUITY'
+    candles = sensexFamiliesEnabled
       ? await confirmedBrokerCandles(session, uExchange, String(underlying.token), interval, now, segment)
       : await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE', segment);
   } catch (e) {
+    if (segment !== 'MCX' && symbol !== 'SENSEX') throw e;
     // Some broker index tokens supply a quote but reject historical candles.
     // Show independently verified option quotes without inventing a price trend
     // or allowing a trade from OI alone.
@@ -710,13 +703,6 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
     exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
   } : null;
-  const intervalMs = (INTERVAL_MINUTES[interval] || 5) * 60_000;
-  const expectedCompleted = bucketStartFor(new Date(now.getTime() - 20_000), interval, segment).getTime() - intervalMs;
-  const latestCompleted = segment === 'EQUITY' ? candles.filter(c =>
-    Date.parse(c.timestamp) + intervalMs + 20_000 <= now.getTime()).at(-1) : null;
-  const candleDelayed = marketStatus !== 'MARKET_CLOSED' && ((segment === 'EQUITY' &&
-    (!latestCompleted || Date.parse(latestCompleted.timestamp) < expectedCompleted)) ||
-    (sensexFamiliesEnabled && /^Latest completed (?:SENSEX|15 minute) candle is delayed$/.test(sensexFamily.reason)));
   const computedDecision = sensexFamiliesEnabled ? buildSensexDecision({ family: sensexFamily, pcr, oiCoverage: coverage,
     support: sr.support, resistance: sr.resistance, spot, futurePrice: basisFuturePrice, selected: selection, now }) :
     buildTradeDecision({ engine, trend, htf, oi, pcr, regime, sr, spot, atrValue: a, selected: selection, segment, energy,
@@ -727,22 +713,14 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     message: energy
       ? `${symbol} has no suitable futures option expiry with a matching underlying futures contract. New option buys stop well before expiry to avoid futures devolvement.`
       : `${symbol} is in the connected MCX index list, but Angel One has no current index option contracts for it. Option buying calls are unavailable.`
-  } : marketStatus === 'LIVE' && !candleDelayed ? computedDecision : {
+  } : marketStatus === 'LIVE' ? computedDecision : {
     ...computedDecision,
-    direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false,
-    status: candleDelayed ? 'DATA_STALE' : marketStatus, conflicts: [], cautions: [],
-    ...(candleDelayed ? {
-      supportingVotes: 0, totalVotes: 0, alignmentPct: 0,
-      strategyVotes: [], contextChecks: [], regime: 'UNKNOWN', regimeSuitable: false,
-      regimeDetail: sensexFamily?.reason || `Latest completed ${symbol} candle is delayed`, selectedContractReason: null, selectedContractScore: null
-    } : {}),
-    message: candleDelayed
-      ? `${symbol} ${marketStatus === 'LIVE' ? 'quote is live, but the' : 'quote feed or'} latest completed broker candle is delayed. New calls are paused until a current completed candle arrives.`
-      : marketStatus === 'MARKET_CLOSED'
-        ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
-        : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
+    direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: marketStatus, conflicts: [], cautions: [],
+    message: marketStatus === 'MARKET_CLOSED'
+      ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
+      : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
   };
-  const suggested = candleDelayed || sensexFamiliesEnabled && !tradeDecision.setupAllowed ? null : selection.contract;
+  const suggested = sensexFamiliesEnabled && !tradeDecision.setupAllowed ? null : selection.contract;
   const finalDirection = sensexFamiliesEnabled ? tradeDecision.direction : engine.signal;
 
   const levelAtr = sensexFamiliesEnabled ? sensexFamily.atrValue : a;
@@ -756,16 +734,16 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
 
   return {
     symbol, segment, instrumentType: energy ? 'ENERGY' : 'INDEX', timestamp: new Date().toISOString(), timeframe: interval,
-    signal: marketStatus === 'LIVE' && !candleDelayed && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? finalDirection : 'WAIT', dataFresh: marketStatus === 'LIVE' && !candleDelayed,
-    ruleScore: candleDelayed ? { bullish: 0, bearish: 0, considered: 0 } : sensexFamiliesEnabled ? { bullish: sensexFamily.votes.filter(v => v.vote === 'CE').length,
+    signal: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? finalDirection : 'WAIT', dataFresh: marketStatus === 'LIVE',
+    ruleScore: sensexFamiliesEnabled ? { bullish: sensexFamily.votes.filter(v => v.vote === 'CE').length,
       bearish: sensexFamily.votes.filter(v => v.vote === 'PE').length, considered: 6 } :
       { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
     market: { ltp: round(spot), instrumentLabel, feedTime: uq.exchFeedTime || null, lastCandleTime: candles[candles.length - 1]?.timestamp || null, ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
     optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), pcrCoverage: coverage, totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
-    suggestedContract: marketStatus === 'LIVE' && !candleDelayed && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? suggested : null, trackedContract,
+    suggestedContract: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? suggested : null, trackedContract,
     tradeDecision,
-    levels: marketStatus === 'LIVE' && !candleDelayed && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) && (!sensexFamiliesEnabled || tradeDecision.setupAllowed) ? levels : null,
-    rules: candleDelayed ? [] : sensexFamiliesEnabled ? sensexFamily.votes.map(v => ({ name: v.name, state: v.vote === 'CE' ? 'BULLISH' : v.vote === 'PE' ? 'BEARISH' : 'NEUTRAL', detail: v.detail })) : engine.rules,
+    levels: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) && (!sensexFamiliesEnabled || tradeDecision.setupAllowed) ? levels : null,
+    rules: sensexFamiliesEnabled ? sensexFamily.votes.map(v => ({ name: v.name, state: v.vote === 'CE' ? 'BULLISH' : v.vote === 'PE' ? 'BEARISH' : 'NEUTRAL', detail: v.detail })) : engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
       ...(sensexFamiliesEnabled ? ['SENSEX uses six independent price strategy families. Opposing active families, opposing higher timeframe context, and nearby OI barriers return WAIT. PCR by itself is not a directional vote.',
@@ -773,7 +751,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
         'SENSEX family calls are manual research only. Auto orders are disabled until the model and actual option execution are validated.',
         'The current Backtest Lab uses a separate CLARITY model and does not validate this SENSEX family model.'] :
         ['An opt-in client may show a manual-review call with moderately opposing PCR only when the core, trend, 15m trend and regime strongly agree. All other conflicts still block calls. Auto orders remain paused for OI caution calls.']),
-      segment === 'EQUITY' ? 'Equity index calls require a current completed broker candle. Live quotes alone are reference prices and cannot form confirmed five minute bars.' : 'MCX live quotes refresh frequently while historical candles are cached and rolled forward locally.',
+      'Live quotes refresh frequently while historical candles are fetched once, cached, and rolled forward locally to avoid broker historical-API rate limits.',
       'Futures traded average comes from the broker FULL quote; the signal compares that futures contract with its own average. The cash index has no traded volume.',
       'PCR uses fresh, matched CE and PE quotes around ATM. Fewer than three complete strike pairs means PCR is unavailable.',
       'Call Book tracks sampled option quotes; live orders are separate and require a ready order gateway.',
