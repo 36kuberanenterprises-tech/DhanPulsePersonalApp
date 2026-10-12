@@ -105,10 +105,10 @@ app.post('/api/angel/candles', async (req, res) => {
     const { apiKey, jwt, payload } = req.body || {};
     const valid = apiKey && jwt && payload &&
       ['NSE', 'BSE', 'NFO', 'BFO', 'MCX'].includes(payload.exchange) &&
-      /^\\d+$/.test(String(payload.symboltoken || '')) &&
+      /^\d+$/.test(String(payload.symboltoken || '')) &&
       ['ONE_MINUTE', 'THREE_MINUTE', 'FIVE_MINUTE', 'TEN_MINUTE', 'FIFTEEN_MINUTE', 'ONE_DAY'].includes(payload.interval) &&
-      /^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$/.test(String(payload.fromdate || '')) &&
-      /^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$/.test(String(payload.todate || ''));
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(payload.fromdate || '')) &&
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(payload.todate || ''));
     if (!valid) return res.status(400).json({ ok: false, error: 'Invalid candle request.' });
 
     const response = await fetch('https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData', {
@@ -119,7 +119,7 @@ app.post('/api/angel/candles', async (req, res) => {
     let candles;
     try { candles = JSON.parse(raw); }
     catch {
-      const reason = raw.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 160);
+      const reason = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
       return res.status(response.status === 403 ? 403 : 502).json({
         ok: false, error: `Broker returned HTTP ${response.status}${reason ? ': ' + reason : ''}`
       });
