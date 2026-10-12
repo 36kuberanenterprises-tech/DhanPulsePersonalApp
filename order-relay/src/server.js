@@ -4,13 +4,13 @@ const app = express();
 app.use(express.json({ limit: '64kb' }));
 
 const PORT = Number(process.env.PORT || 8080);
-const RELAY_SECRET = String(process.env.ORDER_RELAY_SECRET || process.env.RELAY_SECRET || '').trim();
-const EXPECTED_PUBLIC_IP = String(process.env.CLIENT_PUBLIC_IP || process.env.EXPECTED_PUBLIC_IP || '34.70.199.153').trim();
+const RELAY_SECRET = String(process.env.RELAY_SECRET || '').trim();
+const EXPECTED_PUBLIC_IP = String(process.env.EXPECTED_PUBLIC_IP || '34.70.199.153').trim();
 
 let ipCache = { at: 0, ip: null };
 
-async function actualPublicIp(force = false) {
-  if (!force && ipCache.ip && Date.now() - ipCache.at < 5 * 60 * 1000) return ipCache.ip;
+async function actualPublicIp() {
+  if (ipCache.ip && Date.now() - ipCache.at < 5 * 60 * 1000) return ipCache.ip;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 4000);
   try {
@@ -40,7 +40,7 @@ function baseHeaders(apiKey, jwt, registeredPublicIp) {
 }
 
 app.get('/health', async (_, res) => {
-  const ip = await actualPublicIp(true).catch(() => null);
+  const ip = await actualPublicIp().catch(() => null);
   res.status(ip === EXPECTED_PUBLIC_IP ? 200 : 503).json({
     ok: ip === EXPECTED_PUBLIC_IP,
     service: 'DhanPulse Angel Order Relay',
@@ -56,7 +56,7 @@ app.post('/api/angel/order', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'Relay authentication failed' });
     }
 
-    const ip = await actualPublicIp(true);
+    const ip = await actualPublicIp();
     if (ip !== EXPECTED_PUBLIC_IP) {
       return res.status(503).json({
         ok: false,
@@ -65,9 +65,6 @@ app.post('/api/angel/order', async (req, res) => {
     }
 
     const { apiKey, jwt, registeredPublicIp, order } = req.body || {};
-    if (registeredPublicIp && registeredPublicIp !== EXPECTED_PUBLIC_IP) {
-      return res.status(400).json({ ok: false, error: 'Registered IP does not match the relay outbound IP.' });
-    }
     if (!apiKey || !jwt || !order) {
       return res.status(400).json({ ok: false, error: 'Incomplete relay order request' });
     }
@@ -90,48 +87,6 @@ app.post('/api/angel/order', async (req, res) => {
     res.json({ ok: true, angel: data });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message || 'Relay failed' });
-  }
-});
-
-app.post('/api/angel/candles', async (req, res) => {
-  try {
-    if (!RELAY_SECRET || req.get('X-Relay-Secret') !== RELAY_SECRET) {
-      return res.status(401).json({ ok: false, error: 'Relay authentication failed' });
-    }
-    const ip = await actualPublicIp(true);
-    if (ip !== EXPECTED_PUBLIC_IP) {
-      return res.status(503).json({ ok: false, error: 'Relay outbound IP is not the registered IP.' });
-    }
-    const { apiKey, jwt, payload } = req.body || {};
-    const valid = apiKey && jwt && payload &&
-      ['NSE', 'BSE', 'NFO', 'BFO', 'MCX'].includes(payload.exchange) &&
-      /^\d+$/.test(String(payload.symboltoken || '')) &&
-      ['ONE_MINUTE', 'THREE_MINUTE', 'FIVE_MINUTE', 'TEN_MINUTE', 'FIFTEEN_MINUTE', 'ONE_DAY'].includes(payload.interval) &&
-      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(payload.fromdate || '')) &&
-      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(payload.todate || ''));
-    if (!valid) return res.status(400).json({ ok: false, error: 'Invalid candle request.' });
-
-    const response = await fetch('https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData', {
-      method: 'POST', headers: baseHeaders(apiKey, jwt, EXPECTED_PUBLIC_IP),
-      body: JSON.stringify(payload)
-    });
-    const raw = await response.text();
-    let candles;
-    try { candles = JSON.parse(raw); }
-    catch {
-      const reason = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
-      return res.status(response.status === 403 ? 403 : 502).json({
-        ok: false, error: `Broker returned HTTP ${response.status}${reason ? ': ' + reason : ''}`
-      });
-    }
-    if (!response.ok || candles?.status === false) {
-      return res.status(response.ok ? 502 : response.status).json({
-        ok: false, error: String(candles?.message || 'Broker candle request failed').slice(0, 160)
-      });
-    }
-    res.json({ ok: true, candles });
-  } catch {
-    res.status(502).json({ ok: false, error: 'Broker candle relay unavailable.' });
   }
 });
 

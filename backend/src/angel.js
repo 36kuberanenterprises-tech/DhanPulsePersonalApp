@@ -1,6 +1,5 @@
 import { ProxyAgent, request as undiciRequest } from 'undici';
 import { isIP } from 'node:net';
-import { requestCandleViaRelay } from './broker-relay.js';
 const ROOT = 'https://apiconnect.angelone.in';
 const MASTER_URL = 'https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json';
 const REGISTERED_PUBLIC_IP = process.env.CLIENT_PUBLIC_IP || '34.70.199.153';
@@ -144,35 +143,33 @@ export async function marketData(session, exchangeTokens, mode = 'FULL', orderSa
 export async function candleData(session, payload) {
   await reserveCandleRequest();
   await reserveBrokerRead();
-  // Prefer the verified static relay when configured. A broker rejection remains
-  // authoritative; never infer a candle from a failed request.
+  // A third-party IP reflector can fail even while the broker is reachable.
+  // Send read-only history with the same configured client header as quote and
+  // account requests. The broker response remains authoritative; never infer
+  // a candle from a failed request. Live order IP verification is separate.
   const publicIp = REGISTERED_PUBLIC_IP;
-  const relayUrl = String(process.env.HISTORY_RELAY_URL || process.env.ORDER_RELAY_URL || '').trim();
-  const relaySecret = String(process.env.HISTORY_RELAY_SECRET || process.env.ORDER_RELAY_SECRET || '').trim();
   const startedAt = Date.now();
   while (recentCandleStarts.length && recentCandleStarts[0] < startedAt - 60_000) recentCandleStarts.shift();
   recentCandleStarts.push(startedAt);
   candleStartsSinceLaunch++;
   try {
-    return relayUrl ? await requestCandleViaRelay(relayUrl, relaySecret, session, payload) :
-      await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
-        method: 'POST', headers: baseHeaders(session.apiKey, session.jwt, publicIp),
-        body: JSON.stringify(payload)
-      }, 'Candle data');
+    return await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
+      method: 'POST', headers: baseHeaders(session.apiKey, session.jwt, publicIp),
+      body: JSON.stringify(payload)
+    }, 'Candle data');
   } catch (error) {
     if (/exceeding access rate|rate limit|too many requests|AB1021/i.test(String(error?.message || ''))) {
       candleRateBlockedUntil = Math.max(candleRateBlockedUntil, Date.now() + CANDLE_RATE_COOLDOWN_MS);
     }
     // This is an observation through a separate endpoint, not proof of the
     // source IP Angel One saw for the rejected request.
-    const observedEgressIp = relayUrl ? null : await getEgressIp();
+    const observedEgressIp = await getEgressIp();
     console.warn('CANDLE_REJECTED', JSON.stringify({
       exchange: payload.exchange,
       symboltoken: payload.symboltoken,
       interval: payload.interval,
       publicIp,
       observedEgressIp,
-      route: relayUrl ? 'static-relay' : 'direct',
       requestsThisProcess: candleStartsSinceLaunch,
       requestsLastMinute: recentCandleStarts.length,
       reason: String(error?.message || '').slice(0, 200)
