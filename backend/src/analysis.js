@@ -217,10 +217,16 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
       // rejects its refresh, expose the broker failure instead of silently
       // returning stale cached bars as an ordinary strategy WAIT.
       if (state?.candles.length) {
-        liveCandleCache.set(key, { ...state, lastAttemptAt: Date.now() });
+        state = { ...state, lastAttemptAt: Date.now(), lastRefreshError: String(error.message || error) };
+        liveCandleCache.set(key, state);
       }
       throw error;
     }
+  }
+  // Keep the broker rejection visible during the retry interval as well.
+  // Otherwise subsequent app refreshes would revert to a generic WAIT.
+  if (state?.lastRefreshError && (!latestCompleted || Date.parse(latestCompleted.timestamp) < expected)) {
+    throw new Error(state.lastRefreshError);
   }
   return state.candles;
 }
