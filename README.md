@@ -1,43 +1,53 @@
 # DhanPulse Personal App
 
-Latest stable build: **V2.7.1 iOS Market Pro**
+Latest crypto build: **V2.7.4 Backend Variables**
 
-DhanPulse is a personal Android market analysis app using **Delta Exchange India production market data** with continuous background monitoring, ICT / liquidity / OB / FVG analysis, BUY / SELL / WAIT decision support, Entry / SL / T1 / T2 / T3 tracking, and preserved trade history.
+## Delta backend variables mode
 
-## Delta API setup inside the app
+For the Delta crypto app, the recommended setup is now the same pattern used by DhanPulse Personal: keep long lived API credentials on the backend, not in the APK.
 
-Do **not** place an API key or secret in GitHub source files.
+Render service: **dhanpulse-personal-api**
 
-On the phone:
+Add these environment variables in Render:
 
-1. Open DhanPulse.
-2. Tap **Account** in the bottom navigation, or tap **ACCOUNT** near the top.
-3. Open **Delta Account**.
-4. Enter the **Delta API Key** in the first field.
-5. Enter the matching **Delta API Secret** in the second field.
-6. Tap **Connect & Verify**.
-7. Confirm the app shows **CONNECTED**, the account holder / account name when returned by Delta, User ID, Net Equity, Available Balance, and Total Balance.
+- `DELTA_API_KEY`
+- `DELTA_API_SECRET`
+- `DELTA_APP_ACCESS_TOKEN`
 
-The key and secret are stored on the Android device using encrypted preferences. They are not committed to this repository.
+The first two are your Delta Exchange India production credentials. `DELTA_APP_ACCESS_TOKEN` is a separate private token you create yourself to protect the backend account endpoint. Do not reuse the Delta API secret as this token.
 
-## Current security / execution status
+In the Android app, open **Account → Delta Account → Backend Variables**. Enter only the Backend Access Token once and tap **Save Token**, then **Connect Using Backend Variables**.
 
-Public market analysis uses Delta Exchange India production REST and WebSocket endpoints.
+The APK never receives `DELTA_API_KEY` or `DELTA_API_SECRET` in backend mode. The backend signs Delta account requests and returns only the account summary needed by the app.
 
-Authenticated account verification is read only. The current stable build does **not** automatically submit real money orders.
+The backend route is protected and rate limited. Do not commit any real API key, API secret, access token, password, or trading credential to GitHub.
+
+## Current account features
+
+- Delta Exchange India production public market data
+- Account holder / account name when Delta returns it
+- Authenticated user ID
+- Net equity
+- Available balance
+- Total balance
+- Nonzero wallet balances
+- Preserved strategy history
+- Continuous market analysis
+
+## Execution status
+
+V2.7.4 is for analysis and authenticated account verification. It does not automatically submit real money orders.
 
 ## Build
 
-The current Android build workflow is:
+Workflow:
 
-`.github/workflows/build-crypto-forex-v271.yml`
+`.github/workflows/build-crypto-forex-v274.yml`
 
-The V2.7.1 UI patch is:
+UI/backend-mode patch:
 
-`v271-patch/apply_v271.py`
+`v274-patch/apply_v274.py`
 
-The secure Delta account verification layer is implemented by the V2.6.8 and V2.6.9 patches.
+Backend Delta client:
 
-## Important
-
-Never commit an API secret, private key, password, or trading credential to this repository. If an API key has been publicly shared, rotate it before using it for authenticated account access.
+`backend/src/delta.js`
