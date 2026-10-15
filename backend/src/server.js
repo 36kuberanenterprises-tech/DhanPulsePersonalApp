@@ -11,6 +11,7 @@ import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
 import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
 import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
+import { deltaBackendConfigured, verifyDeltaAccessToken, deltaAccountSummary } from './delta.js';
 
 const APP_VERSION = '2.9.8';
 const app = express();
@@ -24,6 +25,7 @@ const analysisInFlight = new Map();
 const accountCache = new Map();
 const accountInFlight = new Map();
 const liveConnections = new Map();
+const deltaAccessAttempts = new Map();
 const LIVE_ANALYSIS_MIN_MS = 2500;
 const ACCOUNT_CACHE_MS = 15_000;
 const ACCOUNT_ERROR_RETRY_MS = 30_000;
@@ -120,6 +122,31 @@ async function routedPlaceOrder(session, payload) {
 
 app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', version: APP_VERSION, status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
 app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', version: APP_VERSION, status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
+
+app.get('/api/delta/status', (_req, res) => {
+  const c = deltaBackendConfigured();
+  res.json({ ok: true, configured: c.apiKey && c.apiSecret && c.accessToken, apiKey: c.apiKey, apiSecret: c.apiSecret, accessToken: c.accessToken });
+});
+
+app.post('/api/delta/account', async (req, res) => {
+  const ip = String(req.ip || req.socket?.remoteAddress || 'unknown');
+  const now = Date.now();
+  const recent = (deltaAccessAttempts.get(ip) || []).filter(t => now - t < 5 * 60 * 1000);
+  if (recent.length >= 12) return res.status(429).json({ success: false, error: 'Too many Delta access attempts. Try again later.' });
+
+  const token = String(req.header('X-Delta-Access-Token') || req.body?.accessToken || '').trim();
+  if (!verifyDeltaAccessToken(token)) {
+    recent.push(now); deltaAccessAttempts.set(ip, recent);
+    return res.status(401).json({ success: false, error: 'Invalid Delta backend access token' });
+  }
+
+  try {
+    deltaAccessAttempts.delete(ip);
+    res.json(await deltaAccountSummary());
+  } catch (e) {
+    res.status(503).json({ success: false, error: e?.message || 'Delta account verification failed' });
+  }
+});
 
 app.post('/api/auth/login', async (req, res) => {
   try {
