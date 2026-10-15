@@ -47,10 +47,11 @@ test('bad candle dates and excessive ranges fail before broker access', () => {
 
 test('identical history requests share one call and JSON errors preserve HTTP status and Retry-After', async () => {
   const previous = globalThis.fetch;
-  let calls = 0;
+  let calls = 0, responseAt = 0;
   try {
     globalThis.fetch = async () => {
       calls++;
+      responseAt = Date.now();
       return new Response(JSON.stringify({ status: false, message: 'Too many requests', errorcode: 'AB1021' }),
         { status: 429, headers: { 'Retry-After': '120' } });
     };
@@ -61,7 +62,9 @@ test('identical history requests share one call and JSON errors preserve HTTP st
       assert.equal(result.status, 'rejected');
       assert.equal(result.reason.status, 429);
       assert.equal(result.reason.brokerCode, 'AB1021');
-      assert.ok(result.reason.retryAfterMs >= 120_000);
+      assert.ok(result.reason.retryAt >= responseAt + 120_000, 'the broker retry deadline must be honoured');
+      assert.ok(result.reason.retryAfterMs > 0 && result.reason.retryAfterMs <= 120_000,
+        'remaining wait may be a few milliseconds below the original Retry-After');
     }
     await assert.rejects(candleData(session, payload), /cooldown/);
     assert.equal(calls, 1);
