@@ -342,29 +342,47 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
     throw new Error(failure.reason);
   }
   const pending = (async () => {
-  // The first request needs prior sessions for comparable volume. Later
-  // requests fetch a short overlap and merge it with that history.
-  const from = new Date(now.getTime() - (entry ? 2 : 21) * 86_400_000);
+  // Bootstrap the most recent week first. Keep the five-session volume
+  // requirement; extend in weekly chunks only if holidays leave fewer days.
   const format = date => {
     const d = ist(date);
     return d.toISOString().slice(0, 10) + ' ' + d.toISOString().slice(11, 16);
   };
-  const raw = await fetchHistory(session, { exchange: 'NSE', symboltoken: token, interval: 'FIVE_MINUTE',
-    fromdate: format(from), todate: format(now) });
-  const fetched = parseCandles(raw).filter(c => Number.isFinite(Date.parse(c.timestamp)) &&
-    [c.open, c.high, c.low, c.close, c.volume].every(Number.isFinite));
-  if (!fetched.length) {
-    if (entry) {
-      historyCache.set(key, { ...entry, slot, checkedAt: now.getTime() });
-      return entry.candles;
+  const weekStart = time => {
+    const d = new Date(time - 7 * 86_400_000);
+    return format(d).slice(0, 10) + ' 09:15';
+  };
+  const cutoff = now.getTime() - 28 * 86_400_000;
+  const merged = new Map((entry?.candles || []).map(c => [Date.parse(c.timestamp),c]));
+  const lastTime = entry?.candles.at(-1)?.timestamp;
+  let fromdate = lastTime ? format(new Date(Date.parse(lastTime) - FIVE_MINUTES)) : weekStart(now.getTime());
+  let todate = format(now);
+  let earliestRequested = entry?.earliestRequested || fromdate;
+  let candles = entry?.candles || [];
+  for (let chunk = 0; chunk < 4; chunk++) {
+    const raw = await fetchHistory(session, { exchange: 'NSE', symboltoken: String(token), interval: 'FIVE_MINUTE', fromdate, todate });
+    const fetched = parseCandles(raw).filter(c => Number.isFinite(Date.parse(c.timestamp)) &&
+      [c.open,c.high,c.low,c.close,c.volume].every(Number.isFinite) && c.volume >= 0 &&
+      c.low > 0 && c.high >= Math.max(c.open,c.close,c.low) && c.low <= Math.min(c.open,c.close));
+    if (!fetched.length) {
+      if (!merged.size) throw new Error('Broker returned no five minute candles');
+      break;
     }
-    throw new Error('Broker returned no five minute candles');
+    for (const c of fetched) merged.set(Date.parse(c.timestamp),c);
+    earliestRequested = fromdate < earliestRequested ? fromdate : earliestRequested;
+    candles = [...merged.entries()].filter(([time]) => time >= cutoff && time <= now.getTime())
+      .sort(([a],[b])=>a-b).map(([,c])=>c);
+    // Store each successful chunk before any subsequent network operation.
+    historyCache.set(key, { slot, checkedAt: now.getTime(), candles, earliestRequested });
+    const previousDays = new Set(candles.filter(c => dayKey(new Date(c.timestamp)) !== dayKey(now) && c.volume > 0)
+      .map(c => dayKey(new Date(c.timestamp))));
+    if (previousDays.size >= 5) break;
+    const edge = Date.parse(earliestRequested.replace(' ','T') + ':00+05:30');
+    if (edge <= cutoff) break;
+    todate = earliestRequested;
+    fromdate = weekStart(edge);
   }
-  const merged = new Map([...(entry?.candles || []), ...fetched].map(c => [Date.parse(c.timestamp), c]));
-  const cutoff = now.getTime() - 21 * 86_400_000;
-  const candles = [...merged.entries()].filter(([time]) => time >= cutoff && time <= now.getTime())
-    .sort(([a], [b]) => a - b).map(([, c]) => c);
-  historyCache.set(key, { slot, checkedAt: now.getTime(), candles });
+  if (!candles.length) throw new Error('Broker returned no five minute candles');
   historyFailures.delete(key);
   return candles;
   })().catch(error => {
