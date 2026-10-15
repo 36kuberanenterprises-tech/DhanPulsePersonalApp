@@ -250,7 +250,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             startAutoRefresh()
             startLivePriceStream()
             if (selectedMarket == "MCX") fetchMcxCatalog()
-            if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) fetchStockOptions() else fetchAnalysis()
+            refreshVisibleSection()
             fetchAccount()
         }
     }
@@ -778,12 +778,68 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             unresolved = h.count { it.status == "UNRESOLVED" }
         )
 
+    var activeSection by mutableStateOf("MARKET")
+        private set
+    var accountLoading by mutableStateOf(false)
+        private set
+    var accountError by mutableStateOf<String?>(null)
+        private set
+    var accountUpdatedAt by mutableStateOf<Long?>(null)
+        private set
+    var accountRequestMs by mutableStateOf<Long?>(null)
+        private set
+    private var accountInFlight = false
+
     fun fetchAccount() {
         val s = sessionId ?: return
+        if (accountInFlight) return
+        accountInFlight = true
+        accountLoading = true
+        val started = SystemClock.elapsedRealtime()
         viewModelScope.launch {
             try {
-                account = client().account(s)
-            } catch (_: Exception) { }
+                val response = client().account(s)
+                if (sessionId == s) {
+                    account = response
+                    accountError = null
+                    accountUpdatedAt = System.currentTimeMillis()
+                    accountRequestMs = SystemClock.elapsedRealtime() - started
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (sessionId == s) {
+                    accountError = friendlyError(e, "Account refresh failed")
+                    account = null
+                }
+            } finally {
+                accountInFlight = false
+                accountLoading = false
+            }
+        }
+    }
+
+    fun selectSection(section: String) {
+        activeSection = section
+        stocksVisible = section == "STOCKS"
+        stockOptionsVisible = section == "STOCK_OPTIONS"
+        if (section == "MARKET" || section == "MCX") showMarket(if (section == "MCX") "MCX" else "EQUITY")
+        if (section == "STOCK_OPTIONS") {
+            if (autoTradeEnabled) updateAutoTradeEnabled(false)
+            fetchStockOptionCatalog()
+        }
+        if (section in setOf("MARKET", "MCX", "TRADE")) startLivePriceStream() else stopLivePriceStream()
+        refreshVisibleSection()
+        startAutoRefresh()
+    }
+
+    fun refreshVisibleSection() {
+        when (activeSection) {
+            "STOCKS" -> fetchStockScanner()
+            "STOCK_OPTIONS" -> { fetchStockOptions(); fetchStockOpportunity() }
+            "ACCOUNT", "POSITIONS" -> { fetchAccount(); fetchOrderDiagnostics() }
+            "RESEARCH" -> Unit // Historical research runs only when explicitly requested.
+            else -> fetchAnalysis()
         }
     }
 
@@ -863,6 +919,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runBacktest() {
         val s = sessionId ?: return
+        if (backtestBusy) return
         val choice = backtestChoice
         if (choice == null) {
             backtestError = "Load the broker instrument list and choose a symbol first."
@@ -1206,16 +1263,18 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val response = client().stockOptions(s, symbol)
-                if (symbol == selectedStockOptionSymbol) {
+                if (sessionId == s && symbol == selectedStockOptionSymbol) {
                     stockOptionSnapshot = response
                     stockOptionError = null
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (symbol == selectedStockOptionSymbol) stockOptionError = friendlyError(e, "Stock option quotes unavailable")
+                if (sessionId == s && symbol == selectedStockOptionSymbol) stockOptionError = friendlyError(e, "Stock option quotes unavailable")
             } finally {
                 stockOptionInFlight = false
                 stockOptionLoading = false
-                if (symbol != selectedStockOptionSymbol) fetchStockOptions()
+                if (sessionId != null && (sessionId != s || symbol != selectedStockOptionSymbol)) fetchStockOptions()
             }
         }
     }
@@ -1226,9 +1285,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         stockOpportunityInFlight = true
         viewModelScope.launch {
             try {
-                stockOpportunity = client().stockOpportunity(s)
+                val response = client().stockOpportunity(s)
+                if (sessionId != s) return@launch
+                stockOpportunity = response
                 stockOpportunityError = null
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                if (sessionId != s) return@launch
                 stockOpportunity = null
                 stockOpportunityError = friendlyError(e, "Stock selection unavailable")
             } finally { stockOpportunityInFlight = false }
@@ -1395,20 +1459,30 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun startAutoRefresh() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
-            var tick = 0
+            var lastAccount = 0L
+            var lastDiagnostics = 0L
+            var lastVisible = 0L
             while (isActive && sessionId != null) {
                 val indiaTime = Instant.now().atZone(indiaZone)
-                val day = indiaTime.dayOfWeek.value
                 val time = indiaTime.toLocalTime()
-                val marketOpen = day in 1..5 && !time.isBefore(if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)) &&
-                    time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
-                if (!stocksVisible && !stockOptionsVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
-                if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
-                delay(if (stocksVisible || stockOptionsVisible) { if (marketOpen) 15_000 else 60_000 } else { if (marketOpen) { if (selectedSymbol == "SENSEX") 1_000 else 3_000 } else 60_000 })
-                if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) fetchStockOptions() else fetchAnalysis()
-                tick++
-                if (tick % 5 == 0) fetchAccount()
-                if (tick % 20 == 0) fetchOrderDiagnostics()
+                val commodity = selectedMarket == "MCX" && activeSection !in setOf("STOCKS", "STOCK_OPTIONS")
+                val marketOpen = indiaTime.dayOfWeek.value in 1..5 &&
+                    !time.isBefore(if (commodity) LocalTime.of(9, 0) else LocalTime.of(9, 15)) &&
+                    time.isBefore(if (commodity) LocalTime.of(23, 30) else LocalTime.of(15, 30))
+                val marketTab = activeSection in setOf("MARKET", "MCX", "TRADE")
+                if (marketTab && marketOpen && liveStreamJob == null) startLivePriceStream()
+                if ((!marketTab || !marketOpen) && liveStreamJob != null) stopLivePriceStream()
+                val now = SystemClock.elapsedRealtime()
+                val interval = if (!marketOpen) 60_000L else if (stocksVisible || stockOptionsVisible) 15_000L
+                    else if (selectedSymbol == "SENSEX") 1_000L else 3_000L
+                if (now - lastVisible >= interval) {
+                    if (marketTab || stocksVisible || stockOptionsVisible) refreshVisibleSection()
+                    if (autoTradeEnabled && !marketTab && !stocksVisible && !stockOptionsVisible) fetchAnalysis()
+                    lastVisible = now
+                }
+                if (now - lastAccount >= 15_000L) { fetchAccount(); lastAccount = now }
+                if (now - lastDiagnostics >= 60_000L) { fetchOrderDiagnostics(); lastDiagnostics = now }
+                delay(1_000L)
             }
         }
     }
@@ -1416,7 +1490,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private fun startLivePriceStream() {
         val session = sessionId ?: return
         stopLivePriceStream()
-        if (stocksVisible) return
+        if (stocksVisible || stockOptionsVisible || activeSection !in setOf("MARKET", "MCX", "TRADE")) return
         val indiaTime = Instant.now().atZone(indiaZone)
         val start = if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)
         val end = if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30)
@@ -1491,6 +1565,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         stockScanError = null
         stockPaperMessage = null
         account = null
+        accountError = null
+        accountUpdatedAt = null
+        accountRequestMs = null
+        activeSection = "MARKET"
+        stocksVisible = false
+        stockOptionsVisible = false
+        stockOptionSnapshot = null
+        stockOpportunity = null
         orderMessage = null
         orderBusy = false
         orderGateway = null
