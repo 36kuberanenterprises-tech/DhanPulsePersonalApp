@@ -568,7 +568,15 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             if (x.lastPremium != call.lastPremium || call.lastTrackedAt == null || now - call.lastTrackedAt >= 30_000L) changed = true
             if (x.entryHitAt == null && x.id.startsWith("SENSEX-SYSTEM|")) {
                 val matching = a.tradeDecision.systems.filter { "SENSEX-SYSTEM|${it.callId}" == x.id }
-                if ((x.entryMax != null && currentPremium > x.entryMax) ||
+                val entryMaximum = x.entryMax
+                val validityMs = when (x.timeframe) {
+                    "ONE_MINUTE" -> 60_000L
+                    "THREE_MINUTE" -> 180_000L
+                    "TEN_MINUTE" -> 600_000L
+                    "FIFTEEN_MINUTE" -> 900_000L
+                    else -> 300_000L
+                }
+                if (now - x.generatedAt > validityMs || (entryMaximum != null && currentPremium > entryMaximum) ||
                     (matching.isNotEmpty() && matching.all { !it.decision.setupAllowed })) {
                     changed = true
                     return@map x.copy(status = "CANCELLED", cancelledAt = now)

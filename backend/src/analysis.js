@@ -576,7 +576,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     const minutes = INTERVAL_MINUTES[interval] || 5;
     candles = candles.filter(c => Date.parse(c.timestamp) + minutes*60_000 + 20_000 <= now.getTime());
   }
-  const historyFresh = brokerHistoryFresh(candles, interval, now, segment);
+  let historyFresh = brokerHistoryFresh(candles, interval, now, segment);
   const closes = candles.map(c => c.close);
 
   const e9 = ema(closes, 9), e15 = ema(closes, 15), rv = rsi(closes, 14), mv = macd(closes), st = supertrend(candles, 10, 3), a = atr(candles, 14);
@@ -627,7 +627,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       const sym = String(c.symbol || '');
       const optionType = /PE$/i.test(sym) ? 'PE' : /CE$/i.test(sym) ? 'CE' : (String(c.instrumenttype).toUpperCase().includes('PE') ? 'PE' : 'CE');
       const age = quoteFeedAgeMs(z, now.getTime());
-      const usable = marketStatus !== 'LIVE' || (age != null && age >= -30_000 && age <= 90_000);
+      const usable = marketStatus !== 'LIVE' || (age != null && age >= -30_000 && age <= (sensexDualEnabled ? 10_000 : 90_000));
       const optionPrice = quoteLtp(z);
       const bid = Number(z.depth?.buy?.[0]?.price);
       const ask = Number(z.depth?.sell?.[0]?.price);
@@ -675,6 +675,8 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     buildTradeDecision({ engine, trend, htf, oi, pcr, regime, sr, spot, atrValue: a, selected: selection, segment, energy,
       now, expiry: window.expiry, allowOiCaution: analysisPolicy === 'oi-caution-v1' });
   if (sensexDualEnabled) {
+    const decisionNow = new Date();
+    historyFresh = historyFresh && brokerHistoryFresh(candles, interval, decisionNow, segment);
     const indicatorSelection = engine.signal === 'CE' ? sensexCe : engine.signal === 'PE' ? sensexPe :
       {contract:null,reason:'Indicator system has no qualified direction',score:null};
     const indicatorBase = buildTradeDecision({ engine,trend,htf,oi,pcr,regime,sr,spot,atrValue:a,
@@ -683,7 +685,8 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       higherVote:htf.vote,regime,atrValue:a,votes:engine.rules,active:engine.rules.filter(r=>r.state===(engine.signal==='CE'?'BULLISH':'BEARISH')),
       reason:'Indicator system price, trend and momentum checks qualify.' }, pcr,oiCoverage:coverage,
       support:sr.support,resistance:sr.resistance,spot,futurePrice:basisFuturePrice,selected:indicatorSelection,now });
-    const indicatorInputsReady = Number.isFinite(vw) && vw > 0 && Number.isFinite(futuresPrice) && futuresPrice > 0 && htf.vote === engine.signal;
+    const futureContextAge = future ? quoteFeedAgeMs(byTokenQuote.get(String(future.token)), decisionNow.getTime()) : null;
+    const indicatorInputsReady = futureContextAge != null && futureContextAge >= -1000 && futureContextAge <= 10_000 && Number.isFinite(vw) && vw > 0 && Number.isFinite(futuresPrice) && futuresPrice > 0 && htf.vote === engine.signal;
     const indicatorDecision = { ...indicatorBase,autoEntryAllowed:false,
       contextChecks:indicatorContext.contextChecks,
       strategyVotes:engine.rules.map(r=>({name:r.name,vote:r.state==='BULLISH'?'CE':r.state==='BEARISH'?'PE':'WAIT',detail:r.detail})),
@@ -694,7 +697,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       status:indicatorBase.setupAllowed && indicatorContext.setupAllowed && indicatorInputsReady?'INDICATORS_CONFIRMED':'WATCHING' };
     const combined = combineSensexSystems({ key:session.clientCode || session.apiKey,interval,
       candleTime:candles.at(-1)?.timestamp,referenceClose:candles.at(-1)?.close,spot,atr:a,
-      now:now.getTime(),fresh:marketStatus==='LIVE' && historyFresh,
+      now:decisionNow.getTime(),fresh:marketStatus==='LIVE' && historyFresh && indexFeedAge != null && indexFeedAge + decisionNow.getTime()-now.getTime() <= 10_000,
       contracts:{CE:sensexCe.contract,PE:sensexPe.contract},systems:[
         {id:'SYSTEM_1',name:'System 1: Strategy families',decision:computedDecision},
         {id:'SYSTEM_2',name:'System 2: Indicators and context',decision:indicatorDecision}
