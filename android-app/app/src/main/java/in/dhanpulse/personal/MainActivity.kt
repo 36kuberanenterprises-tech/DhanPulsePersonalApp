@@ -4,6 +4,8 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -148,7 +150,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             Modifier.fillMaxWidth().align(Alignment.Center),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(R.mipmap.ic_launcher),
                     contentDescription = "DhanPulse logo",
@@ -234,7 +236,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
             vm.checkVisibleSession()
         }
     }
-    var section by remember { mutableStateOf("MARKET") }
+    val section = vm.activeSection
 
     Scaffold(
         modifier = Modifier.pointerInput(vm) {
@@ -245,11 +247,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         },
         containerColor = AppBg,
         bottomBar = { TraderBottomNav(section) {
-            if (it == "MCX") vm.showMarket("MCX")
-            if (it == "MARKET") vm.showMarket("EQUITY")
-            vm.showStocks(it == "STOCKS")
-            vm.showStockOptions(it == "STOCK_OPTIONS")
-            section = it
+            vm.selectSection(it)
         } }
     ) { inner ->
         Column(
@@ -257,7 +255,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         ) {
             TraderHeader(vm)
             when (section) {
-                "MCX" -> McxSection(vm) { section = "TRADE" }
+                "MCX" -> McxSection(vm) { vm.selectSection("TRADE") }
                 "STOCKS" -> StocksSection(vm)
                 "STOCK_OPTIONS" -> StockOptionsSection(vm)
                 "TRADE" -> TradeSection(vm)
@@ -284,7 +282,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                 Spacer(Modifier.width(9.dp))
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("DhanPulse Trader", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
                         val status = if (vm.stockOptionsVisible) null else if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
                         val stockAge = if (vm.stocksVisible) runCatching {
@@ -292,6 +290,8 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                         }.getOrNull() else null
                         val stockDelayed = vm.stocksVisible && (stockAge == null || stockAge > 45_000 || vm.stockScanError != null)
                         val pillText = when {
+                            vm.activeSection in setOf("ACCOUNT", "POSITIONS") -> if (vm.accountError != null) "DELAYED" else if (vm.accountLoading) "LOADING" else "ACCOUNT"
+                            vm.activeSection == "RESEARCH" -> "RESEARCH"
                             status == "MARKET_CLOSED" -> "CLOSED"
                             status == "NO_OPTIONS" -> "NO OPTIONS"
                             status == "HISTORY_UNAVAILABLE" -> "NO HISTORY"
@@ -312,7 +312,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                     Text("v${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 9.sp)
                 }
             }
-            Surface(onClick = { if (vm.stockOptionsVisible) vm.fetchStockOptions() else if (vm.stocksVisible) vm.fetchStockScanner() else vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
+            Surface(onClick = { vm.refreshVisibleSection() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
                 Text("Refresh", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
         }
@@ -331,24 +331,18 @@ private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
         "RESEARCH" to "Research",
         "ACCOUNT" to "Account"
     )
-    NavigationBar(containerColor = Panel, tonalElevation = 8.dp) {
-        tabs.forEach { (key, label) ->
-            NavigationBarItem(
-                selected = selected == key,
-                onClick = { onSelect(key) },
-                icon = {
-                    Box(
-                        Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (selected == key) Purple else Color.Transparent)
-                    )
-                },
-                label = { Text(label, fontSize = 8.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (selected == key) FontWeight.ExtraBold else FontWeight.Medium) },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedTextColor = Ink,
-                    unselectedTextColor = Muted,
-                    indicatorColor = Purple.copy(alpha = 0.12f)
-                )
-            )
+    Surface(color = Panel, tonalElevation = 8.dp) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).navigationBarsPadding().padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            tabs.forEach { (key, label) ->
+                Surface(onClick = { onSelect(key) }, shape = RoundedCornerShape(12.dp),
+                    color = if (selected == key) Purple.copy(alpha = 0.16f) else Panel) {
+                    Text(label, color = if (selected == key) Ink else Muted, fontSize = 12.sp,
+                        fontWeight = if (selected == key) FontWeight.ExtraBold else FontWeight.Medium,
+                        modifier = Modifier.widthIn(min = 76.dp).heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 15.dp),
+                        textAlign = TextAlign.Center, maxLines = 1)
+                }
+            }
         }
     }
 }
@@ -1350,7 +1344,7 @@ private fun PositionsSection(vm: DhanPulseViewModel) {
             SectionTitle("Positions", "Live Angel One positions and P&L")
         }
         if (account == null) {
-            item { InfoStrip("Position data", "Account data is loading. Tap Refresh at the top if needed.") }
+            item { InfoStrip("Position data", vm.accountError ?: if (vm.accountLoading) "Loading broker positions…" else "Tap Refresh to load broker positions.") }
         } else {
             item { AccountCard(account, vm::fetchAccount) }
             val open = account.positions.filter { it.netQty != 0.0 }
@@ -1533,6 +1527,8 @@ private fun AccountSection(vm: DhanPulseViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { SectionTitle("Account", "Connection, funds and safety controls") }
+        item { InfoStrip("Account data", vm.accountError ?: if (vm.accountLoading) "Refreshing broker account…" else
+            vm.accountUpdatedAt?.let { "Last updated " + java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.of("Asia/Kolkata")).toLocalTime().withNano(0).toString() + " IST • Request " + (vm.accountRequestMs ?: 0) + " ms" } ?: "Tap Refresh to load account data") }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1574,7 +1570,7 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                     AccountSettingRow("Auto Trade", if (vm.autoTradeEnabled) "ON" else "OFF")
                     AccountSettingRow("Auto lots", vm.autoLots.toString())
                     AccountSettingRow("Account / P&L refresh", "Every 15 seconds")
-                    AccountSettingRow("Live analysis refresh", "Every 3 seconds")
+                    AccountSettingRow("Live analysis refresh", "SENSEX 1 sec; other indices / MCX 3 sec; scanners 15 sec. Broker limits apply.")
                     AccountSettingRow("Order gateway", if (vm.orderGateway?.executionReady == true) "READY" else "BLOCKED")
                     HorizontalDivider(color = Line)
                     Text("Manual trading stays available even when Auto Trade is blocked by the research gate.", color = Muted, style = MaterialTheme.typography.bodySmall)

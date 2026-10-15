@@ -12,7 +12,7 @@ import { scanStocks } from './stock-scanner.js';
 import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
 import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
 
-const APP_VERSION = '2.9.7';
+const APP_VERSION = '2.9.8';
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
@@ -703,4 +703,5 @@ setInterval(() => {
 }, 30 * 60 * 1000).unref();
 
 const port = Number(process.env.PORT || 8787);
-app.listen(port, () => console.log(`DhanPulse Personal API running on :${port}`));
+export { app };
+if (process.env.NODE_ENV !== 'test') app.listen(port, () => console.log(`DhanPulse Personal API running on :${port}`));
