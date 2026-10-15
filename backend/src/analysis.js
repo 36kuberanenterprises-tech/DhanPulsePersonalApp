@@ -1,3 +1,4 @@
+import { mcxHistory } from './mcx-history.js';
 import { isRateError } from './history-control.js';
 import { ema, rsi, macd, supertrend, atr } from './indicators.js';
 import { instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs } from './angel.js';
@@ -517,7 +518,9 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   try {
     // Use broker-confirmed history for every market. Quote samples cannot
     // prove the OHLC path of a completed candle after an app disconnect.
-    candles = await confirmedBrokerCandles(session, uExchange, String(underlying.token), interval, now, segment);
+    candles = segment === 'MCX'
+      ? await mcxHistory(session, uExchange, String(underlying.token), interval, now)
+      : await confirmedBrokerCandles(session, uExchange, String(underlying.token), interval, now, segment);
   } catch (e) {
     // Some broker index tokens supply a quote but reject historical candles.
     // Show independently verified option quotes without inventing a price trend

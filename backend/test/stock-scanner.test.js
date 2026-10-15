@@ -41,19 +41,20 @@ test('a delayed broker candle is retried within the same slot using a short requ
   const fetchHistory = async (_, payload) => {
     calls.push(payload);
     const row = calls.length === 1 ? first : second;
-    return { data: [[row.timestamp, row.open, row.high, row.low, row.close, row.volume]] };
+    const prior = [21,22,23,24,25].map(day => candle(day,12,5,100,101,99,100,10_000));
+    return { data: [...prior,row].map(c => [c.timestamp,c.open,c.high,c.low,c.close,c.volume]) };
   };
   const session = { clientCode: 'SCANNER_REFRESH_TEST' };
   const at = india(28, 12, 16);
   const initial = await stockHistory(session, 'token-unique-1', at, fetchHistory);
-  assert.equal(initial.length, 1);
+  assert.equal(initial.length, 6);
   await stockHistory(session, 'token-unique-1', new Date(at.getTime() + 10_000), fetchHistory);
   assert.equal(calls.length, 1);
   const updated = await stockHistory(session, 'token-unique-1', new Date(at.getTime() + 20_000), fetchHistory);
   assert.equal(calls.length, 2);
-  assert.equal(updated.length, 2);
-  assert.match(calls[0].fromdate, /^2026-09-07/);
-  assert.match(calls[1].fromdate, /^2026-09-26/);
+  assert.equal(updated.length, 7);
+  assert.equal(calls[0].fromdate, '2026-09-21 09:15');
+  assert.equal(calls[1].fromdate, '2026-09-28 12:00');
   await stockHistory(session, 'token-unique-1', new Date(at.getTime() + 25_000), fetchHistory);
   assert.equal(calls.length, 2);
 });
@@ -72,6 +73,41 @@ test('concurrent scanner refreshes share one broker history request', async () =
   const row = candle(29, 9, 25, 100, 101, 99, 100, 10_000);
   finish({ data: [[row.timestamp, row.open, row.high, row.low, row.close, row.volume]] });
   assert.deepEqual(await first, await second);
+});
+
+test('scanner extends a short week only until five prior volume sessions are present', async () => {
+  const calls = [];
+  const fetchHistory = async (_,payload) => {
+    calls.push(payload);
+    const days = calls.length === 1 ? [23,24,28] : [17,18,21];
+    return { data: days.map(day => {
+      const c = candle(day,9,25,100,101,99,100,1000);
+      return [c.timestamp,c.open,c.high,c.low,c.close,c.volume];
+    }) };
+  };
+  const result = await stockHistory({clientCode:'SCANNER_WEEK_TEST'},'weekly',india(28,10,0),fetchHistory);
+  assert.equal(calls.length,2);
+  assert.equal(calls[0].fromdate,'2026-09-21 09:15');
+  assert.equal(calls[1].todate,'2026-09-21 09:15');
+  assert.equal(result.length,6);
+});
+
+test('scanner retains a successful recent chunk when older volume backfill is rate rejected', async () => {
+  let calls = 0;
+  const session = {clientCode:'SCANNER_PARTIAL_TEST'};
+  const at = india(28,10,0);
+  const fetchHistory = async () => {
+    calls++;
+    if (calls > 1) throw Object.assign(new Error('HTTP 403 exceeding access rate'),{status:403,retryAt:Date.now()+120_000});
+    const c = candle(28,9,50,100,101,99,100,1000);
+    return {data:[[c.timestamp,c.open,c.high,c.low,c.close,c.volume]]};
+  };
+  await assert.rejects(stockHistory(session,'partial',at,fetchHistory),/403/);
+  const retained = await stockHistory(session,'partial',at,fetchHistory);
+  assert.equal(retained.length,1);
+  assert.equal(calls,2,'the refresh must not refetch or invent older volume during cooldown');
+  assert.equal(evaluateStock({ symbol:'TEST',sector:'Test',quote:{ltp:100},candles:retained,now:at,
+    cash:20_000,niftyReturn:0.1,sectorReturn:0.1,sectorCount:2 }).status,'WAIT');
 });
 
 test('a forbidden broker history response is not retried on every scanner refresh', async () => {
