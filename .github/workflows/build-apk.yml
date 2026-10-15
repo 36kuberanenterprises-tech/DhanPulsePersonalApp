@@ -46,6 +46,7 @@ jobs:
           node --check order-relay/src/server.js
           node --check backend/src/analysis.js
           node --check backend/src/sensex-strategies.js
+          node --check backend/src/sensex-systems.js
           node --check backend/src/live-stream.js
           node --check backend/src/backtest.js
           node --check backend/src/backtest-catalog.js

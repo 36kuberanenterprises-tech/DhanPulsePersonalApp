@@ -19,6 +19,11 @@ data class StrategyVote(
     val detail: String? = null
 )
 
+data class SensexSystemPlan(val entry: Double = 0.0, val entryMax: Double = 0.0, val stopLoss: Double = 0.0,
+    val target1: Double = 0.0, val target2: Double = 0.0, val target3: Double = 0.0, val remainingRr: Double = 0.0)
+data class SensexSystemResult(val id: String = "", val name: String = "", val decision: TradeDecision = TradeDecision(),
+    val contract: OptionContract? = null, val plan: SensexSystemPlan? = null, val callId: String? = null)
+
 data class TradeDecision(
     val direction: String = "WAIT",
     val status: String = "WATCHING",
@@ -37,7 +42,10 @@ data class TradeDecision(
     val cautions: List<String> = emptyList(),
     val selectedContractReason: String? = null,
     val selectedContractScore: Double? = null,
-    val message: String = ""
+    val message: String = "",
+    val agreement: String? = null,
+    val sourceSystems: List<String> = emptyList(),
+    val systems: List<SensexSystemResult> = emptyList()
 )
 
 data class AnalysisResponse(val symbol: String, val segment: String = "EQUITY", val instrumentType: String = "INDEX", val timestamp: String? = null, val timeframe: String? = null, val signal: String = "WAIT", val dataFresh: Boolean? = null, val ruleScore: RuleScore = RuleScore(), val market: MarketMetrics = MarketMetrics(), val optionChain: OptionChainSummary = OptionChainSummary(), val suggestedContract: OptionContract? = null, val trackedContract: OptionContract? = null, val tradeDecision: TradeDecision = TradeDecision(), val levels: Levels? = null, val rules: List<SignalRule> = emptyList(), val notes: List<String> = emptyList())
@@ -144,7 +152,9 @@ data class SignalCall(
     val cancelledAt: Long? = null,
     val lastPremium: Double? = null,
     val lastTrackedAt: Long? = null,
-    val status: String = "WAITING_ENTRY"
+    val status: String = "WAITING_ENTRY",
+    val entryMax: Double? = null,
+    val sourceSystems: List<String>? = null
 )
 
 data class SignalStats(

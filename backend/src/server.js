@@ -12,7 +12,7 @@ import { scanStocks } from './stock-scanner.js';
 import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
 import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
 
-const APP_VERSION = '2.9.6';
+const APP_VERSION = '2.9.7';
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
@@ -317,14 +317,14 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
 
   // Keep prior clients on their existing policy; the SENSEX model requires an explicit client opt in.
   const requestedPolicy = req.header('X-DhanPulse-Analysis-Policy');
-  const analysisPolicy = ['oi-caution-v1', 'sensex-families-v1'].includes(requestedPolicy) ? requestedPolicy : null;
+  const analysisPolicy = ['oi-caution-v1', 'sensex-families-v1', 'sensex-dual-v1'].includes(requestedPolicy) ? requestedPolicy : null;
   // Several installed preview versions can be logged into the same account.
   // Share an identical analysis and its in-flight request across those sessions.
   const key = req.smartSession.clientCode + '|' + req.smartSession.apiKey + '|' +
     String(req.params.symbol || '').toUpperCase() + '|' + interval + '|' + trackedToken + '|' + (analysisPolicy || 'strict');
 
   const recent = analysisCache.get(key);
-  if (recent && Date.now() - recent.at < (recent.value.dataFresh === false ? 60_000 : LIVE_ANALYSIS_MIN_MS)) {
+  if (recent && Date.now() - recent.at < (recent.value.dataFresh === false ? 60_000 : analysisPolicy === 'sensex-dual-v1' ? 900 : LIVE_ANALYSIS_MIN_MS)) {
     return res.json(recent.value);
   }
 

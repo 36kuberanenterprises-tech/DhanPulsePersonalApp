@@ -612,6 +612,38 @@ private fun DecisionPipelineCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 }
             }
 
+            if (d.systems.isNotEmpty()) {
+                Text(when (d.agreement) {
+                    "ALIGNED" -> "Both systems aligned: additional confirmation"
+                    "OPPOSITE" -> "Opposite calls: automatic execution paused"
+                    else -> "Each system qualifies independently"
+                }, color = if (d.agreement == "ALIGNED") Green else Amber, fontWeight = FontWeight.Bold)
+                d.systems.forEach { system ->
+                    val ready = a.dataFresh != false && system.decision.setupAllowed
+                    Surface(color = Panel2, shape = RoundedCornerShape(14.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(system.name, color = Ink, fontWeight = FontWeight.Bold)
+                            Text(if (a.dataFresh == false) "WAIT: data delayed" else "${system.decision.direction} • ${system.decision.status}",
+                                color = if (ready) Green else Amber, fontWeight = FontWeight.Bold)
+                            Text(system.decision.message, color = Muted, style = MaterialTheme.typography.bodySmall)
+                            var expanded by remember(system.id) { mutableStateOf(false) }
+                            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide checks" else "Show checks") }
+                            if (expanded) {
+                                (system.decision.strategyVotes + system.decision.contextChecks).forEach { check ->
+                                    Text("${check.name}: ${check.vote}", color = Ink, style = MaterialTheme.typography.bodySmall)
+                                    check.detail?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+                                }
+                            }
+                            system.contract?.tradingSymbol?.let { Text(it, color = Ink, style = MaterialTheme.typography.bodySmall) }
+                            system.plan?.let { plan ->
+                                Text("Entry ${plan.entry} to ${plan.entryMax} • SL ${plan.stopLoss}", color = Ink, style = MaterialTheme.typography.bodySmall)
+                                Text("Targets ${plan.target1} / ${plan.target2} / ${plan.target3} • remaining RR ${plan.remainingRr}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DecisionMetric("ALIGNMENT", "${d.supportingVotes}/${d.totalVotes}", if (d.setupAllowed && d.cautions.isEmpty()) Green else Amber, Modifier.weight(1f))
                 DecisionMetric("REGIME", d.regime, if (d.regimeSuitable) Green else Red, Modifier.weight(1f))
