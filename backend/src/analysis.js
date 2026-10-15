@@ -130,10 +130,12 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
   const expected = bucketStartFor(new Date(now.getTime() - 20_000), interval, segment).getTime() - duration;
   let state = liveCandleCache.get(key);
   const latestCompleted = state?.candles.filter(c => Date.parse(c.timestamp) + duration + 20_000 <= now.getTime()).at(-1);
-  // Poll at most once per candle. A broker that publishes a candle late must
-  // not trigger another historical request on every three-second app refresh.
+  // Refresh at the next candle boundary, not a full interval after the last
+  // network response. A load at 09:34 must not postpone the 09:35 bar to 09:39.
+  // Within that boundary, failed/stale loads are not retried every app tick.
+  const attemptedExpected = state?.lastRequestedExpected;
   if (!state || ((!latestCompleted || Date.parse(latestCompleted.timestamp) < expected) &&
-      Date.now() - (state.lastAttemptAt || state.loadedAt) >= duration)) {
+      (attemptedExpected !== expected || Date.now() - (state.lastAttemptAt || state.loadedAt) >= duration))) {
     let lock = candleLoadLocks.get(key);
     if (!lock) {
       lock = loadHistoricalBase(session, exchange, token, interval, now, key, segment)
@@ -148,6 +150,8 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
       state = { ...state, lastAttemptAt: Date.now() };
       liveCandleCache.set(key, state);
     }
+    state = { ...state, lastRequestedExpected: expected, lastAttemptAt: Date.now() };
+    liveCandleCache.set(key, state);
   }
   return state.candles;
 }

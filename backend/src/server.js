@@ -12,6 +12,7 @@ import { scanStocks } from './stock-scanner.js';
 import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
 import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
 
+const APP_VERSION = '2.9.6';
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
@@ -117,8 +118,8 @@ async function routedPlaceOrder(session, payload) {
   return placeOrder(session, payload, proxyUrl || null);
 }
 
-app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
-app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
+app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', version: APP_VERSION, status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
+app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', version: APP_VERSION, status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
 
 app.post('/api/auth/login', async (req, res) => {
   try {
