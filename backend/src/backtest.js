@@ -30,14 +30,9 @@ function todayEnd(market='EQUITY'){
   const p=istParts(), now=new Date(), close=makeIstDate(p.y,p.m,p.day,market==='MCX'?23:15,market==='MCX'?59:30);
   return now<close?now:close;
 }
-async function candleWithRetry(session,payload){
-  let last;
-  for(let a=0;a<3;a++){
-    try{return await candleData(session,payload);}
-    catch(e){last=e;if(a<2)await sleep(1200*(a+1));}
-  }
-  throw last;
-}
+// Do not retry authentication, payload or rate errors in a separate loop.
+// The shared connector returns the actual cooldown to the research screen.
+async function candleWithRetry(session,payload){ return candleData(session,payload); }
 
 export async function historicalCandles(session,symbol,interval,years,choice=null){
   const market=choice?.exchange==='MCX'?'MCX':'EQUITY';

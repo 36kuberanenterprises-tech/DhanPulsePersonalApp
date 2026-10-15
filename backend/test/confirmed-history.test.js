@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmedBrokerCandles } from '../src/analysis.js';
+import { confirmedBrokerCandles, brokerHistoryFresh } from '../src/analysis.js';
+
+test('every market requires a completed current broker candle, not merely a fresh quote', () => {
+  const now = new Date('2026-10-15T04:05:25Z'); // 09:35:25 IST
+  const bar = timestamp => ({ timestamp, open: 100, high: 101, low: 99, close: 100 });
+  assert.equal(brokerHistoryFresh([bar('2026-10-15T03:55:00Z')], 'FIVE_MINUTE', now), false);
+  assert.equal(brokerHistoryFresh([bar('2026-10-15T04:00:00Z')], 'FIVE_MINUTE', now), true);
+  assert.equal(brokerHistoryFresh([bar('2026-10-15T04:05:00Z')], 'FIVE_MINUTE', now), false);
+  assert.equal(brokerHistoryFresh([], 'FIVE_MINUTE', now), false);
+});
 
 test('confirmed SENSEX candles are not repolled every refresh; failed refresh retains only stale evidence', async () => {
   const previousFetch = globalThis.fetch;

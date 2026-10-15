@@ -1,3 +1,4 @@
+import { isRateError } from './history-control.js';
 import { ema, rsi, macd, supertrend, atr } from './indicators.js';
 import { instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs } from './angel.js';
 import { evaluateSensexFamilies, buildSensexDecision, sensexHigherCandles } from './sensex-strategies.js';
@@ -103,100 +104,28 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key, 
     todate: fmtDate(now)
   };
 
-  let lastError;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const raw = await candleData(session, payload);
-      const rows = parseCandles(raw)
-        .filter(x => [x.open,x.high,x.low,x.close].every(Number.isFinite))
-        .sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
-      liveCandleCache.set(key, {
-        candles: rows.slice(-1200),
-        loadedAt: Date.now(),
-        lastLiveAt: Date.now()
-      });
-      candleRetryAfter.delete(key);
-      candleRetryReason.delete(key);
-      return liveCandleCache.get(key);
-    } catch (e) {
-      lastError = e;
-      const msg = String(e?.message || '');
-      if (/\b403\b|forbidden/i.test(msg)) {
-        const reason = /exceeding access rate|rate limit/i.test(msg)
-          ? 'Angel One rejected historical candles for exceeding access rate (HTTP 403). Retrying after cooldown.'
-          : 'Angel One denied historical candles (HTTP 403). Check historical API access and the server network route.';
-        candleRetryAfter.set(key, Date.now() + 60_000);
-        candleRetryReason.set(key, reason);
-        throw new Error(reason);
-      }
-      if (/\b429\b|rate limit/i.test(msg) && attempt === 0) {
-        await sleep(6500);
-        continue;
-      }
-      if (/\b429\b|rate limit/i.test(msg)) {
-        candleRetryAfter.set(key, Date.now() + 45_000);
-        candleRetryReason.set(key, 'Angel One historical candle rate limit. Retrying after cooldown.');
-      }
-      throw e;
-    }
+  try {
+    const raw = await candleData(session, payload);
+    const rows = parseCandles(raw)
+      .filter(x => [x.open,x.high,x.low,x.close].every(Number.isFinite))
+      .sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+    if (rows.length < 35) throw new Error('Market history is still preparing. Waiting for enough broker candles.');
+    liveCandleCache.set(key, { candles: rows.slice(-1200), loadedAt: Date.now(), lastLiveAt: Date.now() });
+    candleRetryAfter.delete(key);
+    candleRetryReason.delete(key);
+    return liveCandleCache.get(key);
+  } catch (error) {
+    // The connector owns retries. Screens must not sleep and retry into an
+    // account-wide cooldown or disguise an access rejection as a setup WAIT.
+    const retryAt = error.retryAt || Date.now() + (isRateError(error) ? 60_000 : 30_000);
+    candleRetryAfter.set(key, retryAt);
+    candleRetryReason.set(key, error.message);
+    throw error;
   }
-  throw lastError || new Error('Unable to load market history');
-}
-
-async function liveCandles(session, exchange, token, interval, livePrice, now, appendLive = true, segment = 'EQUITY') {
-  const key = [exchange, token, interval].join('|');
-  const mins = INTERVAL_MINUTES[interval] || 5;
-  let state = liveCandleCache.get(key);
-
-  const staleGap = state?.lastLiveAt ? Date.now() - state.lastLiveAt : Number.MAX_SAFE_INTEGER;
-  const mustReload = !state || state.candles.length < 35 || (appendLive && staleGap > Math.max(120_000, mins * 2 * 60_000));
-
-  if (mustReload) {
-    let lock = candleLoadLocks.get(key);
-    if (!lock) {
-      lock = loadHistoricalBase(session, exchange, token, interval, now, key, segment)
-        .finally(() => candleLoadLocks.delete(key));
-      candleLoadLocks.set(key, lock);
-    }
-    state = await lock;
-  }
-
-  const candles = state.candles.slice();
-  const price = Number(livePrice || candles[candles.length - 1]?.close || 0);
-  const bucketStart = bucketStartFor(now, interval, segment);
-  const bucketMs = bucketStart.getTime();
-  const last = candles[candles.length - 1];
-  const lastMs = last ? new Date(last.timestamp).getTime() : 0;
-
-  if (appendLive && price > 0) {
-    if (last && Math.abs(lastMs - bucketMs) < 60_000) {
-      last.high = Math.max(Number(last.high), price);
-      last.low = Math.min(Number(last.low), price);
-      last.close = price;
-    } else if (!last || lastMs < bucketMs) {
-      candles.push({
-        timestamp: bucketStart.toISOString(),
-        open: price,
-        high: price,
-        low: price,
-        close: price,
-        volume: 0
-      });
-    }
-  }
-
-  state.candles = candles.slice(-1200);
-  if (appendLive) state.lastLiveAt = Date.now();
-  liveCandleCache.set(key, state);
-
-  if (state.candles.length < 35) {
-    throw new Error('Market history is still preparing. Waiting for enough prior-session candles.');
-  }
-  return state.candles;
 }
 
 export async function confirmedBrokerCandles(session, exchange, token, interval, now, segment = 'EQUITY') {
-  const key = [exchange, token, interval, 'confirmed'].join('|');
+  const key = [session.clientCode || session.apiKey, exchange, token, interval, 'confirmed'].join('|');
   const duration = (INTERVAL_MINUTES[interval] || 5) * 60_000;
   const expected = bucketStartFor(new Date(now.getTime() - 20_000), interval, segment).getTime() - duration;
   let state = liveCandleCache.get(key);
@@ -221,6 +150,13 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
     }
   }
   return state.candles;
+}
+
+export function brokerHistoryFresh(candles, interval, now, segment = 'EQUITY') {
+  const duration = (INTERVAL_MINUTES[interval] || 5) * 60_000;
+  const expected = bucketStartFor(new Date(now.getTime() - 20_000), interval, segment).getTime() - duration;
+  const latest = candles.filter(c => Date.parse(c.timestamp) + duration + 20_000 <= now.getTime()).at(-1);
+  return !!latest && Date.parse(latest.timestamp) >= expected;
 }
 
 function exchangeOf(row) { return row.exch_seg || row.exchange || 'NSE'; }
@@ -575,11 +511,10 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const marketStatus = marketDataState(now, indexFeedAge, Number.isFinite(spot) && spot > 0, segment);
   let candles;
   try {
-    candles = sensexFamiliesEnabled
-      ? await confirmedBrokerCandles(session, uExchange, String(underlying.token), interval, now, segment)
-      : await liveCandles(session, uExchange, String(underlying.token), interval, spot, now, marketStatus === 'LIVE', segment);
+    // Use broker-confirmed history for every market. Quote samples cannot
+    // prove the OHLC path of a completed candle after an app disconnect.
+    candles = await confirmedBrokerCandles(session, uExchange, String(underlying.token), interval, now, segment);
   } catch (e) {
-    if (segment !== 'MCX' && symbol !== 'SENSEX') throw e;
     // Some broker index tokens supply a quote but reject historical candles.
     // Show independently verified option quotes without inventing a price trend
     // or allowing a trade from OI alone.
@@ -610,6 +545,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   }
   if (!Number.isFinite(spot) || spot <= 0) spot = Number(candles[candles.length - 1]?.close);
   if (!Number.isFinite(spot) || spot <= 0) throw new Error(`${symbol} market quote and historical close are unavailable.`);
+  const historyFresh = brokerHistoryFresh(candles, interval, now, segment);
   const closes = candles.map(c => c.close);
 
   const e9 = ema(closes, 9), e15 = ema(closes, 15), rv = rsi(closes, 14), mv = macd(closes), st = supertrend(candles, 10, 3), a = atr(candles, 14);
@@ -713,10 +649,12 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     message: energy
       ? `${symbol} has no suitable futures option expiry with a matching underlying futures contract. New option buys stop well before expiry to avoid futures devolvement.`
       : `${symbol} is in the connected MCX index list, but Angel One has no current index option contracts for it. Option buying calls are unavailable.`
-  } : marketStatus === 'LIVE' ? computedDecision : {
+  } : marketStatus === 'LIVE' && historyFresh ? computedDecision : {
     ...computedDecision,
-    direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: marketStatus, conflicts: [], cautions: [],
-    message: marketStatus === 'MARKET_CLOSED'
+    direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: marketStatus === 'LIVE' && !historyFresh ? 'HISTORY_DELAYED' : marketStatus, conflicts: [], cautions: [],
+    message: !historyFresh && marketStatus === 'LIVE'
+      ? `Latest completed ${symbol} broker candle is delayed. Quotes remain visible; calls and Auto Trade are paused.`
+      : marketStatus === 'MARKET_CLOSED'
       ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
       : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
   };
@@ -734,15 +672,15 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
 
   return {
     symbol, segment, instrumentType: energy ? 'ENERGY' : 'INDEX', timestamp: new Date().toISOString(), timeframe: interval,
-    signal: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? finalDirection : 'WAIT', dataFresh: marketStatus === 'LIVE',
+    signal: marketStatus === 'LIVE' && historyFresh && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? finalDirection : 'WAIT', dataFresh: marketStatus === 'LIVE' && historyFresh,
     ruleScore: sensexFamiliesEnabled ? { bullish: sensexFamily.votes.filter(v => v.vote === 'CE').length,
       bearish: sensexFamily.votes.filter(v => v.vote === 'PE').length, considered: 6 } :
       { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
     market: { ltp: round(spot), instrumentLabel, feedTime: uq.exchFeedTime || null, lastCandleTime: candles[candles.length - 1]?.timestamp || null, ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
     optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), pcrCoverage: coverage, totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
-    suggestedContract: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? suggested : null, trackedContract,
+    suggestedContract: marketStatus === 'LIVE' && historyFresh && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? suggested : null, trackedContract,
     tradeDecision,
-    levels: marketStatus === 'LIVE' && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) && (!sensexFamiliesEnabled || tradeDecision.setupAllowed) ? levels : null,
+    levels: marketStatus === 'LIVE' && historyFresh && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) && (!sensexFamiliesEnabled || tradeDecision.setupAllowed) ? levels : null,
     rules: sensexFamiliesEnabled ? sensexFamily.votes.map(v => ({ name: v.name, state: v.vote === 'CE' ? 'BULLISH' : v.vote === 'PE' ? 'BEARISH' : 'NEUTRAL', detail: v.detail })) : engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
@@ -751,7 +689,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
         'SENSEX family calls are manual research only. Auto orders are disabled until the model and actual option execution are validated.',
         'The current Backtest Lab uses a separate CLARITY model and does not validate this SENSEX family model.'] :
         ['An opt-in client may show a manual-review call with moderately opposing PCR only when the core, trend, 15m trend and regime strongly agree. All other conflicts still block calls. Auto orders remain paused for OI caution calls.']),
-      'Live quotes refresh frequently while historical candles are fetched once, cached, and rolled forward locally to avoid broker historical-API rate limits.',
+      'Live quotes refresh frequently. Completed broker candles are cached and checked once per selected candle interval; stale history pauses calls.',
       'Futures traded average comes from the broker FULL quote; the signal compares that futures contract with its own average. The cash index has no traded volume.',
       'PCR uses fresh, matched CE and PE quotes around ATM. Fewer than three complete strike pairs means PCR is unavailable.',
       'Call Book tracks sampled option quotes; live orders are separate and require a ready order gateway.',

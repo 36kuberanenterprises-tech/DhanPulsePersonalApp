@@ -1,3 +1,4 @@
+import { isRateError } from './history-control.js';
 import { candleData, instrumentMaster, marketData, parseCandles, parseFetched, quoteFeedAgeMs, quoteLtp, resolveUnderlying } from './angel.js';
 import { atr, ema, supertrend, macd, rsi } from './indicators.js';
 
@@ -368,10 +369,10 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
   return candles;
   })().catch(error => {
     const message = String(error?.message || '');
-    if (/\b403\b|forbidden/i.test(message)) {
-      historyFailures.set(key, { retryAt: Date.now() + 60_000,
-        reason: /exceeding access rate|rate limit/i.test(message)
-          ? 'Angel One rejected five minute history for exceeding access rate (HTTP 403); retrying after cooldown'
+    if (isRateError(error) || error.status === 403 || /\b403\b|forbidden/i.test(message)) {
+      historyFailures.set(key, { retryAt: error.retryAt || Date.now() + 60_000,
+        reason: isRateError(error)
+          ? message
           : 'Angel One denied five minute history (HTTP 403); check historical API access and the server network route' });
     }
     throw error;

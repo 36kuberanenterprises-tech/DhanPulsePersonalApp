@@ -15,7 +15,7 @@ test('parallel broker history requests are paced and a rate rejection pauses the
       sourceHeaders.push(init.headers['X-ClientPublicIP']);
       return new Response(JSON.stringify({ status: true, data: [] }), { status: 200 });
     };
-    await Promise.all([candleData(session, payload), candleData(session, payload)]);
+    await Promise.all([candleData(session, payload), candleData(session, { ...payload, symboltoken: '2' })]);
     assert.equal(starts.length, 2);
     assert.deepEqual(sourceHeaders, [process.env.CLIENT_PUBLIC_IP || '34.70.199.153', process.env.CLIENT_PUBLIC_IP || '34.70.199.153'],
       'history uses the same configured client public IP header as quote reads');
@@ -27,7 +27,7 @@ test('parallel broker history requests are paced and a rate rejection pauses the
     };
     await assert.rejects(candleData(session, payload), /exceeding access rate/);
     const requestsAtRejection = starts.length;
-    await assert.rejects(candleData(session, payload), /exceeding access rate.*cooldown/i);
+    await assert.rejects(candleData(session, payload), /cooldown.*exceeding access rate/i);
     assert.equal(starts.length, requestsAtRejection, 'cooldown must not send another broker request');
   } finally {
     globalThis.fetch = previousFetch;

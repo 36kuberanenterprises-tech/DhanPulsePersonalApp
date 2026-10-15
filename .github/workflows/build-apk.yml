@@ -42,6 +42,7 @@ jobs:
       - name: Check backend JavaScript syntax
         run: |
           node --check backend/src/angel.js
+          node --check backend/src/history-control.js
           node --check order-relay/src/server.js
           node --check backend/src/analysis.js
           node --check backend/src/sensex-strategies.js
@@ -120,4 +121,4 @@ jobs:
             exit 1
           fi
           gh release create "$tag" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DhanPulse Personal $tag Preview" --notes "Android preview build. Broker candle access still requires a verified outbound route." --prerelease
+            --title "DhanPulse Personal $tag Preview" --notes "Improves candle request pacing, shared cooldowns, broker error reporting, screen switching and data freshness checks. Angel One candle acceptance and a matching registered order route are still required for live use." --prerelease

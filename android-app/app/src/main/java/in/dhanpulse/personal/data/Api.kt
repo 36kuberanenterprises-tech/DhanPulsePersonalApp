@@ -74,7 +74,7 @@ object ApiFactory {
         val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
         val client = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(180, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(logging)
             .addInterceptor(Interceptor { chain ->
@@ -85,7 +85,9 @@ object ApiFactory {
                         "sensex-families-v1" else "oi-caution-v1"
                     builder.header("X-DhanPulse-Analysis-Policy", policy)
                 }
-                chain.proceed(builder.build())
+                val boundedChain = if (request.url.encodedPath.contains("backtest"))
+                    chain.withReadTimeout(180, TimeUnit.SECONDS) else chain
+                boundedChain.proceed(builder.build())
             })
             .build()
         return Retrofit.Builder()
