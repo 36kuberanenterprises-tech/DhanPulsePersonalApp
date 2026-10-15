@@ -74,7 +74,12 @@ new='''                    String body = r.body() == null ? "{}" : r.body().stri
                         out.put("accessToken", protectedAccess);
                         cb.onResult(out.toString());
                     } catch (Exception e) {
-                        cb.onResult("{\"configured\":false,\"apiKey\":false,\"apiSecret\":false,\"accessToken\":false}");
+                        JSONObject fail = new JSONObject();
+                        fail.put("configured", false);
+                        fail.put("apiKey", false);
+                        fail.put("apiSecret", false);
+                        fail.put("accessToken", false);
+                        cb.onResult(fail.toString());
                     }
 '''
 if old in m:
