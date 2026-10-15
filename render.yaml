@@ -15,3 +15,9 @@ services:
         value: 34.70.199.153
       - key: ANGEL_CALLBACK_URL
         value: https://dhanpulse.pearly-grass-5521.chatgpt.site/api/angel/callback
+      - key: DELTA_API_KEY
+        sync: false
+      - key: DELTA_API_SECRET
+        sync: false
+      - key: DELTA_APP_ACCESS_TOKEN
+        sync: false
