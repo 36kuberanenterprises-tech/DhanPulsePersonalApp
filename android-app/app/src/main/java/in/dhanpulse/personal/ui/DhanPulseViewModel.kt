@@ -315,7 +315,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED")
                 }?.token
                 val result = client().analysis(s, requestedSymbol, requestedTimeframe, trackedToken)
-                if (requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
+                if (s != sessionId || requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
                     analysisRefreshInFlight = false
                     fetchAnalysis()
                     return@launch
@@ -324,7 +324,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 error = null
                 refreshWarning = when {
                     result.tradeDecision.status == "MARKET_CLOSED" -> "Market closed. Showing the last available broker prices. New calls and Auto Trade are paused until fresh session data returns."
-                    result.tradeDecision.status == "HISTORY_UNAVAILABLE" -> result.tradeDecision.message
+                    result.tradeDecision.status in setOf("HISTORY_UNAVAILABLE", "HISTORY_DELAYED") -> result.tradeDecision.message
                     result.dataFresh == false -> "Market feed is delayed or its time is unavailable. Showing the last available prices; new calls and Auto Trade are paused."
                     else -> null
                 }
@@ -337,6 +337,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     if (autoTradeEnabled) autoStatus = "Auto Trade paused until a fresh broker quote is available."
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (s != sessionId || requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
+                    analysisRefreshInFlight = false
+                    if (sessionId != null) fetchAnalysis()
+                    return@launch
+                }
                 if (e is HttpException && e.code() == 401) {
                     logout("Broker session expired. Please login again.")
                 } else if (analysis != null) {
@@ -1217,11 +1223,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val response = client().stockScanner(s, openPaperStock?.token)
+                if (s != sessionId) return@launch
                 stockScan = response
                 stockScanError = null
                 fetchStockOpportunity()
                 resolvePastPaperStock()
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (s != sessionId) return@launch
                 stockScanError = friendlyError(e, "Stock scanner unavailable")
                 stockScan = null
             } finally {

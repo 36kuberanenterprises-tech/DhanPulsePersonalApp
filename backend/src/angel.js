@@ -1,3 +1,4 @@
+import { HistoryBudget, validateCandlePayload } from './history-control.js';
 import { ProxyAgent, request as undiciRequest } from 'undici';
 import { isIP } from 'node:net';
 const ROOT = 'https://apiconnect.angelone.in';
@@ -33,17 +34,11 @@ export async function getEgressIp() {
 }
 // All index, stock scanner and backtest history calls share one broker limit.
 // Reserve starts centrally so parallel screens cannot burst this endpoint.
-const CANDLE_REQUEST_GAP_MS = 1100;
-const CANDLE_RATE_COOLDOWN_MS = 60_000;
-// Account, quote, diagnostics, and history reads all compete for the same
-// broker account. Pace their starts across app versions and screens; an order
-// and its safety checks must never wait behind the market-data queue.
-const BROKER_READ_GAP_MS = 500;
-let nextCandleRequestAt = 0;
-let candleRateBlockedUntil = 0;
-let candleRequestQueue = Promise.resolve();
+const BROKER_READ_GAP_MS = 1100;
 let nextBrokerReadAt = 0;
 let brokerReadQueue = Promise.resolve();
+const historyBudget = new HistoryBudget();
+const historyInFlight = new Map();
 const recentCandleStarts = [];
 let candleStartsSinceLaunch = 0;
 
@@ -54,22 +49,6 @@ async function reserveBrokerRead() {
     nextBrokerReadAt = Date.now() + BROKER_READ_GAP_MS;
   });
   brokerReadQueue = permit.catch(() => {});
-  return permit;
-}
-
-async function reserveCandleRequest() {
-  const permit = candleRequestQueue.then(async () => {
-    if (Date.now() < candleRateBlockedUntil) {
-      throw new Error('Candle data: Angel One rejected historical requests for exceeding access rate (HTTP 403). Retrying after cooldown.');
-    }
-    const delay = Math.max(0, nextCandleRequestAt - Date.now());
-    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
-    if (Date.now() < candleRateBlockedUntil) {
-      throw new Error('Candle data: Angel One rejected historical requests for exceeding access rate (HTTP 403). Retrying after cooldown.');
-    }
-    nextCandleRequestAt = Date.now() + CANDLE_REQUEST_GAP_MS;
-  });
-  candleRequestQueue = permit.catch(() => {});
   return permit;
 }
 
@@ -88,18 +67,34 @@ function baseHeaders(apiKey, jwt, publicIp = REGISTERED_PUBLIC_IP) {
   return h;
 }
 
+function responseError(label, status, body, data, retryAfter) {
+  const reason = String(data?.message || body || 'Broker request rejected')
+    .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const retrySeconds = Number(retryAfter);
+  const retryAfterMs = retryAfter == null ? 0 : Number.isFinite(retrySeconds)
+    ? Math.max(0, retrySeconds * 1000) : Math.max(0, Date.parse(retryAfter) - Date.now()) || 0;
+  return Object.assign(new Error(`${label}: HTTP ${status}: ${reason} ${data?.errorcode || ''}`.trim()),
+    { status, brokerCode: data?.errorcode || null, retryAfterMs });
+}
+
 async function jsonFetch(url, init, label) {
-  const r = await fetch(url, init);
-  const text = await r.text();
-  let data;
-  try { data = JSON.parse(text); } catch {
-    // The broker sometimes returns a plain-text access or rate-limit reason.
-    // Keep a short, safe diagnostic instead of replacing it with "non JSON".
-    const reason = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
-    throw new Error(`${label}: non JSON response (${r.status})${reason ? ': ' + reason : ''}`);
-  }
-  if (!r.ok || data?.status === false) throw new Error(`${label}: ${data?.message || r.statusText} ${data?.errorcode || ''}`.trim());
-  return data;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const r = await fetch(url, { ...init, signal: controller.signal });
+    const body = await r.text();
+    let data;
+    try { data = JSON.parse(body); } catch {
+      throw responseError(label, r.status, body, null, r.headers.get('retry-after'));
+    }
+    if (!r.ok || data?.status === false) {
+      throw responseError(label, r.status, body, data, r.headers.get('retry-after'));
+    }
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') throw Object.assign(new Error(`${label}: broker request timed out after 15 seconds`), { status: 504 });
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 
 async function jsonFetchViaProxy(url, init, label, proxyUrl) {
@@ -141,43 +136,33 @@ export async function marketData(session, exchangeTokens, mode = 'FULL', orderSa
 }
 
 export async function candleData(session, payload) {
-  await reserveCandleRequest();
-  await reserveBrokerRead();
-  // A third-party IP reflector can fail even while the broker is reachable.
-  // Send read-only history with the same configured client header as quote and
-  // account requests. The broker response remains authoritative; never infer
-  // a candle from a failed request. Live order IP verification is separate.
-  const publicIp = REGISTERED_PUBLIC_IP;
-  const startedAt = Date.now();
-  while (recentCandleStarts.length && recentCandleStarts[0] < startedAt - 60_000) recentCandleStarts.shift();
-  recentCandleStarts.push(startedAt);
-  candleStartsSinceLaunch++;
-  try {
-    return await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
-      method: 'POST', headers: baseHeaders(session.apiKey, session.jwt, publicIp),
-      body: JSON.stringify(payload)
-    }, 'Candle data');
-  } catch (error) {
-    if (/exceeding access rate|rate limit|too many requests|AB1021/i.test(String(error?.message || ''))) {
-      candleRateBlockedUntil = Math.max(candleRateBlockedUntil, Date.now() + CANDLE_RATE_COOLDOWN_MS);
+  validateCandlePayload(payload);
+  const client = session.clientCode || session.apiKey;
+  const key = JSON.stringify([client, payload.exchange, payload.symboltoken, payload.interval, payload.fromdate, payload.todate]);
+  if (historyInFlight.has(key)) return historyInFlight.get(key);
+  const pending = historyBudget.run(client, reserveBrokerRead, async () => {
+    const startedAt = Date.now();
+    while (recentCandleStarts.length && recentCandleStarts[0] < startedAt - 60_000) recentCandleStarts.shift();
+    recentCandleStarts.push(startedAt);
+    candleStartsSinceLaunch++;
+    try {
+      return await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
+        method: 'POST', headers: baseHeaders(session.apiKey, session.jwt), body: JSON.stringify(payload)
+      }, 'Candle data');
+    } catch (error) {
+      console.warn('CANDLE_REJECTED', JSON.stringify({
+        exchange: payload.exchange, symboltoken: payload.symboltoken, interval: payload.interval,
+        fromdate: payload.fromdate, todate: payload.todate,
+        publicIp: REGISTERED_PUBLIC_IP, observedEgressIp: egressIpCache.ip,
+        requestsThisProcess: candleStartsSinceLaunch, requestsLastMinute: recentCandleStarts.length,
+        status: error.status, brokerCode: error.brokerCode, reason: String(error.message).slice(0, 240)
+      }));
+      throw error;
     }
-    // This is an observation through a separate endpoint, not proof of the
-    // source IP Angel One saw for the rejected request.
-    const observedEgressIp = await getEgressIp();
-    console.warn('CANDLE_REJECTED', JSON.stringify({
-      exchange: payload.exchange,
-      symboltoken: payload.symboltoken,
-      interval: payload.interval,
-      publicIp,
-      observedEgressIp,
-      requestsThisProcess: candleStartsSinceLaunch,
-      requestsLastMinute: recentCandleStarts.length,
-      reason: String(error?.message || '').slice(0, 200)
-    }));
-    throw error;
-  }
+  }).finally(() => historyInFlight.delete(key));
+  historyInFlight.set(key, pending);
+  return pending;
 }
-
 
 export async function rmsLimit(session, orderSafetyCheck = false) {
   if (!orderSafetyCheck) await reserveBrokerRead();
@@ -216,7 +201,7 @@ export async function instrumentMaster(force = false) {
   if (!force && masterCache.rows.length && age < 6 * 60 * 60 * 1000) return masterCache.rows;
   if (!force && masterLoading) return masterLoading;
   masterLoading = (async () => {
-    const r = await fetch(MASTER_URL);
+    const r = await fetch(MASTER_URL, { signal: AbortSignal.timeout(15_000) });
     if (!r.ok) throw new Error(`Instrument master: ${r.status}`);
     const rows = await r.json();
     masterCache = { at: Date.now(), rows };
