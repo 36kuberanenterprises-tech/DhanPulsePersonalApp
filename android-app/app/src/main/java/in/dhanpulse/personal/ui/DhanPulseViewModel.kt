@@ -849,8 +849,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         orderGatewayBusy = true
         viewModelScope.launch {
             try {
-                orderGateway = client().orderDiagnostics(s)
+                val response = client().orderDiagnostics(s)
+                if (sessionId == s) orderGateway = response
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                if (sessionId != s) return@launch
                 orderGateway = OrderGatewayDiagnostics(
                     backendReached = false,
                     brokerSessionOk = false,
@@ -858,8 +862,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     status = "DIAGNOSTIC_FAILED",
                     message = friendlyError(e, "Unable to verify order gateway")
                 )
-            }
-            orderGatewayBusy = false
+            } finally { orderGatewayBusy = false }
         }
     }
 
@@ -1458,6 +1461,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startAutoRefresh() {
         refreshJob?.cancel()
+        if (backtestBusy) return
         refreshJob = viewModelScope.launch {
             var lastAccount = 0L
             var lastDiagnostics = 0L
