@@ -3,6 +3,13 @@ import { WebSocket } from 'undici';
 const BROKER_STREAM = 'wss://smartapisocket.angelone.in/smart-stream';
 const EXCHANGE_TYPES = { NSE: 1, NFO: 2, BSE: 3, BFO: 4, MCX: 5 };
 
+const latestTicks = new Map();
+export function latestBrokerTick(session, token, now = Date.now()) {
+  const tick = latestTicks.get(JSON.stringify([session.clientCode, String(token)]));
+  return tick && now - tick.receivedAt <= 2000 && now - tick.exchangeTimestamp <= 2000 &&
+    tick.exchangeTimestamp <= now + 1000 ? tick : null;
+}
+
 export function parseAngelLtpPacket(data) {
   const packet = Buffer.from(data);
   if (packet.length < 51 || ![1, 2, 3].includes(packet.readUInt8(0))) return null;
@@ -54,7 +61,11 @@ export function openAngelPriceStream(session, instrument, onTick, onDone) {
     if (closed || typeof event.data === 'string') return;
     const deliver = data => {
       const tick = parseAngelLtpPacket(data);
-      if (tick?.token === instrument.token && tick.exchangeType === instrument.exchangeType) onTick(tick);
+      if (tick?.token === instrument.token && tick.exchangeType === instrument.exchangeType) {
+        if (latestTicks.size > 500) for (const [key,value] of latestTicks) if (Date.now()-value.receivedAt>60_000) latestTicks.delete(key);
+        latestTicks.set(JSON.stringify([session.clientCode,tick.token]), {...tick,receivedAt:Date.now()});
+        onTick(tick);
+      }
     };
     if (event.data instanceof ArrayBuffer) deliver(event.data);
     else if (event.data?.arrayBuffer) event.data.arrayBuffer().then(deliver).catch(() => {});

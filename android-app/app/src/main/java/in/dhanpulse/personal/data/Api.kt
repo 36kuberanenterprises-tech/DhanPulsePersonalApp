@@ -82,7 +82,7 @@ object ApiFactory {
                 val builder = request.newBuilder().header("Accept", "application/json")
                 if (request.url.encodedPath.startsWith("/api/analysis/")) {
                     val policy = if (request.url.pathSegments.lastOrNull()?.equals("SENSEX", ignoreCase = true) == true)
-                        "sensex-families-v1" else "oi-caution-v1"
+                        "sensex-dual-v1" else "oi-caution-v1"
                     builder.header("X-DhanPulse-Analysis-Policy", policy)
                 }
                 val boundedChain = if (request.url.encodedPath.contains("backtest"))

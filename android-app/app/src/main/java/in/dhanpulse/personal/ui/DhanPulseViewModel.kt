@@ -522,7 +522,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        val lv = premiumLevels(premium, a.timeframe ?: selectedTimeframe)
+        val systemPlan = decision.systems.firstOrNull { it.decision.setupAllowed && it.contract?.token == contract.token }?.plan
+        val lv = if (systemPlan != null) PremiumTradePlan(referencePremium = premium, entry = systemPlan.entry,
+            stopLoss = systemPlan.stopLoss, target1 = systemPlan.target1, target2 = systemPlan.target2, target3 = systemPlan.target3)
+            else premiumLevels(premium, a.timeframe ?: selectedTimeframe)
         premiumTradePlan = lv.copy(
             signal = decision.direction,
             contract = contract,
@@ -563,6 +566,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
             var x = call.copy(lastPremium = tick(currentPremium), lastTrackedAt = now)
             if (x.lastPremium != call.lastPremium || call.lastTrackedAt == null || now - call.lastTrackedAt >= 30_000L) changed = true
+            if (x.entryHitAt == null && x.id.startsWith("SENSEX-SYSTEM|")) {
+                val matching = a.tradeDecision.systems.filter { "SENSEX-SYSTEM|${it.callId}" == x.id }
+                if ((x.entryMax != null && currentPremium > x.entryMax) ||
+                    (matching.isNotEmpty() && matching.all { !it.decision.setupAllowed })) {
+                    changed = true
+                    return@map x.copy(status = "CANCELLED", cancelledAt = now)
+                }
+            }
             if (x.entryHitAt == null && currentPremium >= x.entry) {
                 x = x.copy(entryHitAt = now, status = "ENTERED")
                 changed = true
@@ -612,6 +623,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             signalHistory = updated
             persistSignalHistory()
             refreshSignalStats()
+        }
+
+        if (a.symbol == "SENSEX" && a.tradeDecision.systems.isNotEmpty()) {
+            recordSensexSystemCalls(a, now, currentDate)
+            return
         }
 
         val decision = a.tradeDecision
@@ -690,6 +706,40 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             decisionNote = "Confirmed call recorded. Waiting for the option premium to cross the fixed Buy Above level.",
             callId = call.id
         )
+    }
+
+    private fun recordSensexSystemCalls(a: AnalysisResponse, now: Long, date: String) {
+        if (!freshForNewCall(a)) return
+        var changed = false
+        a.tradeDecision.systems.filter { it.decision.setupAllowed }.forEach { system ->
+            val plan = system.plan ?: return@forEach
+            val contract = system.contract ?: return@forEach
+            val sourceId = system.callId ?: return@forEach
+            val token = contract.token ?: return@forEach
+            val tradingSymbol = contract.tradingSymbol ?: return@forEach
+            val premium = contract.ltp ?: return@forEach
+            if (premium > plan.entryMax || premium <= plan.stopLoss) return@forEach
+            val id = "SENSEX-SYSTEM|$sourceId"
+            val existing = signalHistory.firstOrNull { it.id == id }
+            if (existing != null) {
+                val sources = ((existing.sourceSystems ?: emptyList()) + system.id).distinct()
+                if (sources != existing.sourceSystems) {
+                    signalHistory = signalHistory.map { if (it.id == id) it.copy(sourceSystems = sources) else it }
+                    changed = true
+                }
+            } else if (signalHistory.none { it.symbol == "SENSEX" && it.timeframe == a.timeframe &&
+                    it.side == system.decision.direction && it.status in setOf("WAITING_ENTRY", "ENTERED", "T1_HIT", "T2_HIT") }) {
+                val call = SignalCall(id = id, symbol = "SENSEX", timeframe = a.timeframe ?: selectedTimeframe,
+                    side = system.decision.direction, token = token, tradingSymbol = tradingSymbol,
+                    strike = contract.strike, exchange = contract.exchange, generatedAt = now, sessionDate = date,
+                    referencePremium = premium, entry = plan.entry, stopLoss = plan.stopLoss,
+                    target1 = plan.target1, target2 = plan.target2, target3 = plan.target3,
+                    lastPremium = premium, lastTrackedAt = now, entryMax = plan.entryMax, sourceSystems = listOf(system.id))
+                signalHistory = (listOf(call) + signalHistory).take(5000)
+                changed = true
+            }
+        }
+        if (changed) { persistSignalHistory(); refreshSignalStats() }
     }
 
     private fun loadSignalHistory() {
@@ -1346,7 +1396,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
                 if (!stocksVisible && !stockOptionsVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
                 if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
-                delay(if (stocksVisible || stockOptionsVisible) { if (marketOpen) 15_000 else 60_000 } else { if (marketOpen) 3_000 else 60_000 })
+                delay(if (stocksVisible || stockOptionsVisible) { if (marketOpen) 15_000 else 60_000 } else { if (marketOpen) { if (selectedSymbol == "SENSEX") 1_000 else 3_000 } else 60_000 })
                 if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) fetchStockOptions() else fetchAnalysis()
                 tick++
                 if (tick % 5 == 0) fetchAccount()

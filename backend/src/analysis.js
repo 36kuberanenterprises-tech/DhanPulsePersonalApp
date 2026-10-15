@@ -1,3 +1,5 @@
+import { latestBrokerTick } from './live-stream.js';
+import { combineSensexSystems } from './sensex-systems.js';
 import { mcxHistory } from './mcx-history.js';
 import { isRateError } from './history-control.js';
 import { ema, rsi, macd, supertrend, atr } from './indicators.js';
@@ -469,9 +471,25 @@ export function buildTradeDecision({ engine, trend, htf, oi, pcr = null, regime,
 }
 
 
+const sensexSnapshots = new Map();
+async function sensexSnapshot(session, tokens) {
+  const key = JSON.stringify([session.clientCode, tokens]);
+  const previous = sensexSnapshots.get(key);
+  if (previous?.pending) return previous.pending;
+  if (previous?.data && Date.now()-previous.at < 2000) return previous.data;
+  const pending = marketData(session,tokens,'FULL').then(data=>{
+    sensexSnapshots.set(key,{data,at:Date.now()});
+    if (sensexSnapshots.size > 100) for (const [id,value] of sensexSnapshots) if (!value.pending && Date.now()-value.at>60_000) sensexSnapshots.delete(id);
+    return data;
+  }).catch(error=>{sensexSnapshots.delete(key);throw error;});
+  sensexSnapshots.set(key,{pending});
+  return pending;
+}
+
 export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE', trackedToken = null, analysisPolicy = null) {
   symbol = symbol.toUpperCase();
-  const sensexFamiliesEnabled = symbol === 'SENSEX' && analysisPolicy === 'sensex-families-v1';
+  const sensexDualEnabled = symbol === 'SENSEX' && analysisPolicy === 'sensex-dual-v1';
+  const sensexFamiliesEnabled = symbol === 'SENSEX' && (analysisPolicy === 'sensex-families-v1' || sensexDualEnabled);
   const rows = await instrumentMaster();
   const mcxIndex = mcxIndexCatalog(rows).find(x => x.symbol === symbol);
   const mcxEnergy = mcxEnergyCatalog(rows).find(x => x.symbol === symbol);
@@ -506,13 +524,15 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     (quoteTokens[trackedRow.exch_seg] ||= []).push(String(trackedRow.token));
   }
 
-  const q = await marketData(session, quoteTokens, 'FULL');
+  const q = sensexDualEnabled ? await sensexSnapshot(session, quoteTokens) : await marketData(session, quoteTokens, 'FULL');
   let fetchedQuotes = parseFetched(q);
   let byTokenQuote = new Map(fetchedQuotes.map(x => [String(x.symbolToken ?? x.symboltoken ?? x.token), x]));
   const uq = byTokenQuote.get(String(underlying.token)) || {};
   let spot = quoteLtp(uq);
   const now = new Date();
-  const indexFeedAge = quoteFeedAgeMs(uq, now.getTime());
+  const tick = sensexDualEnabled ? latestBrokerTick(session, String(underlying.token), now.getTime()) : null;
+  if (tick) spot = tick.price;
+  const indexFeedAge = tick ? now.getTime()-tick.exchangeTimestamp : quoteFeedAgeMs(uq, now.getTime());
   const marketStatus = marketDataState(now, indexFeedAge, Number.isFinite(spot) && spot > 0, segment);
   let candles;
   try {
@@ -552,6 +572,10 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   }
   if (!Number.isFinite(spot) || spot <= 0) spot = Number(candles[candles.length - 1]?.close);
   if (!Number.isFinite(spot) || spot <= 0) throw new Error(`${symbol} market quote and historical close are unavailable.`);
+  if (sensexDualEnabled) {
+    const minutes = INTERVAL_MINUTES[interval] || 5;
+    candles = candles.filter(c => Date.parse(c.timestamp) + minutes*60_000 + 20_000 <= now.getTime());
+  }
   const historyFresh = brokerHistoryFresh(candles, interval, now, segment);
   const closes = candles.map(c => c.close);
 
@@ -637,7 +661,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const htf = higherTimeframeVote(candles);
   const oi = oiVote(pcr, sr, spot);
   const regime = regimeState({ spot, ema9: e9, ema15: e15, atrValue: a, st });
-  const selection = sensexFamiliesEnabled ? optionType === 'CE' ? sensexCe : optionType === 'PE' ? sensexPe :
+  let selection = sensexFamiliesEnabled ? optionType === 'CE' ? sensexCe : optionType === 'PE' ? sensexPe :
     { contract: null, reason: 'Independent SENSEX families did not agree on a direction', score: null } :
     selectBestContract(chain, optionType, spot);
   const trackedQuote = trackedRow ? byTokenQuote.get(String(trackedRow.token)) : null;
@@ -646,10 +670,38 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
     exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
   } : null;
-  const computedDecision = sensexFamiliesEnabled ? buildSensexDecision({ family: sensexFamily, pcr, oiCoverage: coverage,
+  let computedDecision = sensexFamiliesEnabled ? buildSensexDecision({ family: sensexFamily, pcr, oiCoverage: coverage,
     support: sr.support, resistance: sr.resistance, spot, futurePrice: basisFuturePrice, selected: selection, now }) :
     buildTradeDecision({ engine, trend, htf, oi, pcr, regime, sr, spot, atrValue: a, selected: selection, segment, energy,
       now, expiry: window.expiry, allowOiCaution: analysisPolicy === 'oi-caution-v1' });
+  if (sensexDualEnabled) {
+    const indicatorSelection = engine.signal === 'CE' ? sensexCe : engine.signal === 'PE' ? sensexPe :
+      {contract:null,reason:'Indicator system has no qualified direction',score:null};
+    const indicatorBase = buildTradeDecision({ engine,trend,htf,oi,pcr,regime,sr,spot,atrValue:a,
+      selected:indicatorSelection,now,expiry:window.expiry,allowOiCaution:true });
+    const indicatorContext = buildSensexDecision({ family:{ direction:engine.signal,conflict:false,
+      higherVote:htf.vote,regime,atrValue:a,votes:engine.rules,active:engine.rules.filter(r=>r.state===(engine.signal==='CE'?'BULLISH':'BEARISH')),
+      reason:'Indicator system price, trend and momentum checks qualify.' }, pcr,oiCoverage:coverage,
+      support:sr.support,resistance:sr.resistance,spot,futurePrice:basisFuturePrice,selected:indicatorSelection,now });
+    const indicatorInputsReady = Number.isFinite(vw) && vw > 0 && Number.isFinite(futuresPrice) && futuresPrice > 0 && htf.vote === engine.signal;
+    const indicatorDecision = { ...indicatorBase,autoEntryAllowed:false,
+      contextChecks:indicatorContext.contextChecks,
+      strategyVotes:engine.rules.map(r=>({name:r.name,vote:r.state==='BULLISH'?'CE':r.state==='BEARISH'?'PE':'WAIT',detail:r.detail})),
+      totalVotes:engine.consideredRules,
+      supportingVotes:engine.signal==='CE'?engine.bullRules:engine.bearRules,
+      setupAllowed:indicatorBase.setupAllowed && indicatorContext.setupAllowed && indicatorInputsReady,
+      message:!indicatorInputsReady?'Indicator system waits for a matching higher timeframe trend and fresh futures traded average.':!indicatorBase.setupAllowed?indicatorBase.message:indicatorContext.message,
+      status:indicatorBase.setupAllowed && indicatorContext.setupAllowed && indicatorInputsReady?'INDICATORS_CONFIRMED':'WATCHING' };
+    const combined = combineSensexSystems({ key:session.clientCode || session.apiKey,interval,
+      candleTime:candles.at(-1)?.timestamp,referenceClose:candles.at(-1)?.close,spot,atr:a,
+      now:now.getTime(),fresh:marketStatus==='LIVE' && historyFresh,
+      contracts:{CE:sensexCe.contract,PE:sensexPe.contract},systems:[
+        {id:'SYSTEM_1',name:'System 1: Strategy families',decision:computedDecision},
+        {id:'SYSTEM_2',name:'System 2: Indicators and context',decision:indicatorDecision}
+      ] });
+    computedDecision=combined.decision;
+    selection={contract:combined.contract,reason:computedDecision.message,score:null};
+  }
   const tradeDecision = segment === 'MCX' && (!mcxInstrument.hasOptions || !window.expiry) ? {
     ...computedDecision,
     direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: 'NO_OPTIONS', conflicts: [], cautions: [],
@@ -668,7 +720,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   const suggested = sensexFamiliesEnabled && !tradeDecision.setupAllowed ? null : selection.contract;
   const finalDirection = sensexFamiliesEnabled ? tradeDecision.direction : engine.signal;
 
-  const levelAtr = sensexFamiliesEnabled ? sensexFamily.atrValue : a;
+  const levelAtr = sensexDualEnabled ? a : sensexFamiliesEnabled ? sensexFamily.atrValue : a;
   const levels = levelAtr ? {
     underlyingEntry: round(spot),
     stop: round(finalDirection === 'CE' ? spot - levelAtr : finalDirection === 'PE' ? spot + levelAtr : spot),
@@ -691,6 +743,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     rules: sensexFamiliesEnabled ? sensexFamily.votes.map(v => ({ name: v.name, state: v.vote === 'CE' ? 'BULLISH' : v.vote === 'PE' ? 'BEARISH' : 'NEUTRAL', detail: v.detail })) : engine.rules,
     notes: [
       'Market bias and Trade Decision are separate: CE/PE OI are evidence, not simultaneous trade calls.',
+      ...(sensexDualEnabled ? ['SENSEX System 1 and System 2 qualify independently. Agreement is additional confirmation, not a win probability. Opposite calls remain separate research plans and auto execution stays disabled.', 'Dual system research plans use fixed premium levels, a maximum 2 percent entry extension and minimum remaining reward to risk of 1.5 after a spread allowance. Brokerage and slippage are not included.'] : []),
       ...(sensexFamiliesEnabled ? ['SENSEX uses six independent price strategy families. Opposing active families, opposing higher timeframe context, and nearby OI barriers return WAIT. PCR by itself is not a directional vote.',
         'SENSEX futures basis is a cost of carry proxy, not a perpetual funding rate. No funding rate is inferred.',
         'SENSEX family calls are manual research only. Auto orders are disabled until the model and actual option execution are validated.',

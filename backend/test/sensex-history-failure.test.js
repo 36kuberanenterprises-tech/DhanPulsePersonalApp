@@ -30,7 +30,7 @@ test('a SENSEX history rate rejection is shown as unavailable for new and older 
       if (path.includes('/historical/v1/getCandleData')) return new Response('Access denied because of exceeding access rate', { status: 403 });
       throw new Error('Unexpected broker request');
     };
-    for (const policy of ['sensex-families-v1', null]) {
+    for (const policy of ['sensex-families-v1', 'sensex-dual-v1', null]) {
       const result = await analyse({ apiKey: 'test', jwt: 'test' }, 'SENSEX', 'FIVE_MINUTE', null, policy);
       assert.equal(result.tradeDecision.status, 'HISTORY_UNAVAILABLE');
       assert.equal(result.tradeDecision.direction, 'WAIT');
