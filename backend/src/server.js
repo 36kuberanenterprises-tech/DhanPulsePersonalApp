@@ -258,7 +258,7 @@ app.get('/api/stocks/scanner', requireSession, async (req, res) => {
   const trackedToken = String(req.query.trackedToken || '').trim();
   if (trackedToken && !/^\d{1,12}$/.test(trackedToken)) return res.status(400).json({ error: 'Invalid tracked stock token' });
   try {
-    res.json(await scanStocks(req.smartSession, trackedToken || null));
+    res.json(await scanStocks(req.smartSession, trackedToken || null, new Date(), true));
   } catch (e) {
     console.error('Stock scanner failed:', e?.message || e);
     res.status(503).json({ error: 'Stock scanner data is temporarily unavailable. ' + (e?.message || 'Please retry.') });

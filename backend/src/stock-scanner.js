@@ -305,6 +305,7 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
         Math.abs(price - last.close) > a * 0.25) return refuse('Entry is too far from the trigger or the stop is unsuitable');
     const previousDay = priorDayHighLow(verified, now);
     const obstacle = move.side === 'BUY' ? previousDay?.high : previousDay?.low;
+    base.diagnostics.push(`Previous day ${move.side === 'BUY' ? 'high' : 'low'}: ${obstacle == null ? 'unavailable' : round(obstacle)}. Minimum obstacle clearance: ${round(distance * 1.5)}.`);
     if (obstacle != null && (move.side === 'BUY' ? obstacle > price && obstacle - price < distance * 1.5 : obstacle < price && price - obstacle < distance * 1.5)) return refuse('Previous day level leaves too little room for the target');
     const sizing = sizeStockTrade({ cash, entry: price, stop: move.stop, spread });
     if (!sizing || sizing.estimatedProfitAtTwoR <= sizing.estimatedLoss * 1.25) return refuse('Estimated charges leave insufficient net reward within the risk limit');
@@ -319,6 +320,55 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
   }
   return refuse('No completed breakout or first pullback aligned with the market and sector');
 }
+
+// Shortlist scoring only. Entry rules below remain independent and unchanged.
+export function shortlistStocks(rows, previous = []) {
+  const seen = new Set();
+  const eligible = rows.filter(row => {
+    if (!row.symbol || seen.has(row.symbol)) return false;
+    seen.add(row.symbol);
+    const spread = quoteSpread(row.quote);
+    return row.fresh && Number.isFinite(row.age) && row.age >= 0 && row.age <= 15_000 &&
+      Number.isFinite(row.price) && row.price >= 50 && Number(row.quote?.close) > 0 &&
+      Number.isFinite(row.turnover) && row.turnover >= 10_000_000 &&
+      Number.isFinite(row.pct) && Math.abs(row.pct) >= 0.5 &&
+      spread != null && spread / row.price <= 0.002;
+  });
+  // Use identical weights for all rows. Partial RV coverage cannot create NaN
+  // scores or give a different effective weighting to individual candidates.
+  const useVolume = eligible.length > 0 && eligible.every(r => Number.isFinite(r.relVolume) && r.relVolume >= 0);
+  const percentile = (value, values) => (values.filter(x => x < value).length +
+    (values.filter(x => x === value).length + 1) / 2) / values.length;
+  const turnovers = eligible.map(r => r.turnover), moves = eligible.map(r => Math.abs(r.pct));
+  const volumes = eligible.map(r => r.relVolume);
+  const scored = eligible.map(row => ({ ...row,
+    score: (useVolume ? 0.4 : 0.5) * percentile(row.turnover, turnovers) +
+      (useVolume ? 0.3 : 0.5) * percentile(Math.abs(row.pct), moves) +
+      (useVolume ? 0.3 * percentile(row.relVolume, volumes) : 0),
+    selectionNotes: [useVolume ? 'Ranked by turnover, movement and same time relative volume.' :
+      'Relative volume coverage incomplete: all candidates ranked equally on turnover and movement; entry volume checks still required.',
+      'Turnover is estimated from latest price and cumulative volume.',
+      'Historical daily turnover, circuit and surveillance filters are not verified by this feed.']
+  })).sort((a,b) => b.score-a.score || a.symbol.localeCompare(b.symbol));
+  // Retention is a tie breaker only, so a lower score never displaces a stronger new stock.
+  const prior = new Set(previous);
+  const ordered = scored.map((r,i) => ({...r, selectionRank:i+1})).sort((a,b) =>
+    b.score-a.score || Number(prior.has(b.symbol) && b.selectionRank <= 12)-Number(prior.has(a.symbol) && a.selectionRank <= 12) || a.symbol.localeCompare(b.symbol));
+  const counts = new Map(), selected = [];
+  for (const row of ordered) {
+    if ((counts.get(row.sector) || 0) >= 3) continue;
+    selected.push(row); counts.set(row.sector, (counts.get(row.sector) || 0)+1);
+    if (selected.length === 8) break;
+  }
+  return selected;
+}
+
+export function stockDecisionState(candidate) {
+  if (candidate.status === 'READY' && candidate.plan) return 'READY';
+  return /missing|unavailable|delayed|preparing|loading|restricted|denied|rejected.*history|comparison is unavailable/i.test(candidate.reason || '')
+    ? 'DATA_UNAVAILABLE' : 'WAITING_SETUP';
+}
+const previousShortlists = new Map();
 
 const historyCache = new Map();
 const historyLocks = new Map();
@@ -404,8 +454,8 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
   return pending;
 }
 
-export async function scanStocks(session, trackedToken = null, now = new Date()) {
-  const key = session.clientCode + ':' + (trackedToken || '');
+export async function scanStocks(session, trackedToken = null, now = new Date(), improvedShortlist = false) {
+  const key = session.clientCode + ':' + (trackedToken || '') + ':' + improvedShortlist;
   const cached = scanCache.get(key);
   if (cached && Date.now() - cached.at < 12_000) return cached.data;
   if (scanLocks.has(key)) return scanLocks.get(key);
@@ -440,7 +490,7 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
       const price = quoteLtp(quote);
       const age = quoteFeedAgeMs(quote, snapshotTime.getTime());
       const pct = Number(quote?.percentChange);
-      return { ...stock, quote, price, pct,
+      return { ...stock, quote, price, pct, age,
         turnover: price * Number(quote?.tradeVolume || 0),
         fresh: age != null && age >= -30_000 && age <= 45_000 && price > 0 && Number.isFinite(pct) };
     });
@@ -456,10 +506,23 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
     const sectorMap = new Map(sectorRows.map(x => [x.name, x]));
     const liquidQuotes = ranked.filter(x => x.fresh && quoteSpread(x.quote) != null)
       .sort((a, b) => b.turnover * Math.abs(b.pct) - a.turnover * Math.abs(a.pct));
-    const selected = liquidQuotes.filter(x => x.turnover >= 10_000_000)
+    let selected = liquidQuotes.filter(x => x.turnover >= 10_000_000)
       .slice(0, (market === 'SCANNING' || market === 'OPENING_RANGE') && indexFresh ? 8 : 0);
+    if (improvedShortlist) {
+      const priorKey = session.clientCode + ':' + dayKey(snapshotTime);
+      const withVolume = ranked.map(stock => {
+        const bars = completedCandles(historyCache.get(session.clientCode + ':' + stock.instrument.token)?.candles || [], snapshotTime);
+        const last = bars.at(-1);
+        return { ...stock, relVolume: last && Date.parse(last.timestamp) >= latestCompletedCandleStart(snapshotTime)
+          ? relativeVolume(bars, snapshotTime, last) : null };
+      });
+      selected = (market === 'SCANNING' || market === 'OPENING_RANGE') && indexFresh
+        ? shortlistStocks(withVolume, previousShortlists.get(priorKey) || []) : [];
+      if (previousShortlists.size > 1000) previousShortlists.clear();
+      previousShortlists.set(priorKey, selected.map(row => row.symbol));
+    }
     if (market === 'OPENING_RANGE') {
-      for (const stock of liquidQuotes.slice(0, 8)) {
+      for (const stock of (improvedShortlist ? selected : liquidQuotes.slice(0, 8))) {
         void stockHistory(session, String(stock.instrument.token), snapshotTime).catch(() => {});
       }
     }
@@ -494,6 +557,13 @@ export async function scanStocks(session, trackedToken = null, now = new Date())
       }
     }));
     if (analysed.length) await Promise.race([workers, wait(4000)]);
+    if (improvedShortlist) {
+      analysed.forEach((candidate, i) => {
+        candidate.decisionState = stockDecisionState(candidate);
+        candidate.selectionScore = round(selected[i].score * 100);
+        candidate.selectionNotes = selected[i].selectionNotes;
+      });
+    }
     const sideRank = side => analysed.filter(x => x.side === side && x.status === 'READY')
       .sort((a, b) => (b.plan?.estimatedProfitAtTwoR / b.plan?.estimatedLoss) -
         (a.plan?.estimatedProfitAtTwoR / a.plan?.estimatedLoss))[0] || null;
