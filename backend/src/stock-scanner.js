@@ -244,7 +244,7 @@ export function stockFamilyConsensus(candles, price, trend, vwap, volumeRatio, n
 export function evaluateStock({ symbol, sector, quote, candles, now, cash, niftyReturn, sectorReturn, sectorCount }) {
   const price = quoteLtp(quote);
   const base = { symbol, sector, token: String(quote?.symbolToken || quote?.symboltoken || quote?.token || ''), price: round(price),
-    quoteTime: quote?.exchFeedTime || null, status: 'WAIT', side: 'WAIT', setup: null, reason: '', plan: null };
+    quoteTime: quote?.exchFeedTime || null, status: 'WAIT', side: 'WAIT', setup: null, reason: '', plan: null, diagnostics: [], candleTime: null };
   const refuse = reason => ({ ...base, reason });
   const state = scannerSession(now);
   if (state !== 'SCANNING') return refuse(state === 'MARKET_CLOSED' ? 'Market closed' : state === 'OPENING_RANGE' ? 'Waiting until 9:35 after opening range' : 'New intraday entries stopped at 2:45 pm');
@@ -259,6 +259,7 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
   });
   if (current.length < 4 || current.slice(0, 3).some(c => c.volume <= 0)) return refuse('Completed stock candles with traded volume are still preparing');
   const last = current[current.length - 1];
+  base.candleTime = last.timestamp;
   const prior = current[current.length - 2];
   if (candleDate(last).getTime() < latestCompletedCandleStart(now)) return refuse('Latest completed five minute candle is delayed');
   const vwap = sessionVwap(verified, now);
@@ -266,6 +267,7 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
   const trend = fifteenMinuteTrend(verified);
   const volumeRatio = relativeVolume(verified, now, last);
   if (!vwap || !a || trend === 'WAIT' || volumeRatio == null) return refuse('VWAP, trend, ATR or comparable past volume is missing');
+  Object.assign(base, { vwap: round(vwap), volumeRatio: round(volumeRatio), trend });
   if (cash <= 0) return refuse('Available broker cash is unavailable for risk sizing');
   const previousClose = Number(quote?.close);
   if (!Number.isFinite(previousClose) || previousClose <= 0) return refuse('Previous close is unavailable for relative strength');
@@ -286,6 +288,9 @@ export function evaluateStock({ symbol, sector, quote, candles, now, cash, nifty
       stop: Math.max(last.high, prior.high) + a * 0.08 }
   ];
   const consensus = stockFamilyConsensus(verified, price, trend, vwap, volumeRatio, now);
+  Object.assign(base, { regime: consensus.regime, families: consensus.families });
+  base.diagnostics = moves.map(move => `${move.side}: market/sector/VWAP/trend ${move.aligned ? 'PASS' : 'WAIT'}; opening range breakout ${move.breakout ? 'PASS' : 'WAIT'}; pullback ${move.pullback ? 'PASS' : 'WAIT'}`);
+  base.diagnostics.push(`Relative volume: ${round(volumeRatio)}x. Required: 1.2x for breakout, 1.0x for pullback.`);
   if (consensus.conflict) return refuse(consensus.reason);
   if (!moves.some(move => move.aligned)) return refuse('Market, sector, VWAP and 15 minute trend do not agree');
   for (const move of moves) {
