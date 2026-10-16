@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { completedCandles, estimatedRoundTrip, evaluateStock, latestCompletedCandleStart, scannerSession, sessionVwap, sizeStockTrade, stockHistory } from '../src/stock-scanner.js';
+import { shortlistStocks, stockDecisionState, completedCandles, estimatedRoundTrip, evaluateStock, latestCompletedCandleStart, scannerSession, sessionVwap, sizeStockTrade, stockHistory } from '../src/stock-scanner.js';
 
 const india = (date, hour, minute) => new Date(Date.UTC(2026, 8, date, hour - 5, minute - 30));
 const candle = (date, hour, minute, open, high, low, close, volume) => ({
@@ -175,4 +175,31 @@ test('an opening range break needs completed volume and a fresh quote', () => {
   assert.equal(noSector.reason, 'Sector comparison is unavailable');
   const absentVolume = evaluateStock({ ...inputs, candles: [...previous, ...today.map(c => ({ ...c, volume: 0 }))] });
   assert.equal(absentVolume.status, 'WAIT');
+});
+
+const rankedRow = (symbol, sector, turnover, pct = 1, relVolume = null) => ({
+  symbol, sector, turnover, pct, relVolume, fresh: true, age: 1000, price: 100,
+  quote: { close: 99, depth: { buy: [{price:99.95}], sell:[{price:100.05}] } }
+});
+test('new shortlist is finite with partially missing volume and enforces sector cap', () => {
+  const rows = Array.from({length:12}, (_,i) => rankedRow(`S${i}`, i < 6 ? 'IT' : `SECTOR${i}`, (20-i)*1e7, 2, i === 0 ? 2 : null));
+  const picked = shortlistStocks(rows);
+  assert.equal(picked.length, 8);
+  assert.equal(picked.filter(r=>r.sector==='IT').length, 3);
+  assert.ok(picked.every(r=>Number.isFinite(r.score)));
+  assert.ok(picked.every(r=>r.selectionNotes[0].includes('coverage incomplete')));
+});
+test('strong new candidate outranks retained stocks and invalid data cannot enter', () => {
+  const rows = [rankedRow('OLD','IT',1e7),rankedRow('NEW','IT',1e8),
+    {...rankedRow('STALE','Bank',1e9),age:16000},
+    {...rankedRow('ZERO','Bank',1e9),quote:{close:0,depth:{buy:[{price:99.95}],sell:[{price:100.05}]}}},
+    rankedRow('NEW','IT',1e8)];
+  assert.deepEqual(shortlistStocks(rows,['OLD']).map(r=>r.symbol),['NEW','OLD']);
+});
+test('full volume coverage enables weighted ranks and labels do not turn missing data into signals', () => {
+  const picked=shortlistStocks([rankedRow('A','IT',2e7,1,1), rankedRow('B','Bank',2e7,1,3)]);
+  assert.equal(picked[0].symbol,'B');
+  assert.equal(stockDecisionState({reason:'Broker restricted five minute history; retrying later'}),'DATA_UNAVAILABLE');
+  assert.equal(stockDecisionState({reason:'No completed breakout'}),'WAITING_SETUP');
+  assert.equal(stockDecisionState({status:'READY',plan:{entry:100}}),'READY');
 });

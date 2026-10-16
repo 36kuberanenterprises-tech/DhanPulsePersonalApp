@@ -1135,7 +1135,7 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                 }
             }
         }
-        item { StockOpportunityCard(vm, inOptions = false) }
+        item { InfoStrip("Scanner selection", "Up to eight candidates, with at most three per sector. Open a candidate for its checks and trade levels. A shortlist score is not a trade signal.") }
         vm.stockPaperMessage?.let { message -> item { InfoStrip("Paper journal", message) } }
         if (vm.openPaperStock != null && !java.time.LocalTime.now(java.time.ZoneId.of("Asia/Kolkata")).isBefore(java.time.LocalTime.of(15, 0))) {
             item { InfoStrip("Exit reminder", "Close or mark the open paper position now. Angel One MIS positions are due for square off around 3:10 pm; this journal does not place an order.") }
@@ -1302,7 +1302,7 @@ private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
         Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(stock.symbol, color = Ink, fontWeight = FontWeight.ExtraBold)
-                Text(if (ready) stock.side else "WAIT", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
+                Text(if (ready) stock.side else if (stock.decisionState == "DATA_UNAVAILABLE") "DATA NEEDED" else "WAIT", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
             }
             Text("${stock.sector} • ${stock.setup?.replace('_', ' ') ?: "No setup"} • LTP ${stockRs(stock.price)}", color = Muted, style = MaterialTheme.typography.bodySmall)
             Text(stock.reason, color = if (ready) Green else Muted, style = MaterialTheme.typography.bodySmall)
@@ -1314,6 +1314,9 @@ private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
                 Text("Quote time: ${stock.quoteTime ?: "Unavailable"}", color = Muted)
                 Text("Completed candle: ${stock.candleTime?.let { stockTime(it) } ?: "Unavailable"}", color = Muted)
                 Text("VWAP ${stockRs(stock.vwap)} • 15 minute trend ${stock.trend ?: "Unavailable"}", color = Muted)
+                Text(if (ready) "Ready" else if (stock.decisionState == "DATA_UNAVAILABLE") "Data unavailable" else "Waiting for setup", color = Amber)
+                stock.selectionScore?.let { Text("Shortlist score: ${String.format("%.1f", it)} / 100. This is a ranking score, not a win probability.", color = Muted) }
+                stock.selectionNotes.forEach { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
                 stock.diagnostics.forEach { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
                 stock.families.forEach { Text("${it.name}: ${it.side}", color = Muted, style = MaterialTheme.typography.bodySmall) }
                 if (!ready) {
