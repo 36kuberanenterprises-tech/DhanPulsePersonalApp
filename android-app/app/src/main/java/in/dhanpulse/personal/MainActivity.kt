@@ -1295,16 +1295,33 @@ private fun StockOpportunityCard(vm: DhanPulseViewModel, inOptions: Boolean) {
 
 @Composable
 private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
+    var expanded by remember(stock.symbol) { mutableStateOf(false) }
     val ready = stock.status == "READY" && stock.plan != null
     val plan = stock.plan
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, if (ready) Green.copy(alpha = 0.45f) else Line)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(stock.symbol, color = Ink, fontWeight = FontWeight.ExtraBold)
                 Text(if (ready) stock.side else "WAIT", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
             }
             Text("${stock.sector} • ${stock.setup?.replace('_', ' ') ?: "No setup"} • LTP ${stockRs(stock.price)}", color = Muted, style = MaterialTheme.typography.bodySmall)
             Text(stock.reason, color = if (ready) Green else Muted, style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Hide details" else "View checks and trade levels")
+            }
+            if (expanded) {
+                HorizontalDivider(color = Line)
+                Text("Quote time: ${stock.quoteTime ?: "Unavailable"}", color = Muted)
+                Text("Completed candle: ${stock.candleTime?.let { stockTime(it) } ?: "Unavailable"}", color = Muted)
+                Text("VWAP ${stockRs(stock.vwap)} • 15 minute trend ${stock.trend ?: "Unavailable"}", color = Muted)
+                stock.diagnostics.forEach { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+                stock.families.forEach { Text("${it.name}: ${it.side}", color = Muted, style = MaterialTheme.typography.bodySmall) }
+                if (!ready) {
+                    Text("Entry, stop loss and targets unavailable until a setup is confirmed.", color = Amber)
+                    Text("Blocking check: ${stock.reason}", color = Amber)
+                    Text("Remaining checks may not have run after this rejection. Tap Refresh to evaluate again.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
             if (ready && plan != null) {
                 HorizontalDivider(color = Line)
                 Text("Entry ${stockRs(plan.entry)} • Stop ${stockRs(plan.stop)}", color = Ink)

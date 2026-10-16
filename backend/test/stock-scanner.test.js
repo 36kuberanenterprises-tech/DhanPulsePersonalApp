@@ -165,6 +165,14 @@ test('an opening range break needs completed volume and a fresh quote', () => {
   assert.equal(result.status, 'READY', result.reason);
   assert.equal(result.setup, 'OPENING_RANGE');
   assert.ok(result.plan.estimatedLoss <= 100);
+  assert.ok(result.candleTime);
+  assert.ok(result.diagnostics.some(check => check.includes('BUY:')));
+  const noSector = evaluateStock({ ...inputs, sectorCount: 1 });
+  assert.equal(noSector.status, 'WAIT');
+  assert.equal(noSector.plan, null);
+  assert.ok(noSector.candleTime);
+  assert.ok(noSector.vwap > 0);
+  assert.equal(noSector.reason, 'Sector comparison is unavailable');
   const absentVolume = evaluateStock({ ...inputs, candles: [...previous, ...today.map(c => ({ ...c, volume: 0 }))] });
   assert.equal(absentVolume.status, 'WAIT');
 });

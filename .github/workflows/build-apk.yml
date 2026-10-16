@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ main, add-mcx-index-options-v26, add-mcx-energy-options-v261 ]
+    branches: [ fix-scanner-v297 ]
     paths:
       - 'android-app/**'
       - 'backend/**'

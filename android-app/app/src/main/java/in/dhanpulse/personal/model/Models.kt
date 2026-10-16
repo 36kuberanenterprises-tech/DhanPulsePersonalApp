@@ -65,7 +65,8 @@ data class StockCandidate(
     val status: String = "WAIT", val side: String = "WAIT", val setup: String? = null,
     val reason: String = "", val plan: StockPlan? = null,
     val vwap: Double? = null, val volumeRatio: Double? = null, val trend: String? = null,
-    val regime: String? = null, val families: List<StockFamilyVote> = emptyList()
+    val regime: String? = null, val families: List<StockFamilyVote> = emptyList(),
+    val diagnostics: List<String> = emptyList(), val candleTime: String? = null
 )
 data class StockFamilyVote(val name: String = "", val side: String = "WAIT")
 data class StockQuote(val token: String = "", val price: Double = 0.0, val quoteTime: String? = null, val fresh: Boolean = false)
