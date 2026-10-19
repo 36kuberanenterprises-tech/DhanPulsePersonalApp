@@ -39,9 +39,22 @@ test('confirmed SENSEX candles are not repolled every refresh; failed refresh re
     const retained = await confirmedBrokerCandles(...args, new Date(clock));
     assert.equal(calls, 2, 'the next completed bar may trigger one broker refresh');
     assert.deepEqual(retained, first, 'failed refresh retains only verified old bars');
-    clock += 60_000;
+    clock += 30_000;
     await confirmedBrokerCandles(...args, new Date(clock));
     assert.equal(calls, 2, 'broker rejection must not cause a refresh loop');
+    clock += 30_001;
+    globalThis.fetch = async () => {
+      calls++;
+      const end = Math.floor(clock / 300_000) * 300_000 - 300_000;
+      const rows = Array.from({ length: 60 }, (_, i) => [new Date(end - (59-i)*300_000).toISOString(),72000,72005,71995,72000,0]);
+      return new Response(JSON.stringify({ status: true, data: rows }));
+    };
+    const recovered = await confirmedBrokerCandles(...args, new Date(clock));
+    assert.equal(calls, 3, 'retry at cooldown expiry, without waiting a full five-minute interval');
+    assert.equal(brokerHistoryFresh(recovered, 'FIVE_MINUTE', new Date(clock)), true);
+    clock += 3000;
+    await confirmedBrokerCandles(...args, new Date(clock));
+    assert.equal(calls, 3, 'successful recovery must clear the retry state');
   } finally {
     globalThis.fetch = previousFetch;
     Date.now = previousNow;

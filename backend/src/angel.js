@@ -146,9 +146,16 @@ export async function candleData(session, payload) {
     recentCandleStarts.push(startedAt);
     candleStartsSinceLaunch++;
     try {
-      return await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
+      const result = await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
         method: 'POST', headers: baseHeaders(session.apiKey, session.jwt), body: JSON.stringify(payload)
       }, 'Candle data');
+      console.info('CANDLE_RECEIVED', JSON.stringify({
+        exchange: payload.exchange, symboltoken: payload.symboltoken, interval: payload.interval,
+        bars: Array.isArray(result?.data) ? result.data.length : 0,
+        lastCandleTime: Array.isArray(result?.data) ? result.data.at(-1)?.[0] || null : null,
+        durationMs: Date.now() - startedAt, requestsThisProcess: candleStartsSinceLaunch
+      }));
+      return result;
     } catch (error) {
       console.warn('CANDLE_REJECTED', JSON.stringify({
         exchange: payload.exchange, symboltoken: payload.symboltoken, interval: payload.interval,

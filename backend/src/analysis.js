@@ -97,7 +97,7 @@ function bucketStartFor(now, interval, segment = 'EQUITY') {
 
 async function loadHistoricalBase(session, exchange, token, interval, now, key, segment) {
   const retryAt = candleRetryAfter.get(key) || 0;
-  if (Date.now() < retryAt) throw new Error(candleRetryReason.get(key) || 'Market history is cooling down after a broker rate limit response.');
+  if (Date.now() < retryAt) throw Object.assign(new Error(candleRetryReason.get(key) || 'Market history is cooling down after a broker rate limit response.'), { retryAt });
 
   const payload = {
     exchange,
@@ -137,8 +137,10 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
   // network response. A load at 09:34 must not postpone the 09:35 bar to 09:39.
   // Within that boundary, failed/stale loads are not retried every app tick.
   const attemptedExpected = state?.lastRequestedExpected;
+  const recoveryAt = candleRetryAfter.get(key);
+  const retryDue = recoveryAt != null && Date.now() >= recoveryAt;
   if (!state || ((!latestCompleted || Date.parse(latestCompleted.timestamp) < expected) &&
-      (attemptedExpected !== expected || Date.now() - (state.lastAttemptAt || state.loadedAt) >= duration))) {
+      (retryDue || attemptedExpected !== expected || Date.now() - (state.lastAttemptAt || state.loadedAt) >= duration))) {
     let lock = candleLoadLocks.get(key);
     if (!lock) {
       lock = loadHistoricalBase(session, exchange, token, interval, now, key, segment)
