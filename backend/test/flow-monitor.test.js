@@ -41,7 +41,7 @@ test('feed interruptions leave quantity unallocated and new day resets cumulativ
   const book=new FlowBook();book.ingest(tick(1,100,1),start+1000);
   book.ingest(tick(10,110,10),start+10000);
   assert.equal(book.snapshot(start+10000).bars[0].unallocated,10);
-  const next=tick(11,5,5,101,start+86400000);
+  const next=tick(1,5,5,101,start+86400000);
   book.ingest(next,next.time);
   assert.equal(book.snapshot(next.time).bars.length,0);assert.equal(book.cvd,0);
 });

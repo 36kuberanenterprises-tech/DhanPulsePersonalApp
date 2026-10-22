@@ -29,8 +29,8 @@ export class FlowBook {
   ingest(tick, receivedAt=Date.now()) {
     if (tick.time>receivedAt+1000 || receivedAt-tick.time>5000) return;
     const previous=this.previous;
-    if (previous && (tick.time<previous.time || BigInt(tick.sequence)<=BigInt(previous.sequence))) return;
     const day=t=>new Date(t.time+330*60_000).toISOString().slice(0,10);
+    if (previous && (tick.time<previous.time || (day(tick)===day(previous) && BigInt(tick.sequence)<=BigInt(previous.sequence)))) return;
     if (previous && (day(tick)!==day(previous) || tick.volume<previous.volume)) this.reset();
     const old=this.previous;
     this.previous={...tick,receivedAt};
