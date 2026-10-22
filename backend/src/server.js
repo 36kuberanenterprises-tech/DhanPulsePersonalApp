@@ -6,6 +6,7 @@ import { sealSession, openSession } from './session-token.js';
 import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, normalizeStrike, getEgressIp } from './angel.js';
 import { analyse, marketDataState } from './analysis.js';
 import { openAngelPriceStream, streamInstrument } from './live-stream.js';
+import { attachFlowRoutes } from './flow-monitor.js';
 import { runBacktest } from './backtest.js';
 import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
@@ -122,6 +123,7 @@ async function routedPlaceOrder(session, payload) {
 
 app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', version: APP_VERSION, status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
 app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', version: APP_VERSION, status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
+attachFlowRoutes(app, requireSession);
 
 app.get('/api/delta/status', (_req, res) => {
   const c = deltaBackendConfigured();
