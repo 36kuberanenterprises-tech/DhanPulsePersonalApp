@@ -11,7 +11,7 @@ export function cooldownError(until, now = Date.now()) {
     { rateLimited: true, retryAt: until, retryAfterMs: seconds * 1000 });
 }
 export class HistoryBudget {
-  constructor({ now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), limits = HISTORY_LIMITS } = {}) {
+  constructor({ now = () => Date.now(), sleep = ms => new Promise(r => setTimeout(r, ms)), limits = HISTORY_LIMITS } = {}) {
     this.now = now; this.sleep = sleep; this.limits = limits; this.clients = new Map();
   }
   state(key) {

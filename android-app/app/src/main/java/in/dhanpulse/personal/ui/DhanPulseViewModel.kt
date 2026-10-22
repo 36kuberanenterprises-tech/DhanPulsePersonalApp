@@ -1228,6 +1228,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 stockOpportunity = client().stockOpportunity(s)
                 stockOpportunityError = null
+                val pickedSymbol = stockOpportunity?.stock?.symbol
+                if (stockOptionsVisible && pickedSymbol != null && pickedSymbol in stockOptionSymbols &&
+                    pickedSymbol != selectedStockOptionSymbol) {
+                    selectStockOptionSymbol(pickedSymbol)
+                }
             } catch (e: Exception) {
                 stockOpportunity = null
                 stockOpportunityError = friendlyError(e, "Stock selection unavailable")
@@ -1405,7 +1410,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 if (!stocksVisible && !stockOptionsVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
                 if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
                 delay(if (stocksVisible || stockOptionsVisible) { if (marketOpen) 15_000 else 60_000 } else { if (marketOpen) { if (selectedSymbol == "SENSEX") 1_000 else 3_000 } else 60_000 })
-                if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) fetchStockOptions() else fetchAnalysis()
+                if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) {
+                    fetchStockOptions()
+                    fetchStockOpportunity()
+                } else fetchAnalysis()
                 tick++
                 if (tick % 5 == 0) fetchAccount()
                 if (tick % 20 == 0) fetchOrderDiagnostics()

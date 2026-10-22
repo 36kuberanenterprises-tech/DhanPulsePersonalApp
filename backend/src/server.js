@@ -134,10 +134,11 @@ app.post('/api/auth/login', async (req, res) => {
     const session = { apiKey: resolvedApiKey, clientCode: resolvedClientCode, jwt: data.jwtToken, refreshToken: data.refreshToken, feedToken: data.feedToken, createdAt: Date.now(), expiresAt: nextIndiaMidnight(Date.now()) };
     const id = sealSession(session);
     sessions.set(id, session);
-    let p = null;
-    try { p = await profile(session); } catch {}
-    res.json({ sessionId: id, expiresAt: new Date(session.expiresAt).toISOString(), profile: p?.data || { clientcode: resolvedClientCode } });
-  } catch (e) { res.status(401).json({ error: e.message }); }
+    res.json({ sessionId: id, expiresAt: new Date(session.expiresAt).toISOString(), profile: { clientcode: resolvedClientCode } });
+  } catch (e) {
+    const status = e.status === 504 ? 504 : e.status === 429 ? 429 : e.status === 401 ? 401 : 503;
+    res.status(status).json({ error: e.message });
+  }
 });
 
 function requireSession(req, res, next) {
@@ -240,10 +241,10 @@ app.get('/api/stocks/scanner', requireSession, async (req, res) => {
 
 app.get('/api/stocks/opportunity', requireSession, async (req, res) => {
   try {
-    const scan = await scanStocks(req.smartSession);
-    const setup = chooseStockSetup(scan);
-    if (setup.status !== 'READY') return res.json({ ...setup, timestamp: scan.timestamp, option: null });
+    const scan = await scanStocks(req.smartSession, null, new Date(), true);
     const rows = await instrumentMaster();
+    const setup = chooseStockSetup(scan, Date.now(), stockOptionCatalog(rows));
+    if (setup.status !== 'READY') return res.json({ ...setup, timestamp: scan.timestamp, option: null });
     const stock = setup.stock;
     const window = stockOptionWindow(rows, stock.symbol, stock.price);
     const tokens = window.contracts.map(row => String(row.token));

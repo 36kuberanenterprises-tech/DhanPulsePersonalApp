@@ -18,6 +18,15 @@ test('confirmed bearish stock setup remains bearish for a put recommendation', (
   assert.equal(choice.stock.side, 'SELL');
 });
 
+test('options considers other ready candidates when the best cash stock has no options', () => {
+  const other = { ...stock, symbol: 'TCS', token: '11536' };
+  const scan = { marketStatus: 'SCANNING', timestamp: new Date(now).toISOString(),
+    evaluated: 2, bestSell: stock, candidates: [stock, other] };
+  assert.equal(chooseStockSetup(scan, now, ['TCS']).stock.symbol, 'TCS');
+  assert.equal(chooseStockSetup(scan, now, ['INFY']).status, 'WAIT');
+  assert.equal(chooseStockSetup({ ...scan, candidates: [{ ...other, status: 'WAIT' }] }, now, ['TCS']).status, 'WAIT');
+});
+
 test('a liquid put is selected only with current depth and expiry clearance', () => {
   const row = { exch_seg: 'NFO', instrumenttype: 'OPTSTK', name: 'RELIANCE',
     symbol: 'RELIANCE29OCT261400PE', token: '101', strike: '140000', expiry: '29OCT2026', lotsize: '500' };

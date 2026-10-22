@@ -76,9 +76,13 @@ object ApiFactory {
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(210, TimeUnit.SECONDS)
             .addInterceptor(logging)
             .addInterceptor(Interceptor { chain ->
                 val request = chain.request()
+                if (request.url.encodedPath == "/api/auth/login") {
+                    chain.call().timeout().timeout(75, TimeUnit.SECONDS)
+                }
                 val builder = request.newBuilder().header("Accept", "application/json")
                 if (request.url.encodedPath.startsWith("/api/analysis/")) {
                     val policy = if (request.url.pathSegments.lastOrNull()?.equals("SENSEX", ignoreCase = true) == true)
