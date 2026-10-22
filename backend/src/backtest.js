@@ -1,10 +1,11 @@
 import { instrumentMaster, resolveUnderlying, candleData, parseCandles } from './angel.js';
 import { sizeStockTrade } from './stock-scanner.js';
+import { HistoryChunks } from './history-chunks.js';
 
 const IST_MS = 330 * 60 * 1000;
 const MAX_DAYS = { ONE_MINUTE:30, THREE_MINUTE:60, FIVE_MINUTE:100, TEN_MINUTE:100, FIFTEEN_MINUTE:200 };
 const MINUTES = { ONE_MINUTE:1, THREE_MINUTE:3, FIVE_MINUTE:5, TEN_MINUTE:10, FIFTEEN_MINUTE:15 };
-const cache = new Map();
+const chunks = new HistoryChunks();
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const round = (v,d=2) => Number.isFinite(v) ? Number(v.toFixed(d)) : null;
@@ -36,10 +37,6 @@ async function candleWithRetry(session,payload){ return candleData(session,paylo
 
 export async function historicalCandles(session,symbol,interval,years,choice=null){
   const market=choice?.exchange==='MCX'?'MCX':'EQUITY';
-  const key=(choice?.exchange||'AUTO')+'|'+(choice?.token||symbol)+'|'+interval+'|'+years;
-  const hit=cache.get(key);
-  if(hit && Date.now()-hit.at<6*60*60*1000) return hit.rows;
-
   const underlying=choice ? {token:choice.token,exch_seg:choice.exchange} :
     resolveUnderlying(await instrumentMaster(),symbol);
   const exchange=exchangeOf(underlying), token=String(underlying.token);
@@ -47,21 +44,34 @@ export async function historicalCandles(session,symbol,interval,years,choice=nul
   if(!maxDays) throw new Error('Unsupported historical interval');
 
   const start=yearsAgoStart(years,market), end=todayEnd(market), rows=[];
-  let cursor=new Date(start);
+  let cursor=new Date(start), completedChunks=0;
   while(cursor<end){
     let chunkEnd=new Date(cursor.getTime()+(maxDays-1)*86400000);
     if(chunkEnd>end) chunkEnd=new Date(end);
     const cp=istParts(chunkEnd);
     chunkEnd=makeIstDate(cp.y,cp.m,cp.day,market==='MCX'?23:15,market==='MCX'?59:30);
     if(chunkEnd>end) chunkEnd=new Date(end);
-    const raw=await candleWithRetry(session,{
+    const payload={
       exchange,
       symboltoken:token,
       interval,
       fromdate:fmtIst(cursor),
       todate:fmtIst(chunkEnd)
-    });
-    rows.push(...parseCandles(raw));
+    };
+    let fetched;
+    try {
+      fetched=await chunks.get(session.clientCode || session.apiKey, payload, async () => {
+        const raw=await candleWithRetry(session,payload);
+        return parseCandles(raw).filter(x => Number.isFinite(Date.parse(x.timestamp)) &&
+          [x.open,x.high,x.low,x.close].every(Number.isFinite));
+      });
+    } catch (error) {
+      const seconds=error.retryAt ? Math.max(1, Math.ceil((error.retryAt-Date.now())/1000)) : null;
+      throw Object.assign(new Error(`${symbol} ${interval} history: ${error.message}. ${completedChunks} chunks completed; successful chunks are temporarily cached. ${seconds ? `Retry after ${seconds} seconds.` : 'Retry when broker history is available.'}`),
+        { status:error.status, retryAt:error.retryAt, retryAfterMs:error.retryAfterMs, rateLimited:error.rateLimited });
+    }
+    rows.push(...fetched);
+    completedChunks++;
     cursor=new Date(chunkEnd.getTime()+60000);
     if(cursor<end) await sleep(450);
   }
@@ -69,7 +79,6 @@ export async function historicalCandles(session,symbol,interval,years,choice=nul
   const unique=[...new Map(rows.map(x=>[x.timestamp,x])).values()]
     .filter(x=>[x.open,x.high,x.low,x.close].every(Number.isFinite))
     .sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
-  cache.set(key,{at:Date.now(),rows:unique});
   return unique;
 }
 

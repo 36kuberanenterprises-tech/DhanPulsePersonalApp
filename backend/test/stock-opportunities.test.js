@@ -1,10 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseStockSetup, chooseStockOption } from '../src/stock-opportunities.js';
+import { scannerCheckSummary } from '../src/stock-scanner.js';
 
 const now = Date.parse('2026-10-06T05:00:00Z');
 const stock = { status: 'READY', side: 'SELL', symbol: 'RELIANCE', token: '2885',
   reason: 'Confirmed', plan: { estimatedProfitAtTwoR: 300, estimatedLoss: 100 } };
+
+test('failed history is not counted as a completed stock analysis or ordinary setup WAIT', () => {
+  const candidates = [stock,
+    { status: 'WAIT', reason: 'No completed breakout or first pullback' },
+    { status: 'WAIT', reason: 'Angel One rejected five minute history for exceeding access rate (HTTP 403)' },
+    { status: 'WAIT', reason: 'Broker candle history is loading; checking shortly' }];
+  const summary = scannerCheckSummary(candidates);
+  assert.equal(summary.evaluated, 2);
+  assert.equal(summary.dataUnavailable, 1);
+  assert.equal(summary.loading, 1);
+  const unavailable = scannerCheckSummary(candidates.slice(2));
+  const result = chooseStockSetup({ marketStatus: 'SCANNING', timestamp: new Date(now).toISOString(),
+    ...unavailable, candidates: candidates.slice(2) }, now);
+  assert.equal(result.status, 'WAIT');
+  assert.match(result.reason, /missing broker data/);
+});
 
 test('a missing or delayed scanner never becomes an order candidate', () => {
   assert.equal(chooseStockSetup({ marketStatus: 'SCANNING', timestamp: new Date(now).toISOString(), evaluated: 0 }, now).status, 'WAIT');

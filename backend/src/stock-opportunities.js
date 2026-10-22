@@ -6,7 +6,9 @@ export function chooseStockSetup(scan, now = Date.now(), eligibleSymbols = null)
   if (scan?.marketStatus !== 'SCANNING') return { status: 'WAIT', reason: scan?.note || 'Scanner is outside its entry window' };
   const age = now - Date.parse(scan.timestamp);
   if (!Number.isFinite(age) || age < 0 || age > 30_000) return { status: 'WAIT', reason: 'Scanner result is delayed' };
-  if (scan.evaluated < 1) return { status: 'WAIT', reason: 'Broker candle history has not completed' };
+  if (scan.evaluated < 1) return { status: 'WAIT', reason: scan.dataUnavailable > 0
+    ? `Stock analysis is blocked by missing broker data for ${scan.dataUnavailable} candidates. ${scan.note || ''}`
+    : 'Broker candle history has not completed' };
   const ready = [...(scan.candidates || []), scan.bestBuy, scan.bestSell].filter(x => x?.status === 'READY' &&
     x.plan && x.token && ['BUY', 'SELL'].includes(x.side) &&
     (!eligibleSymbols || eligibleSymbols.includes(x.symbol)));

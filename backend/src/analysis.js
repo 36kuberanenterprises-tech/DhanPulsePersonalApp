@@ -99,19 +99,28 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key, 
   const retryAt = candleRetryAfter.get(key) || 0;
   if (Date.now() < retryAt) throw Object.assign(new Error(candleRetryReason.get(key) || 'Market history is cooling down after a broker rate limit response.'), { retryAt });
 
+  const previous = liveCandleCache.get(key)?.candles || [];
+  const bootstrap = historyStartFor(now, interval, segment);
+  const latest = Date.parse(previous.at(-1)?.timestamp);
+  const duration = (INTERVAL_MINUTES[interval] || 5) * 60_000;
+  const incremental = previous.length >= 35 && Number.isFinite(latest) && latest <= now.getTime() && latest >= bootstrap.getTime();
   const payload = {
     exchange,
     symboltoken: String(token),
     interval,
-    fromdate: fmtDate(historyStartFor(now, interval, segment)),
+    fromdate: fmtDate(incremental ? new Date(Math.max(bootstrap.getTime(), latest - 2 * duration)) : bootstrap),
     todate: fmtDate(now)
   };
 
   try {
     const raw = await candleData(session, payload);
-    const rows = parseCandles(raw)
-      .filter(x => [x.open,x.high,x.low,x.close].every(Number.isFinite))
-      .sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const fetched = parseCandles(raw).filter(x => Number.isFinite(Date.parse(x.timestamp)) &&
+      [x.open,x.high,x.low,x.close].every(Number.isFinite));
+    if (!fetched.length) throw new Error('Broker returned no candles for the requested market history');
+    const merged = new Map((incremental ? previous : []).map(x => [Date.parse(x.timestamp), x]));
+    for (const row of fetched) merged.set(Date.parse(row.timestamp), row);
+    const rows = [...merged.entries()].filter(([time]) => time <= now.getTime())
+      .sort(([a], [b]) => a - b).map(([, row]) => row);
     if (rows.length < 35) throw new Error('Market history is still preparing. Waiting for enough broker candles.');
     liveCandleCache.set(key, { candles: rows.slice(-1200), loadedAt: Date.now(), lastLiveAt: Date.now() });
     candleRetryAfter.delete(key);

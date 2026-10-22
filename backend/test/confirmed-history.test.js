@@ -66,16 +66,20 @@ test('a history load just before the boundary does not delay the next completed 
   let clock = Date.parse('2026-10-15T04:04:00Z'), calls = 0;
   try {
     Date.now = () => clock;
-    globalThis.fetch = async () => {
+    globalThis.fetch = async (url, options) => {
       calls++;
+      const payload = JSON.parse(options.body);
+      if (calls === 2) assert.equal(payload.fromdate, '2026-10-15 09:15', 'refresh downloads overlap, not another ten days');
       const end = calls === 1 ? Date.parse('2026-10-15T03:55:00Z') : Date.parse('2026-10-15T04:00:00Z');
-      const rows = Array.from({ length: 60 }, (_, i) => [new Date(end - (59-i)*300_000).toISOString(),100,101,99,100,0]);
+      const count = calls === 1 ? 60 : 3;
+      const rows = Array.from({ length: count }, (_, i) => [new Date(end - (count-1-i)*300_000).toISOString(),100,101,99,100,0]);
       return new Response(JSON.stringify({ status: true, data: rows }));
     };
     const args = [{ clientCode: 'boundary', apiKey: 'test', jwt: 'test' }, 'NSE', '99926000', 'FIVE_MINUTE'];
     await confirmedBrokerCandles(...args, new Date(clock));
     clock += 90_000;
     const next = await confirmedBrokerCandles(...args, new Date(clock));
+    assert.equal(next.length, 61, 'incremental refresh preserves prior candles without duplicate timestamps');
     assert.equal(calls, 2);
     assert.equal(brokerHistoryFresh(next, 'FIVE_MINUTE', new Date(clock)), true);
     clock += 3_000;
