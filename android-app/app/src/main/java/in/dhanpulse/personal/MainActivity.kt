@@ -312,7 +312,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                         )
                     }
                     Text((vm.profile?.name ?: "Angel One connected") + if (vm.stockOptionsVisible) " • Stock Options" else if (vm.stocksVisible) " • NSE Stocks" else if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
-                    Text("v${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 9.sp)
+                    Text("v${BuildConfig.VERSION_NAME} • Build ${BuildConfig.VERSION_CODE}", color = Muted, fontSize = 9.sp)
                 }
             }
             Surface(onClick = { if (vm.stockOptionsVisible) vm.fetchStockOptions() else if (vm.stocksVisible) vm.fetchStockScanner() else vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
@@ -335,28 +335,28 @@ private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
         "RESEARCH" to "Research",
         "ACCOUNT" to "Account"
     )
-    NavigationBar(containerColor = Panel, tonalElevation = 8.dp) {
-      Row(Modifier.horizontalScroll(rememberScrollState())) {
-        tabs.forEach { (key, label) ->
-            NavigationBarItem(
-                modifier = Modifier.width(74.dp),
-                selected = selected == key,
-                onClick = { onSelect(key) },
-                icon = {
-                    Box(
-                        Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (selected == key) Purple else Color.Transparent)
-                    )
-                },
-                label = { Text(label, fontSize = 8.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (selected == key) FontWeight.ExtraBold else FontWeight.Medium) },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedTextColor = Ink,
-                    unselectedTextColor = Muted,
-                    indicatorColor = Purple.copy(alpha = 0.12f)
-                )
-            )
+    Surface(color = Panel, tonalElevation = 8.dp) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(4.dp)) {
+            tabs.chunked(5).forEach { rowTabs ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    rowTabs.forEach { (key, label) ->
+                        Surface(
+                            onClick = { onSelect(key) },
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (selected == key) Purple.copy(alpha = 0.12f) else Panel
+                        ) {
+                            Box(Modifier.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                                Text(label, color = if (selected == key) Ink else Muted,
+                                    fontSize = 11.sp, maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = if (selected == key) FontWeight.ExtraBold else FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            }
         }
-      }
     }
 }
 
