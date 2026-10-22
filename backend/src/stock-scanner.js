@@ -457,7 +457,7 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
 export async function scanStocks(session, trackedToken = null, now = new Date(), improvedShortlist = false) {
   const key = session.clientCode + ':' + (trackedToken || '') + ':' + improvedShortlist;
   const cached = scanCache.get(key);
-  if (cached && Date.now() - cached.at < 12_000) return cached.data;
+  if (cached && (cached.pending || Date.now() - cached.at < 12_000)) return cached.data;
   if (scanLocks.has(key)) return scanLocks.get(key);
   const pending = (async () => {
     const list = await universe();
@@ -557,13 +557,14 @@ export async function scanStocks(session, trackedToken = null, now = new Date(),
       }
     }));
     if (analysed.length) await Promise.race([workers, wait(4000)]);
-    if (improvedShortlist) {
+    const decorateCandidates = () => { if (improvedShortlist) {
       analysed.forEach((candidate, i) => {
         candidate.decisionState = stockDecisionState(candidate);
         candidate.selectionScore = round(selected[i].score * 100);
         candidate.selectionNotes = selected[i].selectionNotes;
       });
-    }
+    } };
+    decorateCandidates();
     const sideRank = side => analysed.filter(x => x.side === side && x.status === 'READY')
       .sort((a, b) => (b.plan?.estimatedProfitAtTwoR / b.plan?.estimatedLoss) -
         (a.plan?.estimatedProfitAtTwoR / a.plan?.estimatedLoss))[0] || null;
@@ -589,7 +590,23 @@ export async function scanStocks(session, trackedToken = null, now = new Date(),
         : analysed.some(x => x.status === 'READY') ? 'Research signal with Rs. 20,000 model capital only. Live stock orders are disabled.'
         : 'No confirmed stock entry. See each candidate for its WAIT reason.'
     };
-    scanCache.set(key, { at: Date.now(), data: result });
+    scanCache.set(key, { at: Date.now(), data: result, pending: true });
+    // Publish completed background checks into this snapshot, including ranking
+    // and counts. A shallow copy otherwise leaves the response stuck on WAIT.
+    void workers.then(() => {
+      if (scanCache.get(key)?.data !== result) return;
+      scanCache.get(key).pending = false;
+      decorateCandidates();
+      result.candidates = [...analysed].sort((a, b) => (b.status === 'READY') - (a.status === 'READY'));
+      result.evaluated = analysed.length;
+      result.bestBuy = sideRank('BUY');
+      result.bestSell = sideRank('SELL');
+      if (market === 'SCANNING' && indexFresh && selected.length) {
+        result.note = analysed.some(x => x.status === 'READY')
+          ? 'Research signal with Rs. 20,000 model capital only. Live stock orders are disabled.'
+          : 'Checks completed. See each candidate for its decision and data status.';
+      }
+    });
     return result;
   })().finally(() => scanLocks.delete(key));
   scanLocks.set(key, pending);
