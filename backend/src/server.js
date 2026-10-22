@@ -6,6 +6,7 @@ import { sealSession, openSession } from './session-token.js';
 import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, normalizeStrike, getEgressIp } from './angel.js';
 import { analyse, marketDataState } from './analysis.js';
 import { openAngelPriceStream, streamInstrument } from './live-stream.js';
+import { attachFlowRoutes } from './flow-monitor.js';
 import { runBacktest } from './backtest.js';
 import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
@@ -141,6 +142,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+attachFlowRoutes(app, requireSession);
 function requireSession(req, res, next) {
   const id = req.header('X-Session-Id');
   if (revokedSessions.has(id)) return res.status(401).json({ error: 'Login required' });

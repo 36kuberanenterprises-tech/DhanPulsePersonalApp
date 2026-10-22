@@ -10,6 +10,15 @@ import retrofit2.http.*
 import java.util.concurrent.TimeUnit
 
 interface DhanPulseApi {
+    @GET("api/flow/catalog")
+    suspend fun flowCatalog(@Header("X-Session-Id") sessionId:String, @Query("group") group:String,
+        @Query("q") query:String): `in`.dhanpulse.personal.FlowCatalog
+
+    @GET("api/flow/monitor")
+    suspend fun flowMonitor(@Header("X-Session-Id") sessionId:String, @Query("exchange") exchange:String,
+        @Query("token") token:String, @Query("minutes") minutes:Int,
+        @Query("restart") restart:Boolean=false): `in`.dhanpulse.personal.FlowSnapshot
+
     @GET("api/markets/mcx")
     suspend fun mcxMarkets(@Header("X-Session-Id") sessionId: String): McxCatalog
 

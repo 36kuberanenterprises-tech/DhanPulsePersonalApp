@@ -5,6 +5,8 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
@@ -260,6 +262,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
                 "MCX" -> McxSection(vm) { section = "TRADE" }
                 "STOCKS" -> StocksSection(vm)
                 "STOCK_OPTIONS" -> StockOptionsSection(vm)
+                "FLOW" -> vm.sessionId?.let { FlowScreen(it) }
                 "TRADE" -> TradeSection(vm)
                 "POSITIONS" -> PositionsSection(vm)
                 "RESEARCH" -> ResearchSection(vm)
@@ -326,14 +329,17 @@ private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
         "MCX" to "MCX",
         "STOCKS" to "Stocks",
         "STOCK_OPTIONS" to "Options",
+        "FLOW" to "Flow",
         "TRADE" to "Trade",
         "POSITIONS" to "Positions",
         "RESEARCH" to "Research",
         "ACCOUNT" to "Account"
     )
     NavigationBar(containerColor = Panel, tonalElevation = 8.dp) {
+      Row(Modifier.horizontalScroll(rememberScrollState())) {
         tabs.forEach { (key, label) ->
             NavigationBarItem(
+                modifier = Modifier.width(74.dp),
                 selected = selected == key,
                 onClick = { onSelect(key) },
                 icon = {
@@ -350,6 +356,7 @@ private fun TraderBottomNav(selected: String, onSelect: (String) -> Unit) {
                 )
             )
         }
+      }
     }
 }
 
