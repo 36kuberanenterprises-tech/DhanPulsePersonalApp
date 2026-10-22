@@ -20,8 +20,8 @@ android {
 
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".preview281"
-            manifestPlaceholders["appLabel"] = "DhanPulse $appVersion Preview"
+            applicationIdSuffix = ".flowpreview"
+            manifestPlaceholders["appLabel"] = "DhanPulse $appVersion Flow Preview"
         }
         getByName("release") {
             manifestPlaceholders["appLabel"] = "DhanPulse $appVersion"
