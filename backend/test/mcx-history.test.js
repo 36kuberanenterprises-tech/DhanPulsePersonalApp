@@ -48,3 +48,38 @@ test('an MCX token with no historical data remains unavailable and does not loop
   await assert.rejects(load(...args),/35 are required/);
   assert.equal(calls,2);
 });
+
+
+test('MCX incremental refresh merges cached bars before considering minute fallback', async () => {
+  const calls = [];
+  const initial = aggregateMcxMinutes(rows, 'FIVE_MINUTE', now);
+  const next = { ...initial.at(-1), timestamp: '2026-10-15T08:00:00Z' };
+  const load = createMcxHistoryLoader(async (_, payload) => {
+    calls.push(payload);
+    return raw(calls.length === 1 ? initial : [...initial.slice(-3), next]);
+  });
+  const args = [{clientCode:'incremental'}, 'MCX', '574320', 'FIVE_MINUTE'];
+  await load(...args, now);
+  const result = await load(...args, new Date('2026-10-15T08:05:30Z'));
+  assert.equal(result.length, 49);
+  assert.equal(result.at(-1).timestamp, next.timestamp);
+  assert.equal(calls.length, 2, 'four incremental bars must not trigger a four-day minute download');
+  assert.ok(calls.every(p => p.interval === 'FIVE_MINUTE'));
+});
+
+test('MCX stale incremental history recovers only the missing recent minutes', async () => {
+  const calls = [];
+  const initial = aggregateMcxMinutes(rows, 'FIVE_MINUTE', now);
+  const recent = rows.slice(0, 5).map((c, i) => ({...c,
+    timestamp: new Date(Date.parse('2026-10-15T08:00:00Z') + i*60_000).toISOString()}));
+  const load = createMcxHistoryLoader(async (_, payload) => {
+    calls.push(payload);
+    return raw(calls.length === 1 ? initial : payload.interval === 'ONE_MINUTE' ? recent : initial.slice(-3));
+  });
+  const args = [{clientCode:'stale-incremental'}, 'MCX', '574320', 'FIVE_MINUTE'];
+  await load(...args, now);
+  const result = await load(...args, new Date('2026-10-15T08:05:30Z'));
+  assert.equal(result.length, 49);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].fromdate, '2026-10-15 13:20');
+});

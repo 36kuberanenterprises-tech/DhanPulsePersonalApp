@@ -56,10 +56,16 @@ export function createMcxHistoryLoader(fetchHistory = candleData) {
       let rows = parseCandles(raw).filter(valid);
       // A successful but empty/short selected-interval result may be recovered
       // from the same contract's ONE_MINUTE history. Never do this after 403.
-      const direct = rows.filter(c => Date.parse(c.timestamp) + duration + 20_000 <= now.getTime());
+      const direct = [...new Map([...(previous?.rows || []), ...rows]
+        .map(c => [Date.parse(c.timestamp), c])).values()].filter(c =>
+          Date.parse(c.timestamp) >= now.getTime() - 14*86_400_000 &&
+          Date.parse(c.timestamp) + duration + 20_000 <= now.getTime());
       if ((direct.length < 35 || Math.max(...direct.map(c => Date.parse(c.timestamp))) < expected) && interval !== 'ONE_MINUTE') {
         const minuteRaw = await fetchHistory(session, { ...payload, interval: 'ONE_MINUTE',
-          fromdate: format(now.getTime() - 4*86_400_000) });
+          fromdate: direct.length >= 35
+            ? format(Math.max(now.getTime() - 4*86_400_000,
+                Math.max(...direct.map(c => Date.parse(c.timestamp))) - duration))
+            : format(now.getTime() - 4*86_400_000) });
         rows = [...rows, ...aggregateMcxMinutes(parseCandles(minuteRaw), interval, now)];
       }
       const merged = new Map([...(previous?.rows || []), ...rows].map(c => [Date.parse(c.timestamp),c]));

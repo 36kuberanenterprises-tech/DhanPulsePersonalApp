@@ -148,8 +148,10 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
   const attemptedExpected = state?.lastRequestedExpected;
   const recoveryAt = candleRetryAfter.get(key);
   const retryDue = recoveryAt != null && Date.now() >= recoveryAt;
+  const staleRetryDue = recoveryAt == null &&
+    Date.now() - (state?.lastAttemptAt || state?.loadedAt || 0) >= Math.min(duration, 60_000);
   if (!state || ((!latestCompleted || Date.parse(latestCompleted.timestamp) < expected) &&
-      (retryDue || attemptedExpected !== expected || Date.now() - (state.lastAttemptAt || state.loadedAt) >= duration))) {
+      (retryDue || attemptedExpected !== expected || staleRetryDue))) {
     let lock = candleLoadLocks.get(key);
     if (!lock) {
       lock = loadHistoricalBase(session, exchange, token, interval, now, key, segment)

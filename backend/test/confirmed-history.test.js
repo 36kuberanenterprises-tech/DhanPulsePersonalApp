@@ -87,3 +87,28 @@ test('a history load just before the boundary does not delay the next completed 
     assert.equal(calls, 2, 'the next app tick must reuse the current broker bar');
   } finally { globalThis.fetch = previousFetch; Date.now = previousNow; }
 });
+
+
+test('successful but delayed history retries after one minute within the same candle interval', async () => {
+  const previousFetch = globalThis.fetch, previousNow = Date.now;
+  let clock = Date.parse('2026-10-15T04:05:30Z'), calls = 0;
+  try {
+    Date.now = () => clock;
+    globalThis.fetch = async () => {
+      calls++;
+      const end = Date.parse(calls === 1 ? '2026-10-15T03:55:00Z' : '2026-10-15T04:00:00Z');
+      const rows = Array.from({length:60}, (_, i) => [new Date(end-(59-i)*300_000).toISOString(),100,101,99,100,0]);
+      return new Response(JSON.stringify({status:true,data:rows}));
+    };
+    const args = [{clientCode:'delayed-success',apiKey:'test',jwt:'test'}, 'BSE', '99919000', 'FIVE_MINUTE'];
+    const delayed = await confirmedBrokerCandles(...args, new Date(clock));
+    assert.equal(brokerHistoryFresh(delayed, 'FIVE_MINUTE', new Date(clock)), false);
+    clock += 59_000;
+    await confirmedBrokerCandles(...args, new Date(clock));
+    assert.equal(calls, 1);
+    clock += 1_001;
+    const recovered = await confirmedBrokerCandles(...args, new Date(clock));
+    assert.equal(calls, 2);
+    assert.equal(brokerHistoryFresh(recovered, 'FIVE_MINUTE', new Date(clock)), true);
+  } finally { globalThis.fetch = previousFetch; Date.now = previousNow; }
+});
