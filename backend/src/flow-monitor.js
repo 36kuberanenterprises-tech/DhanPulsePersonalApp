@@ -29,8 +29,8 @@ export class FlowBook {
   ingest(tick, receivedAt=Date.now()) {
     if (tick.time>receivedAt+1000 || receivedAt-tick.time>5000) return;
     const previous=this.previous;
-    if (previous && (tick.time<previous.time || BigInt(tick.sequence)<=BigInt(previous.sequence))) return;
     const day=t=>new Date(t.time+330*60_000).toISOString().slice(0,10);
+    if (previous && (tick.time<previous.time || (day(tick)===day(previous) && BigInt(tick.sequence)<=BigInt(previous.sequence)))) return;
     if (previous && (day(tick)!==day(previous) || tick.volume<previous.volume)) this.reset();
     const old=this.previous;
     this.previous={...tick,receivedAt};
@@ -83,6 +83,31 @@ export function flowChoices(rows, query, group) {
     .sort((a,b)=>(Date.parse(a.expiry)||0)-(Date.parse(b.expiry)||0)||a.symbol.localeCompare(b.symbol))
     .slice(0,40).map(row=>({token:String(row.token),exchange:row.exch_seg,symbol:row.symbol,kind:row.instrumenttype||'CASH'}));
 }
+// Guided catalogue: discover names first, then filter contracts by exact underlying.
+export function flowCatalogue(rows, options={}) {
+  const {group='INDEX',q='',underlying='',kind='',expiry=''}=options;
+  const norm=value=>String(value||'').toUpperCase().trim();
+  const root=row=>norm(row.name || String(row.symbol).replace(/-EQ$/,''));
+  const universe=rows.filter(row=>tradable(row) &&
+    (group==='MCX' ? row.exch_seg==='MCX' : group==='STOCKS' ? row.exch_seg==='NSE' && /-EQ$/.test(row.symbol) :
+      group==='STOCK_OPTIONS' ? row.instrumenttype==='OPTSTK' : ['FUTIDX','OPTIDX'].includes(row.instrumenttype)));
+  const words=norm(q).split(/\s+/).filter(Boolean);
+  const names=[...new Set(universe.map(root))].sort();
+  const roots=names.filter(name=>words.every(word=>name.includes(word)))
+    .sort((a,b)=>(b===norm(q))-(a===norm(q))||a.localeCompare(b));
+  const contracts=universe.filter(row=>!underlying || root(row)===norm(underlying));
+  const kinds=[...new Set(contracts.map(row=>row.instrumenttype?.startsWith('FUT')?'FUT':/CE$/.test(row.symbol)?'CE':/PE$/.test(row.symbol)?'PE':'CASH'))];
+  const byKind=contracts.filter(row=>!kind || (kind==='FUT' ? row.instrumenttype?.startsWith('FUT') : kind==='CASH' ? /-EQ$/.test(row.symbol) : row.symbol.endsWith(kind)));
+  const expiries=[...new Set(byKind.map(row=>row.expiry).filter(Boolean))].sort((a,b)=>Date.parse(a)-Date.parse(b));
+  const matches=byKind.filter(row=>(!expiry || row.expiry===expiry) && (!underlying || words.every(word=>norm(`${row.symbol} ${row.name} ${row.expiry}`).includes(word))))
+    .sort((a,b)=>(Date.parse(a.expiry)||0)-(Date.parse(b.expiry)||0) || Number(a.strike||0)-Number(b.strike||0) || a.symbol.localeCompare(b.symbol) || String(a.token).localeCompare(String(b.token)));
+  const offset=Math.max(0,Math.floor(Number(options.offset)||0));
+  return {roots,totalRoots:roots.length,kinds,expiries,total:matches.length,offset,
+    hasMore:offset+40<matches.length,
+    items:underlying ? matches.slice(offset,offset+40).map(row=>({token:String(row.token),exchange:row.exch_seg,
+      symbol:row.symbol,kind:row.instrumenttype||'CASH',underlying:root(row),expiry:row.expiry||'',
+      strike:Number(row.strike)>0?Number(row.strike)/100:null})) : []};
+}
 function openMonitor(session,row,minutes) {
   if (![session.jwt,session.apiKey,session.clientCode,session.feedToken].every(Boolean)) throw new Error('Login again to obtain the broker streaming token');
   const state={key:`${row.exch_seg}:${row.token}:${minutes}`,book:new FlowBook(minutes),symbol:row.symbol,
@@ -115,7 +140,8 @@ function openMonitor(session,row,minutes) {
 
 export function attachFlowRoutes(app,requireSession) {
   app.get('/api/flow/catalog',requireSession,async(req,res)=>{
-    try {res.json({items:flowChoices(await instrumentMaster(),String(req.query.q||'').slice(0,80),String(req.query.group||'INDEX'))});}
+    try {const rows=await instrumentMaster();res.json(req.query.guided==='true' ? flowCatalogue(rows,req.query) :
+      {items:flowChoices(rows,String(req.query.q||'').slice(0,80),String(req.query.group||'INDEX'))});}
     catch {res.status(503).json({error:'Broker instrument catalogue unavailable'});}
   });
   app.get('/api/flow/monitor',requireSession,async(req,res)=>{

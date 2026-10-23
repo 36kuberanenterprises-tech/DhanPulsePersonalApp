@@ -5,9 +5,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -21,8 +23,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-data class FlowInstrument(val token:String, val exchange:String, val symbol:String, val kind:String)
-data class FlowCatalog(val items:List<FlowInstrument> = emptyList())
+data class FlowInstrument(val token:String, val exchange:String, val symbol:String, val kind:String,
+    val underlying:String="",val expiry:String="",val strike:Double?=null)
+data class FlowCatalog(val items:List<FlowInstrument> = emptyList(),val roots:List<String> = emptyList(),
+    val kinds:List<String> = emptyList(),val expiries:List<String> = emptyList(),
+    val total:Int=0,val hasMore:Boolean=false)
 data class FlowLevel(val price:Double=0.0,val buy:Double=0.0,val sell:Double=0.0,val unknown:Double=0.0)
 data class FlowDepth(val price:Double=0.0,val quantity:Double=0.0)
 data class FlowBar(val time:String="",val buy:Double=0.0,val sell:Double=0.0,val unknown:Double=0.0,
@@ -42,7 +47,16 @@ fun FlowScreen(sessionId:String) {
     val api=remember { ApiFactory.create("https://dhanpulse-personal-api.onrender.com") }
     val owner=LocalLifecycleOwner.current
     var group by remember { mutableStateOf("INDEX") }
-    var query by remember { mutableStateOf("NIFTY") }
+    val keyboard=LocalSoftwareKeyboardController.current
+    var query by remember { mutableStateOf("") }
+    var underlying by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf("") }
+    var expiry by remember { mutableStateOf("") }
+    var page by remember { mutableIntStateOf(0) }
+    var rootsShown by remember { mutableIntStateOf(40) }
+    var catalogue by remember { mutableStateOf(FlowCatalog()) }
+    var retryCatalogue by remember { mutableIntStateOf(0) }
+    var recent by remember { mutableStateOf(emptyList<String>()) }
     var choices by remember { mutableStateOf(emptyList<FlowInstrument>()) }
     var selected by remember { mutableStateOf<FlowInstrument?>(null) }
     var minutes by remember { mutableIntStateOf(5) }
@@ -52,9 +66,11 @@ fun FlowScreen(sessionId:String) {
     var catalogError by remember { mutableStateOf<String?>(null) }
     var searching by remember { mutableStateOf(false) }
     var showContracts by remember { mutableStateOf(true) }
-    LaunchedEffect(group,query,sessionId) {
-        searching=true;catalogError=null;choices=emptyList();delay(500)
-        try { choices=api.flowCatalog(sessionId,group,query).items }
+    val listState=rememberLazyListState()
+    LaunchedEffect(underlying,page,showContracts) { listState.scrollToItem(0) }
+    LaunchedEffect(group,query,underlying,kind,expiry,page,retryCatalogue,sessionId) {
+        searching=true;catalogError=null;choices=emptyList();delay(300)
+        try { catalogue=api.flowCatalog(sessionId,group,query,underlying=underlying,kind=kind,expiry=expiry,offset=page*40);choices=catalogue.items }
         catch(e:CancellationException){throw e}
         catch(e:Exception){catalogError="Contract list unavailable. Check connection and search again."}
         finally { searching=false }
@@ -74,26 +90,78 @@ fun FlowScreen(sessionId:String) {
             }
         }
     }
-    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(),state=listState,contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         item { Text("Footprint & Order Flow",style=MaterialTheme.typography.headlineSmall) }
-        item { Text("Live monitoring only. Select one traded contract. Index monitoring uses futures or options, not the spot index.") }
+        item { Text("Choose a market, then a name and contract. Index flow uses traded futures or options. Quick choices are navigation shortcuts, not trade recommendations.",style=MaterialTheme.typography.bodySmall) }
         item { Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             listOf("INDEX" to "Indices","STOCKS" to "Shares","STOCK_OPTIONS" to "Stock options","MCX" to "MCX").forEach { (key,label) ->
                 FilterChip(selected=group==key,onClick={group=key;selected=null;snapshot=null;showContracts=true;
-                    query=when(key){"INDEX"->"NIFTY";"MCX"->"CRUDEOIL";else->""}},label={Text(label)})
+                    query="";underlying="";kind="";expiry="";page=0;rootsShown=40;catalogue=FlowCatalog()},label={Text(label)})
             }
         } }
-        item { OutlinedTextField(value=query,onValueChange={query=it;showContracts=true},label={Text("Search name, expiry or strike")},singleLine=true,modifier=Modifier.fillMaxWidth()) }
-        item { TextButton(onClick={showContracts=!showContracts}) { Text(if(showContracts) "Hide contract list" else "Change contract") } }
+        if(selected!=null) item { OutlinedButton(onClick={showContracts=!showContracts},modifier=Modifier.fillMaxWidth()) {
+            Text(if(showContracts) "Back to monitor: ${selected!!.symbol}" else "Change instrument or contract")
+        } }
         if(showContracts) {
-            item { Text(if(searching) "Searching contracts…" else catalogError ?: "${choices.size} matches shown. Refine the search for another expiry or strike.") }
+            if(underlying.isNotBlank()) item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+                Text(underlying,style=MaterialTheme.typography.titleMedium)
+                TextButton(onClick={underlying="";query="";kind="";expiry="";page=0}) { Text("Change name") }
+            } }
+            item { OutlinedTextField(value=query,onValueChange={query=it;page=0;rootsShown=40},
+                label={Text(if(underlying.isBlank()) "Search stock or index name" else "Search strike or contract")},
+                placeholder={Text(if(underlying.isBlank()) "Example: SENSEX, INFY, CRUDEOIL" else "Type the strike price")},
+                trailingIcon={if(query.isNotEmpty()) TextButton(onClick={query="";page=0;rootsShown=40}){Text("Clear")}},
+                singleLine=true,modifier=Modifier.fillMaxWidth()) }
+            if(searching) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            catalogError?.let { message -> item { Text(message,color=MaterialTheme.colorScheme.error)
+                OutlinedButton(onClick={retryCatalogue++}){Text("Retry search")} } }
+            if(!searching && catalogError==null && underlying.isBlank()) {
+                val quick=(recent+when(group){
+                    "INDEX"->listOf("NIFTY","BANKNIFTY","SENSEX","FINNIFTY","MIDCPNIFTY")
+                    "MCX"->listOf("CRUDEOIL","NATURALGAS","GOLD","SILVER")
+                    else->listOf("RELIANCE","TCS","INFY","HDFCBANK","ICICIBANK")
+                }).distinct().filter { it in catalogue.roots }
+                if(query.isBlank()) {
+                    item { Text("Quick choices",style=MaterialTheme.typography.titleSmall) }
+                    items(quick.chunked(2)) { names -> Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        names.forEach { name -> OutlinedButton(onClick={underlying=name;query="";kind="";expiry="";page=0;keyboard?.hide()},modifier=Modifier.weight(1f).heightIn(min=48.dp)) {Text(name)} }
+                    } }
+                }
+                item { Text("${catalogue.roots.size} available names. Tap one to see its contracts.") }
+                if(catalogue.roots.isEmpty()) item { Text("No names found. Try a shorter symbol or choose another market.") }
+                items(catalogue.roots.take(rootsShown),key={"root:$it"}) { name ->
+                    OutlinedButton(onClick={underlying=name;query="";kind="";expiry="";page=0;keyboard?.hide()},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {Text(name)}
+                }
+                if(rootsShown<catalogue.roots.size) item { OutlinedButton(onClick={rootsShown+=40},modifier=Modifier.fillMaxWidth()){Text("Show more names")} }
+            }
+            if(underlying.isNotBlank()) {
+                item { Text("Contract type",style=MaterialTheme.typography.titleSmall)
+                    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        (listOf("")+catalogue.kinds).forEach { type -> FilterChip(selected=kind==type,onClick={kind=type;expiry="";page=0},label={Text(when(type){"FUT"->"Futures";"CE"->"Call CE";"PE"->"Put PE";"CASH"->"Shares";else->"All"})}) }
+                    }
+                }
+                if(catalogue.expiries.isNotEmpty()) item { Text("Expiry",style=MaterialTheme.typography.titleSmall)
+                    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        (listOf("")+catalogue.expiries).forEach { date -> FilterChip(selected=expiry==date,onClick={expiry=date;page=0},label={Text(date.ifBlank { "All expiries" })}) }
+                    }
+                }
+                if(!searching && catalogError==null) item { Text(if(choices.isEmpty()) "No matching contracts. Clear the search or change the filters." else "${catalogue.total} contracts. Showing ${page*40+1} to ${page*40+choices.size}. Tap to monitor.") }
+            }
             items(choices,key={it.exchange+it.token}) { instrument ->
-                OutlinedButton(onClick={selected=instrument;showContracts=false},modifier=Modifier.fillMaxWidth()) {
-                    Text("${instrument.symbol}\n${instrument.exchange} • ${instrument.kind}")
+                OutlinedButton(onClick={selected=instrument;showContracts=false;keyboard?.hide();recent=(listOf(underlying)+recent).distinct().take(6)},modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(instrument.symbol,style=MaterialTheme.typography.titleSmall)
+                        Text("${instrument.exchange} • ${instrument.kind}"+if(instrument.expiry.isNotBlank()) " • ${instrument.expiry}" else "",style=MaterialTheme.typography.bodySmall)
+                        instrument.strike?.let { Text("Strike ${flowNumber(it)}",style=MaterialTheme.typography.bodySmall) }
+                    }
                 }
             }
+            if(underlying.isNotBlank() && !searching && catalogError==null) item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+                OutlinedButton(onClick={page--},enabled=page>0){Text("Previous")}
+                OutlinedButton(onClick={page++},enabled=catalogue.hasMore){Text("Next contracts")}
+            } }
         }
-        if(selected!=null) {
+        if(selected!=null && !showContracts) {
             item { Text(selected!!.symbol,style=MaterialTheme.typography.titleMedium) }
             item { Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 listOf(1,3,5,10,15).forEach { m -> FilterChip(selected=minutes==m,onClick={minutes=m},label={Text("${m}m")}) }

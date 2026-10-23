@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FlowBook, parseFlowPacket, flowChoices } from '../src/flow-monitor.js';
+import { FlowBook, parseFlowPacket, flowChoices, flowCatalogue } from '../src/flow-monitor.js';
 
 test('snap quote parser decodes broker depth sides and rejects LTP only packets',()=>{
   const b=Buffer.alloc(379);b[0]=3;b[1]=2;b.write('12345',2);
@@ -41,7 +41,7 @@ test('feed interruptions leave quantity unallocated and new day resets cumulativ
   const book=new FlowBook();book.ingest(tick(1,100,1),start+1000);
   book.ingest(tick(10,110,10),start+10000);
   assert.equal(book.snapshot(start+10000).bars[0].unallocated,10);
-  const next=tick(11,5,5,101,start+86400000);
+  const next=tick(1,5,5,101,start+86400000);
   book.ingest(next,next.time);
   assert.equal(book.snapshot(next.time).bars.length,0);assert.equal(book.cvd,0);
 });
@@ -57,4 +57,21 @@ test('contract catalogue separates derivatives, cash and MCX and excludes spot i
   assert.deepEqual(flowChoices(rows,'','STOCKS').map(x=>x.token),['3']);
   assert.deepEqual(flowChoices(rows,'INFY','STOCK_OPTIONS').map(x=>x.token),['4']);
   assert.deepEqual(flowChoices(rows,'NATURALGAS','MCX').map(x=>x.token),['5']);
+});
+
+test('guided search separates exact NIFTY from BANKNIFTY and exposes all pages and expiry filters',()=>{
+  const rows=Array.from({length:85},(_,i)=>({token:String(i+1),symbol:`NIFTY${20000+i}CE`,name:'NIFTY',exch_seg:'NFO',instrumenttype:'OPTIDX',expiry:'28OCT2099',strike:String((20000+i)*100)}));
+  rows.push({token:'999',symbol:'BANKNIFTY47000CE',name:'BANKNIFTY',exch_seg:'NFO',instrumenttype:'OPTIDX',expiry:'28OCT2099',strike:'4700000'});
+  const discovery=flowCatalogue(rows,{q:'NIFTY'});
+  assert.deepEqual(discovery.roots,['NIFTY','BANKNIFTY']);assert.equal(discovery.items.length,0);
+  const first=flowCatalogue(rows,{underlying:'NIFTY',kind:'CE'});
+  const second=flowCatalogue(rows,{underlying:'NIFTY',kind:'CE',offset:40});
+  const third=flowCatalogue(rows,{underlying:'NIFTY',offset:80});
+  assert.equal(first.total,85);assert.equal(first.items.length,40);assert.equal(first.hasMore,true);
+  assert.equal(second.items.length,40);assert.equal(third.items.length,5);assert.equal(third.hasMore,false);
+  assert.equal(new Set([...first.items,...second.items,...third.items].map(x=>x.token)).size,85);
+  assert.equal(first.items[0].strike,20000);assert.deepEqual(first.expiries,['28OCT2099']);
+  assert.equal(flowCatalogue(rows,{underlying:'NIFTY',q:'20042'}).items[0].token,'43');
+  assert.equal(flowCatalogue(rows,{underlying:'NIFTY',kind:'PE'}).total,0);
+  assert.equal(flowCatalogue(rows,{underlying:'NIFTY',expiry:'01JAN2099'}).total,0);
 });

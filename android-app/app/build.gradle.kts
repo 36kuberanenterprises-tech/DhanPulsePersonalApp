@@ -14,7 +14,7 @@ android {
         applicationId = "in.dhanpulse.personal"
         minSdk = 26
         targetSdk = 35
-        versionCode = 53
+        versionCode = 54
         versionName = appVersion
     }
 

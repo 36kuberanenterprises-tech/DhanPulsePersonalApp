@@ -257,7 +257,12 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         Column(
             Modifier.fillMaxSize().background(AppBg).padding(inner).statusBarsPadding()
         ) {
-            TraderHeader(vm)
+            if (section == "FLOW") {
+                Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("DhanPulse • Flow", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("v${BuildConfig.VERSION_NAME} • Build ${BuildConfig.VERSION_CODE}", color = Muted, fontSize = 11.sp)
+                }
+            } else TraderHeader(vm)
             when (section) {
                 "MCX" -> McxSection(vm) { section = "TRADE" }
                 "STOCKS" -> StocksSection(vm)
