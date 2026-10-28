@@ -412,9 +412,9 @@ jobs:
           assert 'if(q("deltaCredentialInfo"))' in s
           assert 'if(q("deltaFeedTest"))' in s
           assert 'if(kk&&q("deltaCredentialPlaceholder"))' in s
-          assert 'q("deltaCredentialInfo").onclick=function' not in s
-          assert 'q("deltaFeedTest").onclick=function' not in s
-          assert 'if(kk)q("deltaCredentialPlaceholder").value=kk' not in s
+          assert 'if(q("deltaCredentialInfo"))q("deltaCredentialInfo").onclick=function' in s
+          assert 'if(q("deltaFeedTest"))q("deltaFeedTest").onclick=function' in s
+          assert 'var kk=KEY?localStorage.getItem(KEY)||"":"";' in s
           PY
           node --check /tmp/app.js
 
