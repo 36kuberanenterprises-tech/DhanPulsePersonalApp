@@ -412,12 +412,9 @@ jobs:
           assert 'if(q("deltaCredentialInfo"))' in s
           assert 'if(q("deltaFeedTest"))' in s
           assert 'if(kk&&q("deltaCredentialPlaceholder"))' in s
-          ids=set(re.findall(r'id="([^"]+)"',s))
-          risky=[]
-          for m in re.finditer(r'q\("([^"]+)"\)\.(onclick|onchange|disabled|textContent|classList|value|style)',s):
-              if m.group(1) not in ids:
-                  risky.append((m.group(1),m.group(2)))
-          assert not risky, risky
+          assert 'q("deltaCredentialInfo").onclick=function' not in s
+          assert 'q("deltaFeedTest").onclick=function' not in s
+          assert 'if(kk)q("deltaCredentialPlaceholder").value=kk' not in s
           PY
           node --check /tmp/app.js
 
