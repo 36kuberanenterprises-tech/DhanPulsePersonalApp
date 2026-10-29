@@ -55,13 +55,15 @@ test('identical history requests share one call and JSON errors preserve HTTP st
         { status: 429, headers: { 'Retry-After': '120' } });
     };
     const session = { clientCode: 'json-error-test', apiKey: 'test', jwt: 'test' };
+    const startedAt = Date.now();
     const results = await Promise.allSettled([candleData(session, payload), candleData(session, payload)]);
     assert.equal(calls, 1);
     for (const result of results) {
       assert.equal(result.status, 'rejected');
       assert.equal(result.reason.status, 429);
       assert.equal(result.reason.brokerCode, 'AB1021');
-      assert.ok(result.reason.retryAfterMs >= 120_000);
+      assert.ok(result.reason.retryAt >= startedAt + 120_000);
+      assert.ok(result.reason.retryAfterMs >= 120_000 - (Date.now() - startedAt));
     }
     await assert.rejects(candleData(session, payload), /cooldown/);
     assert.equal(calls, 1);
