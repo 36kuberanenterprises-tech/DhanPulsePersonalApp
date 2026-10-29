@@ -58,6 +58,7 @@ private fun friendlyContract(i:FlowInstrument):String {
     return friendlyName(i.underlying.ifBlank { i.symbol })+" • "+type+(i.strike?.let { " • "+flowNumber(it) } ?: "")
 }
 
+private fun timeframeLabel(value:String)=when(value) { "ONE_MINUTE"->"1m";"THREE_MINUTE"->"3m";"FIVE_MINUTE"->"5m";"TEN_MINUTE"->"10m";"FIFTEEN_MINUTE"->"15m";else->value }
 private fun entryWindowMessage(mcx:Boolean, now:Instant):String? {
     val time=now.atZone(ZoneId.of("Asia/Kolkata")).toLocalTime()
     val start=java.time.LocalTime.of(9,30)
@@ -173,7 +174,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                 val matching=supported && a?.symbol==underlying && vm.selectedSymbol==underlying && a.timeframe==vm.selectedTimeframe
                 val windowMessage=entryWindowMessage(group=="MCX",now)
                 val recent=matching && analysisRecent(a?.timestamp,now)
-                if(supported) Text("Analysis: ${vm.selectedTimeframe} • ${if(recent) "Updated "+flowTime(a?.timestamp)+" IST" else "Waiting for current analysis"}",style=MaterialTheme.typography.bodySmall)
+                if(supported) Text("Analysis: ${timeframeLabel(vm.selectedTimeframe)} • ${if(recent) "Updated "+flowTime(a?.timestamp)+" IST" else "Waiting for current analysis"}",style=MaterialTheme.typography.bodySmall)
                 val confirmed=matching && recent && windowMessage==null && a?.dataFresh==true && a.tradeDecision.setupAllowed &&
                     plan.signal in listOf("CE","PE") && plan.signal==a.tradeDecision.direction &&
                     plan.contract?.token!=null && plan.contract.token==a.suggestedContract?.token &&
@@ -263,7 +264,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
             }
             if(supported) item { Text("Trade analysis timeframe",style=MaterialTheme.typography.titleSmall)
                 Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    listOf("1m","3m","5m","10m","15m").forEach { interval -> FilterChip(selected=vm.selectedTimeframe==interval,onClick={vm.selectTimeframe(interval)},label={Text(interval)}) }
+                    listOf("ONE_MINUTE","THREE_MINUTE","FIVE_MINUTE","TEN_MINUTE","FIFTEEN_MINUTE").forEach { interval -> FilterChip(selected=vm.selectedTimeframe==interval,onClick={vm.selectTimeframe(interval)},label={Text(timeframeLabel(interval))}) }
                 }
             }
             item { Text("Footprint grouping • independent of trade analysis",style=MaterialTheme.typography.titleSmall) }
