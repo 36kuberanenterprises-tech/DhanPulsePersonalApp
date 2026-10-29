@@ -51,7 +51,7 @@ private fun friendlyName(name:String)=when(name) {
     else -> name
 }
 private fun friendlyExpiry(value:String)=runCatching {
-    java.time.LocalDate.parse(value,DateTimeFormatter.ofPattern("ddMMMyyyy",Locale.ENGLISH)).format(DateTimeFormatter.ofPattern("dd MMM yyyy",Locale.ENGLISH))
+    java.time.LocalDate.parse(value,java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("ddMMMyyyy").toFormatter(Locale.ENGLISH)).format(DateTimeFormatter.ofPattern("dd MMM yyyy",Locale.ENGLISH))
 }.getOrDefault(value)
 private fun friendlyContract(i:FlowInstrument):String {
     val type=when { i.symbol.endsWith("CE") -> "Call option"; i.symbol.endsWith("PE") -> "Put option"; i.kind.startsWith("FUT") -> "Futures"; else -> "Shares" }
