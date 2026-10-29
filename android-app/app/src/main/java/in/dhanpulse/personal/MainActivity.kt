@@ -262,7 +262,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
                     Text("DhanPulse • Flow", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text("v${BuildConfig.VERSION_NAME} • Build ${BuildConfig.VERSION_CODE}", color = Muted, fontSize = 11.sp)
                 }
-            } else TraderHeader(vm)
+            } else TraderHeader(vm, section)
             when (section) {
                 "MCX" -> McxSection(vm) { section = "TRADE" }
                 "STOCKS" -> StocksSection(vm)
@@ -279,10 +279,10 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
 }
 
 @Composable
-private fun TraderHeader(vm: DhanPulseViewModel) {
+private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
     Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(R.mipmap.ic_launcher),
                     contentDescription = null,
@@ -291,7 +291,7 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                 )
                 Spacer(Modifier.width(9.dp))
                 Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
                         val status = if (vm.stockOptionsVisible) null else if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
@@ -300,6 +300,8 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                         }.getOrNull() else null
                         val stockDelayed = vm.stocksVisible && (stockAge == null || stockAge > 45_000 || vm.stockScanError != null)
                         val pillText = when {
+                            section == "RESEARCH" -> "RESEARCH"
+                            section == "ACCOUNT" || section == "POSITIONS" -> "ACCOUNT"
                             status == "MARKET_CLOSED" -> "CLOSED"
                             status == "NO_OPTIONS" -> "NO OPTIONS"
                             status == "HISTORY_UNAVAILABLE" -> "NO HISTORY"
@@ -316,12 +318,12 @@ private fun TraderHeader(vm: DhanPulseViewModel) {
                             if (pillText == "LIVE" || pillText == "SCANNING") Green else Amber
                         )
                     }
-                    Text((vm.profile?.name ?: "Angel One connected") + if (vm.stockOptionsVisible) " • Stock Options" else if (vm.stocksVisible) " • NSE Stocks" else if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
+                    Text((vm.profile?.name ?: "Angel One connected") + if (vm.stockOptionsVisible) " • Stock Options" else if (vm.stocksVisible) " • NSE Stocks" else if (section == "RESEARCH") " • Research" else if (section == "ACCOUNT" || section == "POSITIONS") " • Account" else if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
                     Text("v${BuildConfig.VERSION_NAME} • Build ${BuildConfig.VERSION_CODE}", color = Muted, fontSize = 9.sp)
                 }
             }
             Surface(onClick = { if (vm.stockOptionsVisible) vm.fetchStockOptions() else if (vm.stocksVisible) vm.fetchStockScanner() else vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
-                Text("Refresh", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                Text("Refresh", maxLines = 1, softWrap = false, color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
         }
     }
@@ -2589,7 +2591,7 @@ fun OptionCard(a: AnalysisResponse) {
 @Composable
 private fun StatusPill(text: String, color: Color) {
     Surface(color = color.copy(alpha = 0.12f), shape = RoundedCornerShape(50), border = BorderStroke(1.dp, color.copy(alpha = 0.25f))) {
-        Text(text, color = color, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))
+        Text(text, maxLines = 1, softWrap = false, color = color, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))
     }
 }
 
