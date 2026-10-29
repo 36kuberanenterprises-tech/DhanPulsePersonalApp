@@ -19,6 +19,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import `in`.dhanpulse.personal.data.ApiFactory
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
+import `in`.dhanpulse.personal.model.AnalysisResponse
+import `in`.dhanpulse.personal.model.PremiumTradePlan
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -74,6 +76,22 @@ private fun analysisRecent(timestamp:String?, now:Instant):Boolean=runCatching {
     age in 0..45
 }.getOrDefault(false)
 
+internal fun validFlowEntry(a:AnalysisResponse?, plan:PremiumTradePlan, root:String,
+    interval:String, supported:Boolean, mcx:Boolean, now:Instant):Boolean {
+    if(!supported || a==null || a.symbol!=root || a.timeframe!=interval || a.dataFresh!=true ||
+        !analysisRecent(a.timestamp,now) || entryWindowMessage(mcx,now)!=null || !a.tradeDecision.setupAllowed) return false
+    val contract=plan.contract ?: return false
+    if(contract.token.isNullOrBlank() || contract.exchange.isNullOrBlank() || contract.tradingSymbol.isNullOrBlank() ||
+        contract.token!=a.suggestedContract?.token || contract.exchange!=a.suggestedContract?.exchange ||
+        plan.status!="WAITING_ENTRY" || plan.signal !in listOf("CE","PE") || plan.signal!=a.tradeDecision.direction) return false
+    val entry=plan.entry ?: return false
+    val stop=plan.stopLoss ?: return false
+    val targets=listOf(plan.target1,plan.target2,plan.target3)
+    return entry.isFinite() && entry>0 && stop.isFinite() && stop>0 && stop<entry &&
+        targets.all { it!=null && it.isFinite() && it>entry } &&
+        targets.zipWithNext().all { (left,right) -> left!!<right!! }
+}
+
 @Composable
 fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onOpenScanner:()->Unit) {
     val api=remember { ApiFactory.create("https://dhanpulse-personal-api.onrender.com") }
@@ -105,6 +123,9 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
     LaunchedEffect(owner) { owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while(isActive) { now=Instant.now();delay(1000) } } }
     val supported=if(group=="INDEX") underlying in setOf("NIFTY","BANKNIFTY","SENSEX") else group=="MCX" &&
         (vm.mcxIndices.any { it.symbol==underlying } || vm.mcxEnergy.any { it.symbol==underlying })
+    LaunchedEffect(group,underlying) {
+        selected=null;snapshot=null;error=null;showContracts=true
+    }
     LaunchedEffect(group,underlying,vm.mcxIndices.size,vm.mcxEnergy.size) {
         selectionNote=null
         if(underlying.isNotBlank() && group in listOf("INDEX","MCX")) {
@@ -118,7 +139,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
         choosing=true;selectionNote=null
         try {
             val a=vm.analysis
-            val c=if(supported && a?.symbol==root && a.dataFresh==true && analysisRecent(a.timestamp,Instant.now()) && a.timeframe==vm.selectedTimeframe && entryWindowMessage(marketGroup=="MCX",Instant.now())==null && a.tradeDecision.setupAllowed && vm.premiumTradePlan.status=="WAITING_ENTRY" && vm.premiumTradePlan.contract?.token==a.suggestedContract?.token) a.suggestedContract else null
+            val c=if(vm.selectedSymbol==root && validFlowEntry(a,vm.premiumTradePlan,root,vm.selectedTimeframe,supported,marketGroup=="MCX",Instant.now())) a?.suggestedContract else null
             val result=if(c?.token!=null && c.exchange!=null && c.tradingSymbol!=null)
                 FlowInstrument(c.token,c.exchange,c.tradingSymbol,"OPTION",root,a?.optionChain?.expiry ?: "",c.strike)
             else api.flowCatalog(sessionId,marketGroup,"",underlying=root,kind=if(marketGroup=="STOCKS") "CASH" else "FUT").items.firstOrNull()
@@ -175,10 +196,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                 val windowMessage=entryWindowMessage(group=="MCX",now)
                 val recent=matching && analysisRecent(a?.timestamp,now)
                 if(supported) Text("Analysis: ${timeframeLabel(vm.selectedTimeframe)} • ${if(recent) "Updated "+flowTime(a?.timestamp)+" IST" else "Waiting for current analysis"}",style=MaterialTheme.typography.bodySmall)
-                val confirmed=matching && recent && windowMessage==null && a?.dataFresh==true && a.tradeDecision.setupAllowed &&
-                    plan.signal in listOf("CE","PE") && plan.signal==a.tradeDecision.direction &&
-                    plan.contract?.token!=null && plan.contract.token==a.suggestedContract?.token &&
-                    plan.status=="WAITING_ENTRY" && plan.entry?.let { it.isFinite() && it>0 }==true && plan.stopLoss?.let { it.isFinite() && it>0 && it<plan.entry!! }==true && plan.target1?.let { it.isFinite() && it>plan.entry!! }==true
+                val confirmed=matching && validFlowEntry(a,plan,underlying,vm.selectedTimeframe,supported,group=="MCX",now)
                 if(confirmed) {
                     Text(if(plan.signal=="CE") "UPWARD • Buy Call (CE)" else "DOWNWARD • Buy Put (PE)",style=MaterialTheme.typography.titleLarge)
                     Text("Selected option: ${plan.contract?.tradingSymbol}")
@@ -275,11 +293,12 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
             item { OutlinedButton(onClick={restart++}){Text("Restart feed")} }
             error?.let { message -> item { Text(message,color=MaterialTheme.colorScheme.error) } }
             val data=snapshot
-            item { Text("${when(data?.status){"LIVE"->"Live activity";"WAITING_FOR_FEED"->"Waiting for market updates";"STALE"->"Updates delayed";null->"Connecting";else->data.status.replace('_',' ')}} • Last update ${flowTime(data?.lastTickAt)} IST") }
+            val feedDelayed=error!=null || data?.error!=null || (data?.status=="LIVE" && !analysisRecent(data.lastTickAt,now))
+            item { Text("${if(feedDelayed) "Updates delayed • showing last received snapshot" else when(data?.status){"LIVE"->"Live activity";"WAITING_FOR_FEED"->"Waiting for market updates";"STALE"->"Updates delayed";null->"Connecting";else->data.status.replace('_',' ')}} • Last update ${flowTime(data?.lastTickAt)} IST") }
             data?.error?.let { message -> item { Text(message,color=MaterialTheme.colorScheme.error) } }
             if(data!=null) {
                 item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                    Text("Price ${flowNumber(data.price)} • Spread ${flowNumber(data.spread)}")
+                    Text("${if(feedDelayed) "Last received price" else "Price"} ${flowNumber(data.price)} • Spread ${flowNumber(data.spread)}")
                     Text("Open interest ${flowNumber(data.oi)}")
                     Text("Order book imbalance ${data.depthImbalance?.let { flowNumber(it*100)+" percent" } ?: "Unavailable"}")
                     val classified=data.bars.sumOf { it.buy.coerceAtLeast(0.0)+it.sell.coerceAtLeast(0.0) }
