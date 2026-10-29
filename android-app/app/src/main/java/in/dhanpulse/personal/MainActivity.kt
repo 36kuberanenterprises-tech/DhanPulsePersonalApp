@@ -267,7 +267,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
                 "MCX" -> McxSection(vm) { section = "TRADE" }
                 "STOCKS" -> StocksSection(vm)
                 "STOCK_OPTIONS" -> StockOptionsSection(vm)
-                "FLOW" -> vm.sessionId?.let { FlowScreen(it) }
+                "FLOW" -> vm.sessionId?.let { FlowScreen(it, vm, onOpenPlan={section="TRADE"}, onOpenScanner={vm.showStocks(true);section="STOCKS"}) }
                 "TRADE" -> TradeSection(vm)
                 "POSITIONS" -> PositionsSection(vm)
                 "RESEARCH" -> ResearchSection(vm)
