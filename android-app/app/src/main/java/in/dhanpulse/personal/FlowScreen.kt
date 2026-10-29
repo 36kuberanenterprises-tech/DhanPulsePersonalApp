@@ -58,6 +58,21 @@ private fun friendlyContract(i:FlowInstrument):String {
     return friendlyName(i.underlying.ifBlank { i.symbol })+" • "+type+(i.strike?.let { " • "+flowNumber(it) } ?: "")
 }
 
+private fun entryWindowMessage(mcx:Boolean, now:Instant):String? {
+    val time=now.atZone(ZoneId.of("Asia/Kolkata")).toLocalTime()
+    val start=java.time.LocalTime.of(9,30)
+    val end=if(mcx) java.time.LocalTime.of(23,15) else java.time.LocalTime.of(15,30)
+    return when {
+        time.isBefore(start) -> "New entries start at 09:30 IST, subject to fresh data and strategy confirmation."
+        !time.isBefore(end) -> "New entries paused after ${if(mcx) "23:15" else "15:30"} IST by the app's entry rule. Live quotes may continue. Review existing positions separately."
+        else -> null
+    }
+}
+private fun analysisRecent(timestamp:String?, now:Instant):Boolean=runCatching {
+    val age=java.time.Duration.between(Instant.parse(timestamp),now).seconds
+    age in 0..45
+}.getOrDefault(false)
+
 @Composable
 fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onOpenScanner:()->Unit) {
     val api=remember { ApiFactory.create("https://dhanpulse-personal-api.onrender.com") }
@@ -85,6 +100,8 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
     var choosing by remember { mutableStateOf(false) }
     var chooseRequest by remember { mutableIntStateOf(0) }
     var selectionNote by remember { mutableStateOf<String?>(null) }
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(owner) { owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while(isActive) { now=Instant.now();delay(1000) } } }
     val supported=if(group=="INDEX") underlying in setOf("NIFTY","BANKNIFTY","SENSEX") else group=="MCX" &&
         (vm.mcxIndices.any { it.symbol==underlying } || vm.mcxEnergy.any { it.symbol==underlying })
     LaunchedEffect(group,underlying,vm.mcxIndices.size,vm.mcxEnergy.size) {
@@ -100,7 +117,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
         choosing=true;selectionNote=null
         try {
             val a=vm.analysis
-            val c=if(supported && a?.symbol==root && a.dataFresh==true && a.tradeDecision.setupAllowed) a.suggestedContract else null
+            val c=if(supported && a?.symbol==root && a.dataFresh==true && analysisRecent(a.timestamp,Instant.now()) && a.timeframe==vm.selectedTimeframe && entryWindowMessage(marketGroup=="MCX",Instant.now())==null && a.tradeDecision.setupAllowed && vm.premiumTradePlan.status=="WAITING_ENTRY" && vm.premiumTradePlan.contract?.token==a.suggestedContract?.token) a.suggestedContract else null
             val result=if(c?.token!=null && c.exchange!=null && c.tradingSymbol!=null)
                 FlowInstrument(c.token,c.exchange,c.tradingSymbol,"OPTION",root,a?.optionChain?.expiry ?: "",c.strike)
             else api.flowCatalog(sessionId,marketGroup,"",underlying=root,kind=if(marketGroup=="STOCKS") "CASH" else "FUT").items.firstOrNull()
@@ -138,7 +155,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
     }
     LazyColumn(Modifier.fillMaxSize(),state=listState,contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         item { Text("Market activity and trade guide",style=MaterialTheme.typography.headlineSmall) }
-        item { Text("1. Choose a market. 2. Tap a familiar name. 3. Use guided selection. The trade plan uses the existing strategy checks; order depth alone does not generate a call.",style=MaterialTheme.typography.bodySmall) }
+        if(showContracts) item { Text("1. Choose a market. 2. Tap a familiar name. 3. Use guided selection. The trade plan uses the existing strategy checks; order depth alone does not generate a call.",style=MaterialTheme.typography.bodySmall) }
         item { Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             listOf("INDEX" to "Indices","STOCKS" to "Shares","STOCK_OPTIONS" to "Stock options","MCX" to "MCX").forEach { (key,label) ->
                 FilterChip(selected=group==key,onClick={group=key;selected=null;snapshot=null;showContracts=true;
@@ -153,23 +170,28 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                 Text("Trade guide • ${friendlyName(underlying)}",style=MaterialTheme.typography.titleMedium)
                 val a=vm.analysis
                 val plan=vm.premiumTradePlan
-                val matching=supported && a?.symbol==underlying && vm.selectedSymbol==underlying
-                val confirmed=matching && a?.dataFresh==true && a.tradeDecision.setupAllowed &&
+                val matching=supported && a?.symbol==underlying && vm.selectedSymbol==underlying && a.timeframe==vm.selectedTimeframe
+                val windowMessage=entryWindowMessage(group=="MCX",now)
+                val recent=matching && analysisRecent(a?.timestamp,now)
+                if(supported) Text("Analysis: ${vm.selectedTimeframe} • ${if(recent) "Updated "+flowTime(a?.timestamp)+" IST" else "Waiting for current analysis"}",style=MaterialTheme.typography.bodySmall)
+                val confirmed=matching && recent && windowMessage==null && a?.dataFresh==true && a.tradeDecision.setupAllowed &&
                     plan.signal in listOf("CE","PE") && plan.signal==a.tradeDecision.direction &&
                     plan.contract?.token!=null && plan.contract.token==a.suggestedContract?.token &&
-                    plan.status=="WAITING_ENTRY" && plan.entry!=null && plan.stopLoss!=null
+                    plan.status=="WAITING_ENTRY" && plan.entry?.let { it.isFinite() && it>0 }==true && plan.stopLoss?.let { it.isFinite() && it>0 && it<plan.entry!! }==true && plan.target1?.let { it.isFinite() && it>plan.entry!! }==true
                 if(confirmed) {
                     Text(if(plan.signal=="CE") "UPWARD • Buy Call (CE)" else "DOWNWARD • Buy Put (PE)",style=MaterialTheme.typography.titleLarge)
                     Text("Selected option: ${plan.contract?.tradingSymbol}")
                     Text("Option premium entry: ${flowNumber(plan.entry)}")
                     Text("Stop loss: ${flowNumber(plan.stopLoss)}")
-                    Text("Target 1: ${flowNumber(plan.target1)}   Target 2: ${flowNumber(plan.target2)}   Target 3: ${flowNumber(plan.target3)}")
+                    Text("Target 1: ${flowNumber(plan.target1)}")
+                    Text("Target 2: ${flowNumber(plan.target2)} • Target 3: ${flowNumber(plan.target3)}")
+                    Text("These levels are for the option premium, not the futures price.",style=MaterialTheme.typography.bodySmall)
                     Text("Existing strategy selection for this instrument. Review the current price and entry conditions before acting.",style=MaterialTheme.typography.bodySmall)
                 } else {
-                    Text("No confirmed trade",style=MaterialTheme.typography.titleMedium)
-                    Text(if(group in listOf("STOCKS","STOCK_OPTIONS")) "Use the stock scanner to find a qualified stock and its trade levels." else if(!supported) "Activity monitoring is available. This instrument has no connected trade plan here." else if(!matching) "Preparing analysis for this instrument." else plan.decisionNote ?: a?.tradeDecision?.message?.ifBlank { "Waiting for fresh data and strategy confirmation." } ?: "Waiting for fresh data and strategy confirmation.")
+                    Text(if(windowMessage!=null && supported) "New entries paused" else "WAIT • No new confirmed entry",style=MaterialTheme.typography.titleMedium)
+                    Text(if(group in listOf("STOCKS","STOCK_OPTIONS")) "Use the stock scanner to find a qualified stock and its trade levels." else if(!supported) "Activity monitoring is available. This instrument has no connected trade plan here." else if(windowMessage!=null) windowMessage else if(!matching) "Preparing analysis for this instrument and timeframe." else if(!recent || a?.dataFresh!=true) "Analysis is delayed or incomplete. Live depth alone cannot confirm an entry." else if(plan.status in listOf("ENTERED","T1_HIT","T2_HIT")) "An earlier call crossed its entry in sampled quotes. This is not a new entry or proof of a broker fill. Open the plan to manage or review it." else plan.decisionNote ?: a?.tradeDecision?.message?.ifBlank { "Waiting for fresh data and strategy confirmation." } ?: "Waiting for fresh data and strategy confirmation.")
                 }
-                if(supported) OutlinedButton(onClick=onOpenPlan,enabled=matching,modifier=Modifier.fillMaxWidth()) {Text("Open full entry, stop loss and targets")}
+                if(supported) OutlinedButton(onClick=onOpenPlan,enabled=matching,modifier=Modifier.fillMaxWidth()) {Text(if(confirmed) "View entry, stop loss and targets" else "View strategy checks and existing plan")}
                 if(group in listOf("STOCKS","STOCK_OPTIONS")) OutlinedButton(onClick=onOpenScanner,modifier=Modifier.fillMaxWidth()){Text("Find a stock with the scanner")}
                 if(showContracts) Button(onClick={chooseRequest++},enabled=!choosing,modifier=Modifier.fillMaxWidth()) {Text(if(choosing) "Selecting..." else "Choose a contract for me")}
                 selectionNote?.let { Text(it,style=MaterialTheme.typography.bodySmall) }
@@ -235,11 +257,20 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
             } }
         }
         if(selected!=null && !showContracts) {
-            item { Text(friendlyContract(selected!!),style=MaterialTheme.typography.titleMedium) }
+            item { Text("Monitoring: "+friendlyContract(selected!!),style=MaterialTheme.typography.titleMedium)
+                Text(selected!!.symbol+if(selected!!.expiry.isNotBlank()) " • Expiry "+friendlyExpiry(selected!!.expiry) else "",style=MaterialTheme.typography.bodySmall)
+                if(selected!!.kind.startsWith("FUT")) Text("Futures activity below; any option trade uses its own premium levels.",style=MaterialTheme.typography.bodySmall)
+            }
+            if(supported) item { Text("Trade analysis timeframe",style=MaterialTheme.typography.titleSmall)
+                Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    listOf("1m","3m","5m","10m","15m").forEach { interval -> FilterChip(selected=vm.selectedTimeframe==interval,onClick={vm.selectTimeframe(interval)},label={Text(interval)}) }
+                }
+            }
+            item { Text("Footprint grouping • independent of trade analysis",style=MaterialTheme.typography.titleSmall) }
             item { Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 listOf(1,3,5,10,15).forEach { m -> FilterChip(selected=minutes==m,onClick={minutes=m},label={Text("${m}m")}) }
             } }
-            item { Text("Changing contract or timeframe starts a new observation window. Earlier trades are not reconstructed.") }
+            item { Text("Changing contract or footprint grouping restarts observation. Only volume received since connection is shown.") }
             item { OutlinedButton(onClick={restart++}){Text("Restart feed")} }
             error?.let { message -> item { Text(message,color=MaterialTheme.colorScheme.error) } }
             val data=snapshot
@@ -250,7 +281,11 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                     Text("Price ${flowNumber(data.price)} • Spread ${flowNumber(data.spread)}")
                     Text("Open interest ${flowNumber(data.oi)}")
                     Text("Order book imbalance ${data.depthImbalance?.let { flowNumber(it*100)+" percent" } ?: "Unavailable"}")
-                    Text("Estimated CVD since connection: ${flowNumber(data.estimatedCvd)}")
+                    val classified=data.bars.sumOf { it.buy.coerceAtLeast(0.0)+it.sell.coerceAtLeast(0.0) }
+                    val total=classified+data.bars.sumOf { it.unknown.coerceAtLeast(0.0)+it.unallocated.coerceAtLeast(0.0) }
+                    Text("Volume with estimated buy/sell side: ${if(total>0) flowNumber(classified/total*100)+"%" else "Not available"}")
+                    Text("Estimated buy minus sell volume: ${flowNumber(data.estimatedCvd)}")
+                    Text(if(total==0.0) "Collecting volume. No order flow conclusion yet." else "Coverage is the classified share of observed volume, not trade confidence. Unclassified volume can change the interpretation.",style=MaterialTheme.typography.bodySmall)
                     Text("Started ${flowTime(data.startedAt)} IST. Resting orders are not executed trades.")
                 } } }
                 item { Text("Five level market depth",style=MaterialTheme.typography.titleMedium) }
@@ -267,7 +302,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                 if(data.bars.isEmpty()) item { Text("Waiting for fresh volume changes. Market closure, missing feed or no trades can leave this view empty.") }
                 items(data.bars.reversed(),key={it.time}) { bar ->
                     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                        Text("${flowTime(bar.time)} IST • Estimated delta ${flowNumber(bar.delta)}",style=MaterialTheme.typography.titleSmall)
+                        Text("${flowTime(bar.time)} IST • Observed portion only • Estimated delta ${flowNumber(bar.delta)}",style=MaterialTheme.typography.titleSmall)
                         Text("Buy ${flowNumber(bar.buy)} • Sell ${flowNumber(bar.sell)} • Unknown side ${flowNumber(bar.unknown)}")
                         Text("Unallocated volume ${flowNumber(bar.unallocated)}. This volume has no reliable execution price or side.")
                         Row(Modifier.fillMaxWidth()) { listOf("Price","Sell est.","Buy est.","Unknown").forEach { Text(it,Modifier.weight(1f)) } }
