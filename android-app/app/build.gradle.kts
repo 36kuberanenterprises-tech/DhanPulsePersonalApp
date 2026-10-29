@@ -11,10 +11,10 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "in.dhanpulse.personal"
+        applicationId = "in.dhanpulse.personal.stable"
         minSdk = 26
         targetSdk = 35
-        versionCode = 55
+        versionCode = 56
         versionName = appVersion
     }
 
@@ -24,7 +24,7 @@ android {
             manifestPlaceholders["appLabel"] = "DhanPulse $appVersion Flow Preview"
         }
         getByName("release") {
-            manifestPlaceholders["appLabel"] = "DhanPulse $appVersion"
+            manifestPlaceholders["appLabel"] = "DhanPulse Stable"
         }
     }
 
