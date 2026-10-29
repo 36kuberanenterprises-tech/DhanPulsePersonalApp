@@ -10,6 +10,8 @@ export function createSensexCoordinator() {
       const contract = contracts[decision.direction];
       let plan = null, callId = null;
       if (!fresh) Object.assign(decision,{direction:'WAIT',setupAllowed:false,status:'DATA_STALE',message:'Fresh broker candles and quotes are required.'});
+      if (decision.setupAllowed && !contract) Object.assign(decision,{direction:'WAIT',setupAllowed:false,
+        status:'NO_CONTRACT',message:'No eligible option contract is available for this direction.'});
       if (decision.setupAllowed && contract) {
         const direction = decision.direction, sign = direction === 'CE' ? 1 : -1;
         const id = [interval,candleTime,direction,contract.token].join('|');
@@ -41,7 +43,7 @@ export function createSensexCoordinator() {
         if (missed) Object.assign(decision,{setupAllowed:false,status:'ENTRY_MISSED',message:'Entry missed: price extension, premium or remaining reward relative to risk is outside the entry limits. Wait for a fresh candle setup.'});
       }
       if (decision.setupAllowed) decision.message = `${system.name} qualified independently. Use the fixed entry zone; missed entries are not chased.`;
-      return { id:system.id, name:system.name, decision, contract:contract || null, plan, callId };
+      return { id:system.id, name:system.name, decision, contract:fresh ? contract || null : null, plan, callId };
     });
     const ready=results.filter(s=>s.decision.setupAllowed);
     const opposite=new Set(ready.map(s=>s.decision.direction)).size>1;

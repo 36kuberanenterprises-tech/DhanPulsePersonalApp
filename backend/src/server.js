@@ -1,3 +1,4 @@
+import { staleAnalysis } from './stale-analysis.js';
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -372,25 +373,7 @@ app.get('/api/analysis/:symbol', requireSession, async (req, res) => {
     console.error('Analysis refresh failed:', e?.message || e);
     const cached = analysisCache.get(key);
     if (cached && Date.now() - cached.at <= 2 * 60 * 1000) {
-      const value = {
-        ...cached.value,
-        dataFresh: false,
-        signal: 'WAIT',
-        suggestedContract: null,
-        levels: null,
-        tradeDecision: {
-          ...cached.value.tradeDecision,
-          direction: 'WAIT',
-          setupAllowed: false,
-          autoEntryAllowed: false,
-          status: 'DATA_STALE',
-          message: 'Broker refresh failed. Calls are paused until fresh quotes arrive.'
-        },
-        notes: [
-          ...(cached.value.notes || []),
-          'Latest broker refresh was temporarily unavailable. Showing the most recent successful analysis.'
-        ]
-      };
+      const value = staleAnalysis(cached.value);
       return res.json(value);
     }
     res.status(503).json({ error: e.message || 'Live analysis temporarily unavailable. Please retry.' });
