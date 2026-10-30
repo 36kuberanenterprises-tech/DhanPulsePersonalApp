@@ -440,39 +440,6 @@ private fun TradingContextBar(vm: DhanPulseViewModel) {
 }
 
 @Composable
-private fun MarketMonitorCard(vm: DhanPulseViewModel) {
-    var expanded by remember { mutableStateOf(true) }
-    var now by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) { while (true) { delay(1_000); now = System.currentTimeMillis() } }
-    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("All markets monitor", color = Ink, fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable { expanded = !expanded })
-            Text("Markets refresh in turn while the app is active. Broker limits and market hours apply.", color = Muted, fontSize = 10.sp)
-            if (expanded) vm.monitoredSymbols.forEach { symbol ->
-                val snapshot = vm.marketSnapshots[symbol]?.takeIf { it.timeframe == vm.selectedTimeframe }
-                val age = snapshot?.timestamp?.let { runCatching { (now - java.time.Instant.parse(it).toEpochMilli()) / 1000 }.getOrNull() }
-                val status = when {
-                    vm.marketRefreshErrors[symbol] != null -> "Refresh failed"
-                    snapshot == null -> "Waiting for refresh"
-                    age == null || age > 60 -> "Older snapshot"
-                    snapshot.tradeDecision.status == "MARKET_CLOSED" -> "Closed"
-                    snapshot.dataFresh == false -> "Data unavailable"
-                    else -> "Updated ${age.coerceAtLeast(0)}s ago"
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(symbol, color = Ink, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(snapshot?.market?.ltp?.let { n(it) } ?: "—", color = Ink, fontSize = 12.sp)
-                        Text(status, color = Muted, fontSize = 9.sp)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun MarketSection(vm: DhanPulseViewModel) {
     val a = vm.analysis
     LazyColumn(
@@ -481,7 +448,6 @@ private fun MarketSection(vm: DhanPulseViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { TradingContextBar(vm) }
-        item { MarketMonitorCard(vm) }
         vm.error?.let { item { ErrorStrip(it) } }
         vm.refreshWarning?.let { item { InfoStrip(when (a?.tradeDecision?.status) {
             "MARKET_CLOSED" -> "Market closed"
@@ -508,7 +474,6 @@ private fun McxSection(vm: DhanPulseViewModel, onTrade: () -> Unit) {
         contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { MarketMonitorCard(vm) }
         item { SectionTitle("MCX indices and energy", "Select an index or crude oil and natural gas options from Angel One") }
         if (vm.mcxEnergy.isNotEmpty()) item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
