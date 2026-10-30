@@ -123,7 +123,8 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
     LaunchedEffect(owner) { owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while(isActive) { now=Instant.now();delay(1000) } } }
     val supported=if(group=="INDEX") underlying in setOf("NIFTY","BANKNIFTY","SENSEX") else group=="MCX" &&
         (vm.mcxIndices.any { it.symbol==underlying } || vm.mcxEnergy.any { it.symbol==underlying })
-    LaunchedEffect(group,underlying) {
+    LaunchedEffect(group,underlying,sessionId) {
+        chooseRequest=0;choosing=false;selectionNote=null
         selected=null;snapshot=null;error=null;showContracts=true
     }
     LaunchedEffect(group,underlying,vm.mcxIndices.size,vm.mcxEnergy.size) {
@@ -135,7 +136,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
     }
     LaunchedEffect(chooseRequest) {
         if(chooseRequest==0) return@LaunchedEffect
-        val root=underlying;val marketGroup=group
+        val root=underlying;val marketGroup=group;val request=chooseRequest
         choosing=true;selectionNote=null
         try {
             val a=vm.analysis
@@ -143,12 +144,12 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
             val result=if(c?.token!=null && c.exchange!=null && c.tradingSymbol!=null)
                 FlowInstrument(c.token,c.exchange,c.tradingSymbol,"OPTION",root,a?.optionChain?.expiry ?: "",c.strike)
             else api.flowCatalog(sessionId,marketGroup,"",underlying=root,kind=if(marketGroup=="STOCKS") "CASH" else "FUT").items.firstOrNull()
-            if(root==underlying && marketGroup==group) {
+            if(request==chooseRequest && root==underlying && marketGroup==group) {
                 if(result!=null) {selected=result;showContracts=false;keyboard?.hide();selectionNote=if(c!=null) "Showing the option selected by the current analysis." else "Showing the nearest available futures or share contract for observation. This is not a trade call."}
                 else selectionNote="No automatic contract available. Choose a contract manually or use the stock scanner."
             }
         } catch(e:CancellationException){throw e}
-        catch(e:Exception){selectionNote="Unable to select a contract now. Please try again."}
+        catch(e:Exception){if(request==chooseRequest && root==underlying && marketGroup==group) selectionNote="Unable to select a contract now. Please try again."}
         finally {choosing=false}
     }
     val listState=rememberLazyListState()
@@ -262,7 +263,7 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                 if(!searching && catalogError==null) item { Text(if(choices.isEmpty()) "No matching contracts. Clear the search or change the filters." else "${catalogue.total} contracts. Showing ${page*40+1} to ${page*40+choices.size}. Tap to monitor.") }
             }
             items(choices,key={it.exchange+it.token}) { instrument ->
-                OutlinedButton(onClick={selected=instrument;showContracts=false;keyboard?.hide();recent=(listOf(underlying)+recent).distinct().take(6)},modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)) {
+                OutlinedButton(onClick={chooseRequest=0;choosing=false;selectionNote=null;selected=instrument;showContracts=false;keyboard?.hide();recent=(listOf(underlying)+recent).distinct().take(6)},modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)) {
                     Column(Modifier.fillMaxWidth()) {
                         Text(friendlyContract(instrument),style=MaterialTheme.typography.titleSmall)
                         Text("${instrument.exchange} • ${instrument.kind}"+if(instrument.expiry.isNotBlank()) " • ${friendlyExpiry(instrument.expiry)}" else "",style=MaterialTheme.typography.bodySmall)
