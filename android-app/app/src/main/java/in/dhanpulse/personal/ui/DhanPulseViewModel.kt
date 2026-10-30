@@ -249,7 +249,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             markUserActive()
             startAutoRefresh()
             startLivePriceStream()
-            if (selectedMarket == "MCX") fetchMcxCatalog()
+            fetchMcxCatalog()
             if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) fetchStockOptions() else fetchAnalysis()
             fetchAccount()
         }
@@ -301,13 +301,22 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun fetchAnalysis() {
+    var marketSnapshots by mutableStateOf<Map<String, AnalysisResponse>>(emptyMap())
+        private set
+    var marketRefreshErrors by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+    val monitoredSymbols: List<String>
+        get() = (listOf("NIFTY", "BANKNIFTY", "SENSEX") + mcxEnergy.map { it.symbol } + mcxIndices.map { it.symbol }).distinct()
+
+    fun fetchAnalysis() = refreshMarket(selectedSymbol)
+
+    private fun refreshMarket(symbol: String) {
         val s = sessionId ?: return
         if (analysisRefreshInFlight) return
-        val requestedSymbol = selectedSymbol
+        val requestedSymbol = symbol
         val requestedTimeframe = selectedTimeframe
         analysisRefreshInFlight = true
-        loading = analysis == null
+        loading = requestedSymbol == selectedSymbol && analysis == null
         viewModelScope.launch {
             try {
                 val trackedToken = signalHistory.firstOrNull {
@@ -315,11 +324,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         it.status !in setOf("T3_HIT", "SL_HIT", "UNRESOLVED", "CANCELLED")
                 }?.token
                 val result = client().analysis(s, requestedSymbol, requestedTimeframe, trackedToken)
-                if (s != sessionId || requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
-                    analysisRefreshInFlight = false
-                    fetchAnalysis()
-                    return@launch
-                }
+                if (s != sessionId || requestedTimeframe != selectedTimeframe) return@launch
+                marketSnapshots = marketSnapshots + (requestedSymbol to result)
+                marketRefreshErrors = marketRefreshErrors - requestedSymbol
+                if (requestedSymbol != selectedSymbol) return@launch
                 analysis = result
                 error = null
                 refreshWarning = when {
@@ -338,11 +346,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                if (s != sessionId || requestedSymbol != selectedSymbol || requestedTimeframe != selectedTimeframe) {
-                    analysisRefreshInFlight = false
-                    if (sessionId != null) fetchAnalysis()
-                    return@launch
-                }
+                if (s != sessionId || requestedTimeframe != selectedTimeframe) return@launch
+                marketRefreshErrors = marketRefreshErrors + (requestedSymbol to friendlyError(e, "Refresh unavailable"))
+                if (requestedSymbol != selectedSymbol) return@launch
                 if (e is HttpException && e.code() == 401) {
                     logout("Broker session expired. Please login again.")
                 } else if (analysis != null) {
@@ -378,9 +384,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         error = msg
                     }
                 }
+            } finally {
+                loading = false
+                analysisRefreshInFlight = false
             }
-            loading = false
-            analysisRefreshInFlight = false
         }
     }
 
@@ -1398,9 +1405,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startAutoRefresh() {
+        if (mcxIndices.isEmpty() && mcxEnergy.isEmpty()) fetchMcxCatalog()
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             var tick = 0
+            var marketCursor = 0
             while (isActive && sessionId != null) {
                 val indiaTime = Instant.now().atZone(indiaZone)
                 val day = indiaTime.dayOfWeek.value
@@ -1409,11 +1418,24 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
                 if (!stocksVisible && !stockOptionsVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
                 if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
-                delay(if (stocksVisible || stockOptionsVisible) { if (marketOpen) 15_000 else 60_000 } else { if (marketOpen) { if (selectedSymbol == "SENSEX") 1_000 else 3_000 } else 60_000 })
-                if (stocksVisible) fetchStockScanner() else if (stockOptionsVisible) {
-                    fetchStockOptions()
-                    fetchStockOpportunity()
-                } else fetchAnalysis()
+                val anyMarketOpen = day in 1..5 && !time.isBefore(LocalTime.of(9, 0)) && time.isBefore(LocalTime.of(23, 30))
+                delay(if (anyMarketOpen) 3_000 else 60_000)
+                if (tick % 5 == 0) {
+                    if (stocksVisible) fetchStockScanner()
+                    if (stockOptionsVisible) {
+                        fetchStockOptions()
+                        fetchStockOpportunity()
+                    }
+                }
+                if (!analysisRefreshInFlight) {
+                    val activeSymbols = monitoredSymbols.filter { symbol ->
+                        val equity = symbol in listOf("NIFTY", "BANKNIFTY", "SENSEX")
+                        day in 1..5 && !time.isBefore(if (equity) LocalTime.of(9, 15) else LocalTime.of(9, 0)) &&
+                            time.isBefore(if (equity) LocalTime.of(15, 30) else LocalTime.of(23, 30))
+                    }.ifEmpty { listOf(selectedSymbol) }
+                    refreshMarket(activeSymbols[marketCursor % activeSymbols.size])
+                    marketCursor++
+                }
                 tick++
                 if (tick % 5 == 0) fetchAccount()
                 if (tick % 20 == 0) fetchOrderDiagnostics()
@@ -1493,6 +1515,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         pendingSignalKey = null
         pendingSignalCount = 0
         sessionId = null
+        marketSnapshots = emptyMap()
+        marketRefreshErrors = emptyMap()
         profile = null
         analysis = null
         stockScan = null

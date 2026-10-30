@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build61 ]
+    branches: [ update-stable-build62 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -85,7 +85,7 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/release/app-release-unsigned.apk "DhanPulse-v${version}-Build61-unsigned.apk"
+          cp android-app/app/build/outputs/apk/release/app-release-unsigned.apk "DhanPulse-v${version}-Build62-unsigned.apk"
           cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" apksigner.jar
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -95,7 +95,7 @@ jobs:
         with:
           name: DhanPulse-Personal-v${{ env.APK_VERSION }}-Preview-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build61-unsigned.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build62-unsigned.apk
             apksigner.jar
           if-no-files-found: error
           retention-days: 30
