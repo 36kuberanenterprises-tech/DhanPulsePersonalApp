@@ -1688,33 +1688,57 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
 @Composable
 private fun SignalRulesPanel(a: AnalysisResponse) {
     var open by remember(a.symbol, a.timeframe) { mutableStateOf(false) }
+    val groups = buildList<Pair<String, List<SignalRule>>> {
+        if (a.tradeDecision.systems.isNotEmpty()) {
+            a.tradeDecision.systems.forEach { system ->
+                add(system.name to system.decision.strategyVotes.map { SignalRule(it.name, it.vote, it.detail) })
+                if (system.decision.contextChecks.isNotEmpty()) {
+                    add("${system.name}: market checks" to system.decision.contextChecks.map { SignalRule(it.name, it.vote, it.detail) })
+                }
+            }
+        } else {
+            add("Signal conditions" to a.rules)
+            if (a.tradeDecision.contextChecks.isNotEmpty()) {
+                add("Market and execution checks" to a.tradeDecision.contextChecks.map { SignalRule(it.name, it.vote, it.detail) })
+            }
+        }
+    }
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
         Column(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.fillMaxWidth().clickable { open = !open }.padding(14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
+            Row(Modifier.fillMaxWidth().clickable { open = !open }.padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
                     Text("Signal checks", color = Ink, fontWeight = FontWeight.ExtraBold)
-                    Text("${a.rules.size} ${if (a.symbol == "SENSEX" && a.tradeDecision.contextChecks.isNotEmpty()) "strategy families" else "engine conditions"}", color = Muted, fontSize = 10.sp)
+                    Text("${groups.sumOf { it.second.size }} checks across ${groups.size} groups", color = Muted, fontSize = 10.sp)
                     if (!a.tradeDecision.setupAllowed) Text(a.tradeDecision.message, color = Amber, fontSize = 10.sp)
                     a.tradeDecision.cautions.forEach { Text(it, color = Amber, fontSize = 10.sp) }
                 }
                 Text(if (open) "Hide" else "View", color = Blue, fontWeight = FontWeight.Bold)
             }
             if (open) {
-                HorizontalDivider(color = Line)
-                a.rules.forEach { rule ->
-                    val stateColor = when (rule.state.uppercase()) { "BULLISH" -> Green; "BEARISH" -> Red; "NEUTRAL" -> Amber; else -> Muted }
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(4.dp).height(34.dp).clip(RoundedCornerShape(4.dp)).background(stateColor))
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(rule.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            rule.detail?.let { Text(it, color = Muted, fontSize = 9.sp) }
+                if (a.symbol == "SENSEX" && a.tradeDecision.systems.isEmpty()) {
+                    Text("The server has not returned both SENSEX systems. Only received checks are shown.",
+                        color = Amber, fontSize = 11.sp, modifier = Modifier.padding(14.dp))
+                }
+                groups.forEach { (title, rules) ->
+                    HorizontalDivider(color = Line)
+                    Text(title, color = Ink, fontWeight = FontWeight.Bold, modifier = Modifier.padding(14.dp))
+                    if (rules.isEmpty()) Text("Checks unavailable in this response", color = Muted, modifier = Modifier.padding(horizontal = 14.dp))
+                    rules.forEach { rule ->
+                        val stateColor = when (rule.state.uppercase()) {
+                            "BULLISH", "CE", "OK" -> Green
+                            "BEARISH", "PE", "BLOCK" -> Red
+                            else -> Amber
                         }
-                        StatusPill(rule.state.uppercase(), stateColor)
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.width(4.dp).height(34.dp).clip(RoundedCornerShape(4.dp)).background(stateColor))
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(rule.name, color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                rule.detail?.let { Text(it, color = Muted, fontSize = 9.sp) }
+                            }
+                            StatusPill(rule.state.uppercase(), stateColor)
+                        }
                     }
                 }
             }
