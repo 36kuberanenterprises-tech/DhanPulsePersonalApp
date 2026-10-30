@@ -43,6 +43,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
+import `in`.dhanpulse.personal.model.SignalRule
 import `in`.dhanpulse.personal.model.AnalysisResponse
 import `in`.dhanpulse.personal.model.AccountSummary
 import `in`.dhanpulse.personal.model.BacktestSlice
