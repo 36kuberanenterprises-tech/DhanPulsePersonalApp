@@ -236,7 +236,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun checkSessionTimeout(now: Long = System.currentTimeMillis()): Boolean {
         if (sessionId == null) return false
         val last = sessionStore.lastUserActivity
-        if (now >= sessionStore.sessionExpiry || last <= 0 || now < last || now - last >= inactivityLimitMs) {
+        if (now >= sessionStore.sessionExpiry || (!appInForeground && (last <= 0 || now < last || now - last >= inactivityLimitMs))) {
             logout(if (now >= sessionStore.sessionExpiry) "Login again for the new day." else "Logged out after one hour without using the app.")
             return true
         }
@@ -244,8 +244,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onAppForeground() {
-        appInForeground = true
         if (!checkSessionTimeout()) {
+            appInForeground = true
             markUserActive()
             startAutoRefresh()
             startLivePriceStream()
@@ -256,6 +256,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onAppBackground() {
+        if (appInForeground && sessionId != null) {
+            sessionStore.lastUserActivity = System.currentTimeMillis()
+        }
         appInForeground = false
         stopAutoRefresh()
         stopLivePriceStream()
@@ -1433,11 +1436,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         day in 1..5 && !time.isBefore(if (equity) LocalTime.of(9, 15) else LocalTime.of(9, 0)) &&
                             time.isBefore(if (equity) LocalTime.of(15, 30) else LocalTime.of(23, 30))
                     }.ifEmpty { listOf(selectedSymbol) }
-                    refreshMarket(activeSymbols[marketCursor % activeSymbols.size])
-                    marketCursor++
+                    // Keep the visible market responsive; give background markets alternate turns.
+                    val background = activeSymbols.filter { it != selectedSymbol }
+                    val target = if (tick % 2 == 0 || background.isEmpty()) selectedSymbol
+                        else background[marketCursor++ % background.size]
+                    refreshMarket(target)
                 }
                 tick++
-                if (tick % 5 == 0) fetchAccount()
+                if (tick % 20 == 0) fetchAccount()
                 if (tick % 20 == 0) fetchOrderDiagnostics()
             }
         }

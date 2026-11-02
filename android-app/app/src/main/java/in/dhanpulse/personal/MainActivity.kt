@@ -163,7 +163,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("DhanPulse", color = Ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(8.dp))
-                        StatusPill(if (vm.refreshWarning == null) "LIVE" else "DELAYED", if (vm.refreshWarning == null) Green else Amber)
+                        StatusPill("SIGN IN", Muted)
                     }
                     Text("Trading & Investment • v${BuildConfig.VERSION_NAME}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
@@ -311,6 +311,7 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                             vm.stockOptionsVisible -> "QUOTES"
                             vm.stocksVisible && status == "OPENING_RANGE" -> "OPENING RANGE"
                             vm.stocksVisible && status == "NO_NEW_ENTRIES" -> "ENTRIES CLOSED"
+                            vm.stocksVisible && vm.stockScan?.evaluated == 0 -> "DATA NEEDED"
                             vm.stocksVisible -> "SCANNING"
                             else -> "LIVE"
                         }
@@ -1654,7 +1655,7 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, c.copy(alpha = 0.30f))) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
                     Text("Trader Desk", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                     Text(if (a.dataFresh == false) "Last reported market snapshot • new calls paused" else "Signal, execution and risk • live scan every 3 sec", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
@@ -2043,11 +2044,14 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Purple.copy(alpha = 0.32f))) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
                     Text("Manual Trade", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
                     Text("Choose CE or PE and place your own order", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                StatusPill(a.timeframe ?: vm.selectedTimeframe, Blue)
+                StatusPill(when (a.timeframe ?: vm.selectedTimeframe) {
+                    "ONE_MINUTE" -> "1m"; "THREE_MINUTE" -> "3m"; "FIVE_MINUTE" -> "5m"
+                    "TEN_MINUTE" -> "10m"; "FIFTEEN_MINUTE" -> "15m"; else -> "Timeframe"
+                }, Blue)
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

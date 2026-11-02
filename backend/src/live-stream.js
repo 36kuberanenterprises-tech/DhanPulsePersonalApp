@@ -74,6 +74,7 @@ export function openAngelPriceStream(session, instrument, onTick, onDone) {
     if (closed) return;
     closed = true;
     clearInterval(heartbeat);
+    ws.close();
     onDone();
   };
   ws.addEventListener('error', finish);

@@ -23,7 +23,7 @@ data class LivePriceEvent(
 class LivePriceStream(private val backendUrl: String) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
         .build()
     private val gson = Gson()
 
