@@ -32,6 +32,7 @@ export async function getEgressIp() {
   try { return await egressIpInFlight; }
   finally { egressIpInFlight = null; }
 }
+// History uses its own paced queue so a backlog cannot starve quote reads.
 // All index, stock scanner and backtest history calls share one broker limit.
 // Reserve starts centrally so parallel screens cannot burst this endpoint.
 const BROKER_READ_GAP_MS = 1100;
@@ -140,7 +141,7 @@ export async function candleData(session, payload) {
   const client = session.clientCode || session.apiKey;
   const key = JSON.stringify([client, payload.exchange, payload.symboltoken, payload.interval, payload.fromdate, payload.todate]);
   if (historyInFlight.has(key)) return historyInFlight.get(key);
-  const pending = historyBudget.run(client, reserveBrokerRead, async () => {
+  const pending = historyBudget.run(client, async () => {}, async () => {
     const startedAt = Date.now();
     while (recentCandleStarts.length && recentCandleStarts[0] < startedAt - 60_000) recentCandleStarts.shift();
     recentCandleStarts.push(startedAt);
