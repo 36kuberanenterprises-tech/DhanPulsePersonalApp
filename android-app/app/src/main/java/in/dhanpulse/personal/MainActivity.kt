@@ -281,19 +281,19 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
 
 @Composable
 private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
-    Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 16.dp, vertical = 10.dp)) {
+    Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp, vertical = 6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(R.mipmap.ic_launcher),
                     contentDescription = null,
-                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
+                    modifier = Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)),
                     contentScale = ContentScale.Fit
                 )
-                Spacer(Modifier.width(9.dp))
+                Spacer(Modifier.width(7.dp))
                 Column {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("DhanPulse Trader", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
                         val status = if (vm.stockOptionsVisible) null else if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
                         val stockAge = if (vm.stocksVisible) runCatching {
@@ -311,7 +311,8 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                             vm.stockOptionsVisible -> "QUOTES"
                             vm.stocksVisible && status == "OPENING_RANGE" -> "OPENING RANGE"
                             vm.stocksVisible && status == "NO_NEW_ENTRIES" -> "ENTRIES CLOSED"
-                            vm.stocksVisible && vm.stockScan?.evaluated == 0 -> "DATA NEEDED"
+                            vm.stocksVisible && (vm.stockScan?.dataUnavailable ?: 0) > 0 -> "DATA NEEDED"
+                            vm.stocksVisible && (vm.stockScan?.loading ?: 0) > 0 -> "CHECKING"
                             vm.stocksVisible -> "SCANNING"
                             else -> "LIVE"
                         }
@@ -1138,7 +1139,8 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         if (vm.stockScanLoading) Text("Updating quotes and stock checks...", color = Amber, style = MaterialTheme.typography.bodySmall)
                         Text("${scan.marketStatus.replace('_', ' ')} • ${stockTime(scan.timestamp)}", color = if (scan.marketStatus == "SCANNING") Green else Amber, fontWeight = FontWeight.Bold)
-                        Text("${scan.scanned} stock quotes screened • ${scan.evaluated} detailed checks • Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"}", color = Ink)
+                        Text("${scan.scanned} quotes screened • ${scan.evaluated} analysed • ${scan.dataUnavailable} need data • ${scan.loading} loading", color = Ink)
+                        Text("Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"} • Live quotes are not confirmed trading signals", color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
                         if (scan.strongestSector != null && scan.weakestSector != null) {
@@ -1318,7 +1320,7 @@ private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
         Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(stock.symbol, color = Ink, fontWeight = FontWeight.ExtraBold)
-                Text(if (ready) stock.side else if (stock.decisionState == "DATA_UNAVAILABLE") "DATA NEEDED" else "WAIT", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
+                Text(if (ready) stock.side else if (stock.decisionState == "DATA_UNAVAILABLE") "DATA NEEDED" else "NO TRADE", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
             }
             Text("${stock.sector} • ${stock.setup?.replace('_', ' ') ?: "No setup"} • LTP ${stockRs(stock.price)}", color = Muted, style = MaterialTheme.typography.bodySmall)
             Text(stock.reason, color = if (ready) Green else Muted, style = MaterialTheme.typography.bodySmall)
@@ -1331,14 +1333,19 @@ private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
                 Text("Completed candle: ${stock.candleTime?.let { stockTime(it) } ?: "Unavailable"}", color = Muted)
                 Text("VWAP ${stockRs(stock.vwap)} • 15 minute trend ${stock.trend ?: "Unavailable"}", color = Muted)
                 Text(if (ready) "Ready" else if (stock.decisionState == "DATA_UNAVAILABLE") "Data unavailable" else "Waiting for setup", color = Amber)
-                stock.selectionScore?.let { Text("Shortlist score: ${String.format("%.1f", it)} / 100. This is a ranking score, not a win probability.", color = Muted) }
+                if (stock.volumeRatio != null && stock.decisionState != "DATA_UNAVAILABLE" &&
+                    stock.selectionNotes.any { it.startsWith("Ranked by turnover, movement and same time relative volume.") }) {
+                    stock.selectionScore?.let { Text("Shortlist score: ${String.format("%.1f", it)} / 100. Ranking only, not a win probability.", color = Muted) }
+                } else {
+                    Text("Full ranking pending verified historical volume. Do not treat the shortlist as a trading signal.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
                 stock.selectionNotes.forEach { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
                 stock.diagnostics.forEach { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
                 stock.families.forEach { Text("${it.name}: ${it.side}", color = Muted, style = MaterialTheme.typography.bodySmall) }
                 if (!ready) {
                     Text("Entry, stop loss and targets unavailable until a setup is confirmed.", color = Amber)
                     Text("Blocking check: ${stock.reason}", color = Amber)
-                    Text("Remaining checks may not have run after this rejection. Tap Refresh to evaluate again.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Remaining checks may not have run. Recheck after the broker cooldown or when historical data becomes available.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (ready && plan != null) {
