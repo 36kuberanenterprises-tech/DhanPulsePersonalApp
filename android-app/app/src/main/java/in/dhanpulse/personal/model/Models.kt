@@ -75,6 +75,7 @@ data class StockQuote(val token: String = "", val price: Double = 0.0, val quote
 data class StockScanResponse(
     val marketStatus: String = "DATA_STALE", val timestamp: String = "",
     val universeSource: String = "", val scanned: Int = 0, val evaluated: Int = 0,
+    val dataUnavailable: Int = 0, val loading: Int = 0,
     val niftyChangePct: Double? = null,
     val strongestSector: StockSector? = null, val weakestSector: StockSector? = null,
     val bestBuy: StockCandidate? = null, val bestSell: StockCandidate? = null,
