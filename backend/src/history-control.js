@@ -1,6 +1,7 @@
 // One shared history budget per client code, independent of app login/session.
 // This controls this backend only; another application's traffic is not observable.
-export const HISTORY_LIMITS = { gap: 1100, minute: 150, hour: 5000 };
+// Keep historical requests below the shared broker ceiling to reduce rate denials.
+export const HISTORY_LIMITS = { gap: 1600, minute: 35, hour: 1800 };
 export function isRateError(error) {
   return error?.status === 429 || error?.rateLimited === true ||
     /exceeding access rate|rate limit|too many requests|AB1021|\b429\b/i.test(error?.message || '');
