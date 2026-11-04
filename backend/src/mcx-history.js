@@ -1,6 +1,7 @@
 import { candleData, parseCandles } from './angel.js';
 
 const MINUTES = { ONE_MINUTE: 1, THREE_MINUTE: 3, FIVE_MINUTE: 5, TEN_MINUTE: 10, FIFTEEN_MINUTE: 15 };
+const INITIAL_LOOKBACK_DAYS = 10; // Include earlier sessions after holidays.
 const IST = 330 * 60_000;
 const format = ms => new Date(ms + IST).toISOString().slice(0, 16).replace('T', ' ');
 const valid = c => Number.isFinite(Date.parse(c.timestamp)) &&
@@ -51,7 +52,7 @@ export function createMcxHistoryLoader(fetchHistory = candleData) {
       const payload = { exchange: 'MCX', symboltoken: String(token), interval,
         fromdate: format(previous?.rows.length >= 35
           ? Math.max(now.getTime() - 4*86_400_000, Date.parse(previous.rows.at(-1).timestamp) - duration)
-          : now.getTime() - 4*86_400_000), todate: format(now.getTime()) };
+          : now.getTime() - (interval === 'ONE_MINUTE' ? 4 : INITIAL_LOOKBACK_DAYS) * 86_400_000), todate: format(now.getTime()) };
       const raw = await fetchHistory(session, payload);
       let rows = parseCandles(raw).filter(valid);
       // A successful but empty/short selected-interval result may be recovered
@@ -73,12 +74,14 @@ export function createMcxHistoryLoader(fetchHistory = candleData) {
         time + duration + 20_000 <= now.getTime()).sort(([a],[b])=>a-b).map(([,c])=>c).slice(-2400);
       console.info('MCX_HISTORY', JSON.stringify({ token: String(token), interval, bars: completed.length,
         lastCandleTime: completed.at(-1)?.timestamp || null }));
-      if (completed.length < 35) throw new Error(`MCX broker history returned ${completed.length} completed candles for token ${token}; 35 are required. No indicators or calls can be calculated yet.`);
+      if (completed.length < 35) throw new Error(`MCX broker history returned ${completed.length} completed candles for token ${token}; 35 are required. Historical sessions may be incomplete. Price quotes alone cannot confirm a trade.`);
       cache.set(key, { rows: completed, expected, at: Date.now() });
       failures.delete(key);
       return completed;
     })().catch(error => {
-      failures.set(key, { error, retryAt: error.retryAt || Date.now() + 60_000 });
+      // Do not repeatedly hit a rejected historical endpoint.
+      const denial = /\b403\b|forbidden|exceeding access rate/i.test(String(error?.message || ''));
+      failures.set(key, { error, retryAt: error.retryAt || Date.now() + (denial ? 180_000 : 60_000) });
       if (previous?.rows.length >= 35) return previous.rows;
       throw error;
     }).finally(() => locks.delete(key));
