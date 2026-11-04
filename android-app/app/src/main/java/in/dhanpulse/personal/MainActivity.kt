@@ -1020,10 +1020,10 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
             }
 
             if (s.entered > 0) {
-                val t1Rate = 100.0 * s.target1Hits / s.entered
-                val t2Rate = 100.0 * s.target2Hits / s.entered
-                val t3Rate = 100.0 * s.target3Hits / s.entered
-                Text("Hit rate from entered calls: T1 ${String.format("%.1f", t1Rate)}% • T2 ${String.format("%.1f", t2Rate)}% • T3 ${String.format("%.1f", t3Rate)}%", color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text("Observed quote touches from ${s.entered} sampled entries: T1 ${s.target1Hits}, T2 ${s.target2Hits}, T3 ${s.target3Hits}, SL ${s.stopLossHits}.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text("${s.unresolved} unresolved. These counts are not a verified win rate, executed P&L or a measure of predictive accuracy.",
+                    color = Amber, style = MaterialTheme.typography.labelSmall)
             }
 
             if (showRecent && vm.visibleCalls.isNotEmpty()) {
@@ -1812,7 +1812,9 @@ private fun AccountSettingRow(label: String, value: String) {
 
 @Composable
 fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
-    val color = when (a.signal.uppercase()) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    val qualified = a.dataFresh && a.tradeDecision.setupAllowed && a.signal in setOf("CE", "PE")
+    val color = if (qualified) when (a.signal.uppercase()) { "CE" -> Green; "PE" -> Red; else -> Amber } else Amber
+    val displayBias = if (a.signal == "WAIT") "WAIT" else if (qualified) a.signal else "${a.signal} WATCH"
     val streamPrice = vm.liveDisplayPrice(a)
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
@@ -1823,14 +1825,14 @@ fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
                 Column {
                     Text(a.symbol.replace("BANKNIFTY", "BANK NIFTY"), color = Muted, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                    Text("CURRENT MARKET BIAS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(if (qualified) "CONFIRMED SETUP DIRECTION" else "MARKET BIAS • NOT A TRADE CALL", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
                 Surface(onClick = vm::fetchAnalysis, color = Panel2, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Line)) {
                     Text("Refresh", color = Ink, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontWeight = FontWeight.Bold)
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(a.signal, color = color, fontSize = 48.sp, fontWeight = FontWeight.Black)
+                Text(displayBias, color = color, fontSize = if (qualified) 40.sp else 31.sp, fontWeight = FontWeight.Black)
                 Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(1f)) {
                     Text(if (streamPrice != null) "STREAM LTP" else "QUOTE LTP", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     Text(n(streamPrice ?: a.market.ltp), color = Ink, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
@@ -1839,7 +1841,12 @@ fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             Text(if (streamPrice != null) "Broker price stream active. Analysis follows the selected ${timeframeShort(vm.selectedTimeframe)} timeframe."
                 else "Price stream ${vm.liveStreamStatus.lowercase().replace('_', ' ')}. Analysis uses broker quotes and the selected timeframe.",
                 color = if (streamPrice != null) Green else Muted, fontSize = 10.sp)
-            Text(if (a.signal == "WAIT") "Market bias only • no trade call" else if (a.signal == "CE") "Bullish market bias • not yet a trade call" else "Bearish market bias • not yet a trade call", color = Muted)
+            Text(if (qualified) "Directional setup passes current data and strategy checks. Review entry and risk before trading."
+                else if (!a.dataFresh) "Market data incomplete or delayed. No confirmed call."
+                else if (a.signal == "WAIT") "No directional setup confirmed."
+                else "${if (a.signal == "CE") "Bullish" else "Bearish"} bias only. Strategy checks have not confirmed an entry.",
+                color = if (qualified) Green else Amber)
+            Text("Indicator votes describe current evidence, not forecast accuracy.", color = Muted, fontSize = 10.sp)
             HorizontalDivider(color = Line)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 ScoreMetric("BULL", a.ruleScore.bullish.toString(), Green)
