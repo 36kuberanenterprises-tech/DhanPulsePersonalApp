@@ -1812,7 +1812,7 @@ private fun AccountSettingRow(label: String, value: String) {
 
 @Composable
 fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
-    val qualified = a.dataFresh && a.tradeDecision.setupAllowed && a.signal in setOf("CE", "PE")
+    val qualified = a.dataFresh == true && a.tradeDecision.setupAllowed && a.signal in setOf("CE", "PE")
     val color = if (qualified) when (a.signal.uppercase()) { "CE" -> Green; "PE" -> Red; else -> Amber } else Amber
     val displayBias = if (a.signal == "WAIT") "WAIT" else if (qualified) a.signal else "${a.signal} WATCH"
     val streamPrice = vm.liveDisplayPrice(a)
@@ -1842,7 +1842,7 @@ fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
                 else "Price stream ${vm.liveStreamStatus.lowercase().replace('_', ' ')}. Analysis uses broker quotes and the selected timeframe.",
                 color = if (streamPrice != null) Green else Muted, fontSize = 10.sp)
             Text(if (qualified) "Directional setup passes current data and strategy checks. Review entry and risk before trading."
-                else if (!a.dataFresh) "Market data incomplete or delayed. No confirmed call."
+                else if (a.dataFresh != true) "Market data incomplete or delayed. No confirmed call."
                 else if (a.signal == "WAIT") "No directional setup confirmed."
                 else "${if (a.signal == "CE") "Bullish" else "Bearish"} bias only. Strategy checks have not confirmed an entry.",
                 color = if (qualified) Green else Amber)
