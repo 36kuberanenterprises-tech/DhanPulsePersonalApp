@@ -52,7 +52,7 @@ export function createMcxHistoryLoader(fetchHistory = candleData) {
       const payload = { exchange: 'MCX', symboltoken: String(token), interval,
         fromdate: format(previous?.rows.length >= 35
           ? Math.max(now.getTime() - 4*86_400_000, Date.parse(previous.rows.at(-1).timestamp) - duration)
-          : now.getTime() - INITIAL_LOOKBACK_DAYS * 86_400_000), todate: format(now.getTime()) };
+          : now.getTime() - (interval === 'ONE_MINUTE' ? 4 : INITIAL_LOOKBACK_DAYS) * 86_400_000), todate: format(now.getTime()) };
       const raw = await fetchHistory(session, payload);
       let rows = parseCandles(raw).filter(valid);
       // A successful but empty/short selected-interval result may be recovered
@@ -60,7 +60,7 @@ export function createMcxHistoryLoader(fetchHistory = candleData) {
       const direct = rows.filter(c => Date.parse(c.timestamp) + duration + 20_000 <= now.getTime());
       if ((direct.length < 35 || Math.max(...direct.map(c => Date.parse(c.timestamp))) < expected) && interval !== 'ONE_MINUTE') {
         const minuteRaw = await fetchHistory(session, { ...payload, interval: 'ONE_MINUTE',
-          fromdate: format(now.getTime() - INITIAL_LOOKBACK_DAYS * 86_400_000) });
+          fromdate: format(now.getTime() - 4 * 86_400_000) });
         rows = [...rows, ...aggregateMcxMinutes(parseCandles(minuteRaw), interval, now)];
       }
       const merged = new Map([...(previous?.rows || []), ...rows].map(c => [Date.parse(c.timestamp),c]));
