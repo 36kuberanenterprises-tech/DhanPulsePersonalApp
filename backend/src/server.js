@@ -11,6 +11,7 @@ import { attachFlowRoutes } from './flow-monitor.js';
 import { runBacktest } from './backtest.js';
 import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
+import { keepEyeScan } from './keep-eye-finder.js';
 import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
 import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
 import { deltaBackendConfigured, verifyDeltaAccessToken, deltaAccountSummary } from './delta.js';
@@ -268,6 +269,15 @@ app.get('/api/stocks/scanner', requireSession, async (req, res) => {
   } catch (e) {
     console.error('Stock scanner failed:', e?.message || e);
     res.status(503).json({ error: 'Stock scanner data is temporarily unavailable. ' + (e?.message || 'Please retry.') });
+  }
+});
+
+app.get('/api/stocks/keep-eye', requireSession, async (req, res) => {
+  try {
+    res.json(await keepEyeScan(req.smartSession, new Date(), req.query.refresh === 'true'));
+  } catch (error) {
+    console.warn('Keep Eye scanner unavailable:', error?.message || error);
+    res.status(503).json({ error: 'Keep Eye historical data is currently unavailable.' });
   }
 });
 
