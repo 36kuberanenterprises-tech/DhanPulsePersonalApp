@@ -84,6 +84,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var stockScanError by mutableStateOf<String?>(null)
         private set
+    var keepEyeScan by mutableStateOf<KeepEyeScanResponse?>(null)
+        private set
+    var keepEyeLoading by mutableStateOf(false)
+        private set
+    var keepEyeError by mutableStateOf<String?>(null)
+        private set
+    private var keepEyeVisible = false
+    private var keepEyeRequestInFlight = false
     var stockPaperMessage by mutableStateOf<String?>(null)
         private set
     var paperStockTrades by mutableStateOf<List<PaperStockTrade>>(emptyList())
@@ -1169,6 +1177,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun showStocks(visible: Boolean) {
         if (stocksVisible == visible) return
         stocksVisible = visible
+        if (!visible) keepEyeVisible = false
         if (visible) stopLivePriceStream() else startLivePriceStream()
         if (visible) fetchStockScanner() else fetchAnalysis()
         startAutoRefresh()
@@ -1313,6 +1322,33 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun showKeepEye(visible: Boolean) {
+        keepEyeVisible = visible
+        if (visible) fetchKeepEye()
+    }
+
+    fun fetchKeepEye(refresh: Boolean = false) {
+        val s = sessionId ?: return
+        if (keepEyeRequestInFlight) return
+        keepEyeRequestInFlight = true
+        keepEyeLoading = true
+        viewModelScope.launch {
+            try {
+                val response = client().keepEyeScanner(s, refresh)
+                if (s != sessionId) return@launch
+                keepEyeScan = response
+                keepEyeError = null
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (s != sessionId) return@launch
+                keepEyeError = friendlyError(e, "Keep Eye scanner unavailable")
+            } finally {
+                keepEyeLoading = false
+                keepEyeRequestInFlight = false
+            }
+        }
+    }
+
     private fun indiaDate(ms: Long): LocalDate = Instant.ofEpochMilli(ms).atZone(indiaZone).toLocalDate()
 
     private fun loadPaperStocks() {
@@ -1424,7 +1460,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val anyMarketOpen = day in 1..5 && !time.isBefore(LocalTime.of(9, 0)) && time.isBefore(LocalTime.of(23, 30))
                 delay(if (anyMarketOpen) 3_000 else 60_000)
                 if (tick % 5 == 0) {
-                    if (stocksVisible) fetchStockScanner()
+                    if (stocksVisible) {
+                        fetchStockScanner()
+                        if (keepEyeVisible && keepEyeScan?.status == "RUNNING") fetchKeepEye()
+                    }
                     if (stockOptionsVisible) {
                         fetchStockOptions()
                         fetchStockOpportunity()
