@@ -50,6 +50,7 @@ import `in`.dhanpulse.personal.model.BacktestSlice
 import `in`.dhanpulse.personal.model.BacktestStrategy
 import `in`.dhanpulse.personal.model.AdaptivePhase
 import `in`.dhanpulse.personal.model.StockCandidate
+import `in`.dhanpulse.personal.model.KeepEyeCandidate
 import `in`.dhanpulse.personal.model.PaperStockTrade
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
 import kotlin.math.abs
@@ -1138,6 +1139,33 @@ private fun stockTime(raw: String?): String = runCatching {
 
 @Composable
 private fun StocksSection(vm: DhanPulseViewModel) {
+    var selection by remember { mutableStateOf("DAILY") }
+    LaunchedEffect(selection) { vm.showKeepEye(selection == "KEEP_EYE") }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf("DAILY" to "Daily Scanner", "KEEP_EYE" to "Intraday Finder").forEach { (key, label) ->
+                val active = selection == key
+                Surface(
+                    onClick = { selection = key },
+                    modifier = Modifier.weight(1f),
+                    color = if (active) Purple.copy(alpha = 0.18f) else Panel,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, if (active) Purple.copy(alpha = 0.45f) else Line)
+                ) {
+                    Text(label, color = Ink, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp))
+                }
+            }
+        }
+        if (selection == "KEEP_EYE") KeepEyeFinderSection(vm) else DailyStocksSection(vm)
+    }
+}
+
+@Composable
+private fun DailyStocksSection(vm: DhanPulseViewModel) {
     val scan = vm.stockScan
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -1195,6 +1223,117 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                         Text("${stockTime(java.time.Instant.ofEpochMilli(trade.openedAt).toString())} • Net ${stockRs(trade.netPnl)}", color = if ((trade.netPnl ?: 0.0) < 0) Red else Green, style = MaterialTheme.typography.bodySmall)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun KeepEyeFinderSection(vm: DhanPulseViewModel) {
+    val scan = vm.keepEyeScan
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { SectionTitle("Keep Eye Intraday Stock Finder", "Seven conditions across two hour, daily and fifteen minute charts") }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Exact filter", color = Ink, fontWeight = FontWeight.Bold)
+                    Text("2H close above Supertrend (7,3) and upper Bollinger Band (20,2); 2H RSI (14) above 60.",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Daily close above Supertrend (7,3) and upper Bollinger Band (20,2); daily RSI (14) above 60.",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("15M completed close below SMA (20).", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("The SMA period is 20 until the reference setting is confirmed. Daily uses the last completed session. The finder does not place trades.",
+                        color = Amber, style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { vm.fetchKeepEye(refresh = true) }, enabled = !vm.keepEyeLoading && scan?.status != "RUNNING") {
+                            Text(if (vm.keepEyeLoading) "Checking..." else "Run Keep Eye Scan")
+                        }
+                        if (vm.keepEyeLoading || scan?.status == "RUNNING") {
+                            CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                }
+            }
+        }
+        vm.keepEyeError?.let { message -> item { InfoStrip("Finder unavailable", message) } }
+        if (scan != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(scan.status.replace('_', ' ') + " • " + stockTime(scan.updatedAt),
+                            fontWeight = FontWeight.Bold, color = if (scan.status == "COMPLETE") Green else Amber)
+                        Text("${scan.scanned} screened • ${scan.checked} checked • ${scan.matched} matches • ${scan.needData} data gaps", color = Ink)
+                        Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (scan.status == "RUNNING") {
+                            Text("Checks are running in sequence to protect the shared Angel One API limit.",
+                                color = Amber, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            if (scan.results.isNotEmpty()) {
+                item { SectionTitle("Stocks to Keep an Eye On", "A match is a technical filter result, not an entry recommendation") }
+                val sorted = scan.results.sortedWith(compareBy<KeepEyeCandidate> {
+                    when (it.status) { "MATCH" -> 0; "NOT_MATCH" -> 1; "DATA_UNAVAILABLE" -> 2; else -> 3 }
+                }.thenByDescending { it.passed })
+                items(sorted, key = { it.symbol }) { candidate ->
+                    KeepEyeCandidateCard(candidate)
+                }
+            } else if (scan.status == "NO_CANDIDATES" || scan.status == "MARKET_CLOSED") {
+                item { EmptyStateCard("No current finder results", scan.note) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun KeepEyeCandidateCard(stock: KeepEyeCandidate) {
+    var expanded by remember(stock.symbol) { mutableStateOf(false) }
+    val matched = stock.status == "MATCH"
+    val statusColour = when (stock.status) {
+        "MATCH" -> Green
+        "NOT_MATCH" -> Muted
+        else -> Amber
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, if (matched) Green.copy(alpha = 0.4f) else Line)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(stock.symbol, color = Ink, fontWeight = FontWeight.ExtraBold)
+                Text(stock.status.replace('_', ' '), color = statusColour, fontWeight = FontWeight.Bold)
+            }
+            Text("${stock.sector} • LTP ${stockRs(stock.price)} • ${stock.passed}/${stock.total} conditions", color = Muted,
+                style = MaterialTheme.typography.bodySmall)
+            Text(stock.message, color = if (matched) Green else Muted, style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Hide seven checks" else "View seven checks")
+            }
+            if (expanded) {
+                HorizontalDivider(color = Line)
+                Text("Last 2H: ${stock.latestTwoHour?.let(::stockTime) ?: "Unavailable"}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text("Last daily: ${stock.latestDaily?.let(::stockTime) ?: "Unavailable"}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text("Last 15M: ${stock.latestFifteenMinute?.let(::stockTime) ?: "Unavailable"}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                stock.checks.forEach { check ->
+                    val checkColour = when (check.status) { "PASS" -> Green; "FAIL" -> Red; else -> Amber }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("${check.timeframe}  ${check.name}", color = Ink, style = MaterialTheme.typography.bodySmall)
+                            Text("${stockRs(check.observed)} ${if (check.comparison == "GT") ">" else "<"} ${stockRs(check.reference)}",
+                                color = Muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                        Text(check.status.replace('_', ' '), color = checkColour, style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (stock.checks.isEmpty()) Text("No validated candle checks available. Do not infer a match.",
+                    color = Amber, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
