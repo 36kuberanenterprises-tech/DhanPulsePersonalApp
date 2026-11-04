@@ -142,7 +142,7 @@ const errorText = error => {
 async function run(session,now,state) {
   const list=await stockWatchlist();
   state.universeSource=list.source;
-  if(scannerSession(now)!=='SCANNING' && scannerSession(now)!=='OPENING_RANGE') {
+  if (scannerSession(now) === 'MARKET_CLOSED') {
     state.status='MARKET_CLOSED';
     state.note='This finder requires live, eligible NSE cash stock quotes. Open during market hours to screen stocks.';
     return;
