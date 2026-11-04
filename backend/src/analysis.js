@@ -177,15 +177,25 @@ export function signalEngine({ spot, ema9, ema15, futuresPrice, vwapValue, vwapS
     rules.push({ name, state, detail });
     if (state === 'BULLISH') bull++; if (state === 'BEARISH') bear++;
   };
-  add('Price vs EMA 9', spot > ema9 ? 'BULLISH' : 'BEARISH', `${round(spot)} vs ${round(ema9)}`);
-  add('EMA 9 vs EMA 15', ema9 > ema15 ? 'BULLISH' : 'BEARISH', `${round(ema9)} vs ${round(ema15)}`);
+  // Missing or invalid market fields are never bearish evidence. Only verified
+  // indicator values may cast a directional vote.
+  const validPrice = value => Number.isFinite(value) && value > 0;
+  const compare = (left, right) => !validPrice(left) || !validPrice(right)
+    ? 'UNAVAILABLE' : left > right ? 'BULLISH' : left < right ? 'BEARISH' : 'NEUTRAL';
+  add('Price vs EMA 9', compare(spot, ema9), `${round(spot)} vs ${round(ema9)}`);
+  add('EMA 9 vs EMA 15', compare(ema9, ema15), `${round(ema9)} vs ${round(ema15)}`);
   // A futures trade average must be compared with the same futures contract.
   // The cash index has a different price because of the futures basis.
-  if (vwapValue != null && futuresPrice != null) add('Futures vs traded average', futuresPrice > vwapValue ? 'BULLISH' : futuresPrice < vwapValue ? 'BEARISH' : 'NEUTRAL', `${round(futuresPrice)} vs ${round(vwapValue)}`);
+  if (validPrice(vwapValue) && validPrice(futuresPrice))
+    add('Futures vs traded average', compare(futuresPrice, vwapValue), `${round(futuresPrice)} vs ${round(vwapValue)}`);
   else rules.push({ name: 'Futures vs traded average', state: 'UNAVAILABLE', detail: vwapSource });
-  add('RSI', rsiValue >= 55 ? 'BULLISH' : rsiValue <= 45 ? 'BEARISH' : 'NEUTRAL', `${round(rsiValue)}`);
-  add('MACD histogram', macdValue?.histogram > 0 ? 'BULLISH' : macdValue?.histogram < 0 ? 'BEARISH' : 'NEUTRAL', `${round(macdValue?.histogram ?? 0, 4)}`);
-  add('Supertrend', st?.direction || 'NEUTRAL', st ? `${round(st.value)}` : 'Unavailable');
+  add('RSI', Number.isFinite(rsiValue) && rsiValue >= 0 && rsiValue <= 100
+    ? rsiValue >= 55 ? 'BULLISH' : rsiValue <= 45 ? 'BEARISH' : 'NEUTRAL' : 'UNAVAILABLE', `${round(rsiValue)}`);
+  add('MACD histogram', Number.isFinite(macdValue?.histogram)
+    ? macdValue.histogram > 0 ? 'BULLISH' : macdValue.histogram < 0 ? 'BEARISH' : 'NEUTRAL'
+    : 'UNAVAILABLE', `${round(macdValue?.histogram, 4)}`);
+  add('Supertrend', ['BULLISH', 'BEARISH'].includes(st?.direction) && validPrice(st?.value)
+    ? st.direction : 'UNAVAILABLE', st ? `${round(st.value)}` : 'Unavailable');
   if (pcr != null) add('Near ATM PCR', pcr >= 1.1 ? 'BULLISH' : pcr <= 0.9 ? 'BEARISH' : 'NEUTRAL', `${round(pcr)}`);
   else rules.push({ name: 'Near ATM PCR', state: 'UNAVAILABLE', detail: 'OI unavailable in quote response' });
 
