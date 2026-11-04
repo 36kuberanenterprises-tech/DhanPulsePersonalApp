@@ -30,6 +30,17 @@ test('MCX short history recovers from the same token and uses cached completed b
   assert.equal(calls.length,2);
 });
 
+test('MCX five minute bootstrap includes earlier sessions while minute fallback stays bounded', async () => {
+  const calls = [];
+  const load = createMcxHistoryLoader(async (_, payload) => {
+    calls.push(payload);
+    return payload.interval === 'FIVE_MINUTE' ? raw([]) : raw(rows);
+  });
+  await load({clientCode:'mcx-coverage'}, 'MCX', '573423', 'FIVE_MINUTE', now);
+  assert.equal(calls[0].fromdate, '2026-10-05 13:30');
+  assert.equal(calls[1].fromdate, '2026-10-11 13:30');
+});
+
 test('MCX never issues a fallback request after a broker rate rejection', async () => {
   let calls=0;
   const error=Object.assign(new Error('HTTP 403 exceeding access rate'),{status:403,retryAt:Date.now()+120_000});
