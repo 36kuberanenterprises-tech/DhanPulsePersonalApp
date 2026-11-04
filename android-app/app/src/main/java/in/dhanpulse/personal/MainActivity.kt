@@ -339,7 +339,8 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                     "ACCOUNT", "POSITIONS" -> vm.fetchAccount()
                     "STOCK_OPTIONS" -> vm.fetchStockOptions()
                     "STOCKS" -> vm.fetchStockScanner()
-                    "MARKET", "MCX" -> vm.fetchAnalysis()
+                    "TRADE" -> { vm.fetchAnalysis(); vm.fetchAccount() }
+                    else -> vm.fetchAnalysis()
                 }
             }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
                 Text("Refresh", maxLines = 1, softWrap = false, color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
