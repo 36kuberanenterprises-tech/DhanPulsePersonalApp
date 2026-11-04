@@ -68,13 +68,13 @@ export function createMcxHistoryLoader(fetchHistory = candleData) {
         time + duration + 20_000 <= now.getTime()).sort(([a],[b])=>a-b).map(([,c])=>c).slice(-2400);
       console.info('MCX_HISTORY', JSON.stringify({ token: String(token), interval, bars: completed.length,
         lastCandleTime: completed.at(-1)?.timestamp || null }));
-      if (completed.length < 35) throw new Error(`MCX historical candles are insufficient for token ${token}: ${completed.length} completed candles across the available broker sessions, minimum 35. Price quotes alone cannot confirm a trade.`);
+      if (completed.length < 35) throw new Error(`MCX broker history returned ${completed.length} completed candles for token ${token}; 35 are required. Historical sessions may be incomplete. Price quotes alone cannot confirm a trade.`);
       cache.set(key, { rows: completed, expected, at: Date.now() });
       failures.delete(key);
       return completed;
     })().catch(error => {
       // A denied broker endpoint cannot be fixed by immediately retrying another interval.
-      const denial = /\\b403\\b|forbidden|exceeding access rate/i.test(String(error?.message || ''));
+      const denial = /\b403\b|forbidden|exceeding access rate/i.test(String(error?.message || ''));
       failures.set(key, { error, retryAt: error.retryAt || Date.now() + (denial ? 180_000 : 60_000) });
       if (previous?.rows.length >= 35) return previous.rows;
       throw error;
