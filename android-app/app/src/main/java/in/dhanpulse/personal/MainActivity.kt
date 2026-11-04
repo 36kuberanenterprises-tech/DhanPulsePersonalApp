@@ -300,20 +300,29 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                             vm.stockScan?.timestamp?.let { System.currentTimeMillis() - java.time.Instant.parse(it).toEpochMilli() }
                         }.getOrNull() else null
                         val stockDelayed = vm.stocksVisible && (stockAge == null || stockAge > 45_000 || vm.stockScanError != null)
+                        val stockHistoryBlocked = vm.stocksVisible && vm.stockScan?.candidates?.any {
+                            it.reason.contains("403", ignoreCase = true)
+                        } == true
+                        val indexStreamDelayed = !vm.stocksVisible && !vm.stockOptionsVisible &&
+                            section in setOf("MARKET", "MCX") &&
+                            vm.liveStreamStatus != "LIVE"
                         val pillText = when {
                             section == "RESEARCH" -> "RESEARCH"
                             section == "ACCOUNT" || section == "POSITIONS" -> "ACCOUNT"
                             status == "MARKET_CLOSED" -> "CLOSED"
                             status == "NO_OPTIONS" -> "NO OPTIONS"
-                            status == "HISTORY_UNAVAILABLE" -> "NO HISTORY"
+                            status == "HISTORY_UNAVAILABLE" -> if (vm.analysis?.tradeDecision?.message?.contains("403") == true) "BROKER 403" else "NO HISTORY"
                             vm.stockOptionsVisible && (vm.stockOptionError != null || vm.stockOptionSnapshot?.spotFresh != true) -> "DELAYED"
                             stockDelayed || status == "DATA_STALE" || (!vm.stocksVisible && !vm.stockOptionsVisible && (vm.refreshWarning != null || vm.analysis == null)) -> "DELAYED"
                             vm.stockOptionsVisible -> "QUOTES"
                             vm.stocksVisible && status == "OPENING_RANGE" -> "OPENING RANGE"
                             vm.stocksVisible && status == "NO_NEW_ENTRIES" -> "ENTRIES CLOSED"
+                            stockHistoryBlocked -> "BROKER 403"
                             vm.stocksVisible && (vm.stockScan?.dataUnavailable ?: 0) > 0 -> "DATA NEEDED"
                             vm.stocksVisible && (vm.stockScan?.loading ?: 0) > 0 -> "CHECKING"
                             vm.stocksVisible -> "SCANNING"
+                            indexStreamDelayed && vm.analysis?.dataFresh == true -> "QUOTE LIVE"
+                            indexStreamDelayed -> "STREAM DELAYED"
                             else -> "LIVE"
                         }
                         StatusPill(
@@ -325,7 +334,14 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                     Text("v${BuildConfig.VERSION_NAME} • Build ${BuildConfig.VERSION_CODE}", color = Muted, fontSize = 9.sp)
                 }
             }
-            Surface(onClick = { if (vm.stockOptionsVisible) vm.fetchStockOptions() else if (vm.stocksVisible) vm.fetchStockScanner() else vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
+            Surface(onClick = {
+                when (section) {
+                    "ACCOUNT", "POSITIONS" -> vm.fetchAccount()
+                    "STOCK_OPTIONS" -> vm.fetchStockOptions()
+                    "STOCKS" -> vm.fetchStockScanner()
+                    "MARKET", "MCX" -> vm.fetchAnalysis()
+                }
+            }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
                 Text("Refresh", maxLines = 1, softWrap = false, color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
         }
@@ -1143,6 +1159,10 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                         Text("Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"} • Live quotes are not confirmed trading signals", color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (scan.candidates.any { it.reason.contains("403") }) {
+                            Text("Angel One historical candle requests are being rejected. Stock prices can still update, but BUY and SELL setups remain unverified until broker access returns.",
+                                color = Amber, style = MaterialTheme.typography.bodySmall)
+                        }
                         if (scan.strongestSector != null && scan.weakestSector != null) {
                             HorizontalDivider(color = Line)
                             Text("Strongest: ${scan.strongestSector.name} ${String.format("%+.2f%%", scan.strongestSector.changePct)} (${scan.strongestSector.count} stocks)", color = Green, style = MaterialTheme.typography.bodySmall)
