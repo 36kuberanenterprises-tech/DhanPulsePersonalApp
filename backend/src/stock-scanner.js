@@ -453,7 +453,7 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
   })().catch(error => {
     const message = String(error?.message || '');
     if (isRateError(error) || error.status === 403 || /\b403\b|forbidden/i.test(message)) {
-      historyFailures.set(key, { retryAt: error.retryAt || Date.now() + 60_000,
+      historyFailures.set(key, { retryAt: error.retryAt || Date.now() + (isRateError(error) ? 120_000 : 180_000),
         reason: isRateError(error)
           ? message
           : 'Angel One denied five minute history (HTTP 403); check historical API access and the server network route' });
@@ -570,7 +570,11 @@ export async function scanStocks(session, trackedToken = null, now = new Date(),
     const decorateCandidates = () => { if (improvedShortlist) {
       analysed.forEach((candidate, i) => {
         candidate.decisionState = stockDecisionState(candidate);
-        candidate.selectionScore = round(selected[i].score * 100);
+        // Do not display a precise score while historical relative volume is incomplete.
+        const volumeRanked = selected[i].selectionNotes?.some(note =>
+          note.startsWith('Ranked by turnover, movement and same time relative volume.'));
+        candidate.selectionScore = volumeRanked && Number.isFinite(selected[i].relVolume)
+          ? round(selected[i].score * 100) : null;
         candidate.selectionNotes = selected[i].selectionNotes;
       });
     } };
