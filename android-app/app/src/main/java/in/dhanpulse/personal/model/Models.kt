@@ -82,6 +82,31 @@ data class StockScanResponse(
     val candidates: List<StockCandidate> = emptyList(),
     val trackedQuote: StockQuote? = null, val note: String = ""
 )
+// Seven verified conditions from the user supplied Chartink Keep Eye filter.
+data class KeepEyeCheck(
+    val name: String = "", val timeframe: String = "",
+    val observed: Double? = null, val reference: Double? = null,
+    val comparison: String = "GT", val status: String = "DATA_UNAVAILABLE",
+    val candleTime: String? = null, val detail: String = ""
+)
+data class KeepEyeBars(
+    val twoHour: Int = 0, val daily: Int = 0, val fifteenMinute: Int = 0
+)
+data class KeepEyeCandidate(
+    val symbol: String = "", val sector: String = "", val price: Double? = null,
+    val quoteTime: String? = null, val status: String = "CHECKING",
+    val passed: Int = 0, val total: Int = 7, val unavailable: Int = 0,
+    val checks: List<KeepEyeCheck> = emptyList(), val message: String = "",
+    val latestTwoHour: String? = null, val latestDaily: String? = null,
+    val latestFifteenMinute: String? = null, val bars: KeepEyeBars = KeepEyeBars()
+)
+data class KeepEyeScanResponse(
+    val status: String = "RUNNING", val timestamp: String = "",
+    val updatedAt: String = "", val scanned: Int = 0, val checked: Int = 0,
+    val matched: Int = 0, val needData: Int = 0, val universeSource: String = "",
+    val results: List<KeepEyeCandidate> = emptyList(), val note: String = ""
+)
+
 data class StockOptionCatalog(val symbols: List<String> = emptyList(), val updatedAt: String? = null)
 data class StockOptionContract(
     val token: String = "", val tradingSymbol: String = "", val exchange: String = "NFO",
