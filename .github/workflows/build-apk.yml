@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -52,6 +52,7 @@ jobs:
           node --check backend/src/backtest-catalog.js
           node --check backend/src/server.js
           node --check backend/src/stock-scanner.js
+          node --check backend/src/keep-eye-finder.js
 
       - name: Test live market rules
         working-directory: backend
@@ -85,7 +86,7 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/release/app-release-unsigned.apk "DhanPulse-v${version}-Build66-unsigned.apk"
+          cp android-app/app/build/outputs/apk/release/app-release-unsigned.apk "DhanPulse-v${version}-Build67-unsigned.apk"
           cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" apksigner.jar
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -95,7 +96,7 @@ jobs:
         with:
           name: DhanPulse-Personal-v${{ env.APK_VERSION }}-Preview-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build66-unsigned.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build67-unsigned.apk
             apksigner.jar
           if-no-files-found: error
           retention-days: 30
