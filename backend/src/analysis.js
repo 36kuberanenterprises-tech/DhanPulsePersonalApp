@@ -40,7 +40,7 @@ export function marketDataState(now, feedAgeMs, hasQuote = true, segment = 'EQUI
   const inSession = weekday >= 1 && weekday <= 5 && minutes >= (segment === 'MCX' ? 9 * 60 : 9 * 60 + 15) &&
     minutes < (segment === 'MCX' ? mcxCloseMinutes(now) : 15 * 60 + 30);
   if (!inSession) return 'MARKET_CLOSED';
-  return hasQuote && feedAgeMs != null && feedAgeMs >= -30_000 && feedAgeMs <= 90_000 ? 'LIVE' : 'DATA_STALE';
+  return hasQuote && feedAgeMs != null && feedAgeMs >= -30_000 && feedAgeMs <= 45_000 ? 'LIVE' : 'DATA_STALE';
 }
 
 const INTERVAL_MINUTES = {
@@ -372,7 +372,7 @@ async function optionEvidenceWithoutHistory(session, rows, symbol, spot, now, ma
   const trackedQuote = trackedRow ? byToken.get(String(trackedRow.token)) : null;
   const trackedAge = quoteFeedAgeMs(trackedQuote, now.getTime());
   const trackedContract = trackedRow && trackedQuote && quoteLtp(trackedQuote) > 0 &&
-    trackedAge != null && trackedAge >= -30_000 && trackedAge <= 90_000 ? {
+    trackedAge != null && trackedAge >= -30_000 && trackedAge <= 45_000 ? {
       token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
       exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
     } : null;
@@ -563,7 +563,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     const futureAge = quoteFeedAgeMs(fq, now.getTime());
     const average = Number(fq?.avgPrice ?? fq?.averagePrice ?? 0);
     const futureAverage = marketStatus === 'LIVE' && futureAge != null && futureAge >= -30_000 &&
-      futureAge <= 90_000 && quoteLtp(fq) > 0 && average > 0 ? round(average) : null;
+      futureAge <= 45_000 && quoteLtp(fq) > 0 && average > 0 ? round(average) : null;
     return {
       symbol, segment, instrumentType: energy ? 'ENERGY' : 'INDEX', timestamp: now.toISOString(), timeframe: interval,
       signal: 'WAIT', dataFresh: false,
@@ -601,9 +601,9 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     const avgPrice = Number(fq.avgPrice ?? fq.averagePrice ?? 0);
     const fp = quoteLtp(fq);
     const futureAge = quoteFeedAgeMs(fq, now.getTime());
-    if (Number.isFinite(fp) && fp > 0 && futureAge != null && futureAge >= -30_000 && futureAge <= 90_000) basisFuturePrice = fp;
+    if (Number.isFinite(fp) && fp > 0 && futureAge != null && futureAge >= -30_000 && futureAge <= 45_000) basisFuturePrice = fp;
     if (Number.isFinite(avgPrice) && avgPrice > 0 && Number.isFinite(fp) && fp > 0 &&
-        (marketStatus !== 'LIVE' || (futureAge != null && futureAge >= -30_000 && futureAge <= 90_000))) {
+        (marketStatus !== 'LIVE' || (futureAge != null && futureAge >= -30_000 && futureAge <= 45_000))) {
       vw = avgPrice;
       futuresPrice = fp;
       vwapSource = `${marketStatus === 'LIVE' ? 'Broker traded average' : 'Last reported futures average'}: ${future.symbol || future.name} (futures price ${round(fp)})`;
@@ -639,7 +639,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       const sym = String(c.symbol || '');
       const optionType = /PE$/i.test(sym) ? 'PE' : /CE$/i.test(sym) ? 'CE' : (String(c.instrumenttype).toUpperCase().includes('PE') ? 'PE' : 'CE');
       const age = quoteFeedAgeMs(z, now.getTime());
-      const usable = marketStatus !== 'LIVE' || (age != null && age >= -30_000 && age <= (sensexDualEnabled ? 10_000 : 90_000));
+      const usable = marketStatus !== 'LIVE' || (age != null && age >= -30_000 && age <= (sensexDualEnabled ? 10_000 : 45_000));
       const optionPrice = quoteLtp(z);
       const bid = Number(z.depth?.buy?.[0]?.price);
       const ask = Number(z.depth?.sell?.[0]?.price);
@@ -678,7 +678,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     selectBestContract(chain, optionType, spot);
   const trackedQuote = trackedRow ? byTokenQuote.get(String(trackedRow.token)) : null;
   const trackedAge = quoteFeedAgeMs(trackedQuote, now.getTime());
-  const trackedContract = trackedQuote && quoteLtp(trackedQuote) > 0 && trackedAge != null && trackedAge >= -30_000 && trackedAge <= 90_000 ? {
+  const trackedContract = trackedQuote && quoteLtp(trackedQuote) > 0 && trackedAge != null && trackedAge >= -30_000 && trackedAge <= 45_000 ? {
     token: String(trackedRow.token), tradingSymbol: trackedRow.symbol,
     exchange: trackedRow.exch_seg, ltp: round(quoteLtp(trackedQuote))
   } : null;
