@@ -190,6 +190,7 @@ app.get('/api/live/:symbol/stream', requireSession, async (req, res) => {
   res.flushHeaders();
   let closed = false;
   let lastTickAt = 0;
+  const connectedAt = Date.now();
   let lastSentAt = 0;
   let stopBroker = () => {};
   const send = event => {
@@ -205,6 +206,7 @@ app.get('/api/live/:symbol/stream', requireSession, async (req, res) => {
   };
   const keepAlive = setInterval(() => {
     if (Date.now() >= req.smartSession.expiresAt) return close();
+    if (Date.now() - (lastTickAt || connectedAt) > 60_000) return close();
     if (Date.now() - lastTickAt > 15_000) send({ status: 'DELAYED' });
     else if (!res.destroyed) res.write(': heartbeat\n\n');
   }, 15_000);

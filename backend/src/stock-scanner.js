@@ -365,8 +365,18 @@ export function shortlistStocks(rows, previous = []) {
 
 export function stockDecisionState(candidate) {
   if (candidate.status === 'READY' && candidate.plan) return 'READY';
-  return /missing|unavailable|delayed|preparing|loading|restricted|denied|rejected.*history|comparison is unavailable/i.test(candidate.reason || '')
+  return /missing|unavailable|delayed|preparing|loading|restricted|denied|rejected.*history|comparison is unavailable|no five minute candles|cooldown|HTTP 403/i.test(candidate.reason || '')
     ? 'DATA_UNAVAILABLE' : 'WAITING_SETUP';
+}
+export function scannerCheckSummary(candidates) {
+  const loading = candidates.filter(c => /history is loading/i.test(c.reason || '')).length;
+  const dataUnavailable = candidates.filter(c =>
+    !/history is loading/i.test(c.reason || '') && stockDecisionState(c) === 'DATA_UNAVAILABLE').length;
+  const evaluated = candidates.length - loading - dataUnavailable;
+  return { evaluated, dataUnavailable, loading,
+    note: candidates.some(c => c.status === 'READY' && c.plan)
+      ? 'Research signal only. Live stock orders are disabled.'
+      : `${evaluated} stocks analysed; ${dataUnavailable} need data; ${loading} still loading. No confirmed entry. Open a candidate for its specific reason.` };
 }
 const previousShortlists = new Map();
 
@@ -443,7 +453,7 @@ export async function stockHistory(session, token, now, fetchHistory = pacedCand
   })().catch(error => {
     const message = String(error?.message || '');
     if (isRateError(error) || error.status === 403 || /\b403\b|forbidden/i.test(message)) {
-      historyFailures.set(key, { retryAt: error.retryAt || Date.now() + 60_000,
+      historyFailures.set(key, { retryAt: error.retryAt || Date.now() + (isRateError(error) ? 120_000 : 180_000),
         reason: isRateError(error)
           ? message
           : 'Angel One denied five minute history (HTTP 403); check historical API access and the server network route' });
@@ -560,7 +570,11 @@ export async function scanStocks(session, trackedToken = null, now = new Date(),
     const decorateCandidates = () => { if (improvedShortlist) {
       analysed.forEach((candidate, i) => {
         candidate.decisionState = stockDecisionState(candidate);
-        candidate.selectionScore = round(selected[i].score * 100);
+        // Never present a precise ranking when relative volume was not measured.
+        const volumeRanked = selected[i].selectionNotes?.some(note =>
+          note.startsWith('Ranked by turnover, movement and same time relative volume.'));
+        candidate.selectionScore = volumeRanked && Number.isFinite(selected[i].relVolume)
+          ? round(selected[i].score * 100) : null;
         candidate.selectionNotes = selected[i].selectionNotes;
       });
     } };
@@ -570,11 +584,12 @@ export async function scanStocks(session, trackedToken = null, now = new Date(),
         (a.plan?.estimatedProfitAtTwoR / a.plan?.estimatedLoss))[0] || null;
     const tracked = trackedToken ? quoteByToken.get(trackedToken) : null;
     const trackedAge = quoteFeedAgeMs(tracked, snapshotTime.getTime());
-    const completedChecks = analysed.filter(x => !x.reason.startsWith('Broker candle history is loading')).length;
+    const checkSummary = scannerCheckSummary(analysed);
     const result = {
       marketStatus: market === 'SCANNING' && !indexFresh ? 'DATA_STALE' : market,
       timestamp: snapshotTime.toISOString(), universeSource: list.source,
-      scanned: stocks.length, evaluated: completedChecks, niftyChangePct: Number.isFinite(niftyReturn) ? round(niftyReturn) : null,
+      scanned: stocks.length, evaluated: checkSummary.evaluated, dataUnavailable: checkSummary.dataUnavailable,
+      loading: checkSummary.loading, niftyChangePct: Number.isFinite(niftyReturn) ? round(niftyReturn) : null,
       strongestSector: sectorRows[0] || null, weakestSector: sectorRows[sectorRows.length - 1] || null,
       bestBuy: sideRank('BUY'), bestSell: sideRank('SELL'),
       candidates: [...analysed].sort((a, b) => (b.status === 'READY') - (a.status === 'READY')).slice(0, 12),
@@ -586,9 +601,7 @@ export async function scanStocks(session, trackedToken = null, now = new Date(),
         : market === 'MARKET_CLOSED' ? 'Market closed. No new stock calls.'
         : !indexFresh ? 'Nifty quote is delayed; stock entries are paused.'
         : !selected.length ? 'No liquid stock quotes passed the first screen. Checking again shortly.'
-        : completedChecks < analysed.length ? `${completedChecks} of ${analysed.length} detailed checks finished. Broker history continues loading.`
-        : analysed.some(x => x.status === 'READY') ? 'Research signal with Rs. 20,000 model capital only. Live stock orders are disabled.'
-        : 'No confirmed stock entry. See each candidate for its WAIT reason.'
+        : checkSummary.note
     };
     scanCache.set(key, { at: Date.now(), data: result, pending: true });
     // Publish completed background checks into this snapshot, including ranking
@@ -598,13 +611,14 @@ export async function scanStocks(session, trackedToken = null, now = new Date(),
       scanCache.get(key).pending = false;
       decorateCandidates();
       result.candidates = [...analysed].sort((a, b) => (b.status === 'READY') - (a.status === 'READY'));
-      result.evaluated = analysed.length;
+      const summary = scannerCheckSummary(analysed);
+      result.evaluated = summary.evaluated;
+      result.dataUnavailable = summary.dataUnavailable;
+      result.loading = summary.loading;
       result.bestBuy = sideRank('BUY');
       result.bestSell = sideRank('SELL');
       if (market === 'SCANNING' && indexFresh && selected.length) {
-        result.note = analysed.some(x => x.status === 'READY')
-          ? 'Research signal with Rs. 20,000 model capital only. Live stock orders are disabled.'
-          : 'Checks completed. See each candidate for its decision and data status.';
+        result.note = summary.note;
       }
     });
     return result;

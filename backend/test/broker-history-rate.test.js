@@ -79,3 +79,29 @@ test('outbound IP diagnostics use a second provider when the first fails', async
     globalThis.fetch = previousFetch;
   }
 });
+
+test('queued history cannot delay fresh quotes', async () => {
+  const previousFetch = globalThis.fetch;
+  let releaseHistory;
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  let historyStarted;
+  const started = new Promise(resolve => { historyStarted = resolve; });
+  try {
+    globalThis.fetch = async url => {
+      if (String(url).includes('getCandleData')) {
+        historyStarted();
+        await historyGate;
+      }
+      return new Response(JSON.stringify({ status: true, data: [] }), { status: 200 });
+    };
+    const first = candleData({ ...session, clientCode: 'independent-feed' }, payload);
+    await started;
+    const second = candleData({ ...session, clientCode: 'independent-feed' }, { ...payload, symboltoken: '3' });
+    let quoted = false;
+    const quote = marketData(session, { NSE: ['99926000'] }).then(() => { quoted = true; });
+    await quote;
+    assert.equal(quoted, true, 'quote must finish while history is still pending');
+    releaseHistory();
+    await Promise.all([first, second]);
+  } finally { releaseHistory?.(); globalThis.fetch = previousFetch; }
+});

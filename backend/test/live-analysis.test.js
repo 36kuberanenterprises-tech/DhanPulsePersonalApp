@@ -50,6 +50,7 @@ test('an old quote after trading hours is a closed market snapshot, not a live c
   assert.equal(marketDataState(new Date('2026-09-26T04:30:00Z'), 0), 'MARKET_CLOSED');
   const tradingHour = new Date('2026-09-25T04:30:00Z');
   assert.equal(marketDataState(tradingHour, 40_000), 'LIVE');
+  assert.equal(marketDataState(tradingHour, 46_000), 'DATA_STALE', 'a delayed feed must not permit a fresh directional call');
   assert.equal(marketDataState(tradingHour, 120_000), 'DATA_STALE');
   assert.equal(marketDataState(tradingHour, null), 'DATA_STALE');
 });

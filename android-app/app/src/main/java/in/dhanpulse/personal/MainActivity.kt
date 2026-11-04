@@ -163,7 +163,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("DhanPulse", color = Ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(8.dp))
-                        StatusPill(if (vm.refreshWarning == null) "LIVE" else "DELAYED", if (vm.refreshWarning == null) Green else Amber)
+                        StatusPill("SIGN IN", Muted)
                     }
                     Text("Trading & Investment • v${BuildConfig.VERSION_NAME}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
@@ -281,37 +281,48 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
 
 @Composable
 private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
-    Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 16.dp, vertical = 10.dp)) {
+    Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp, vertical = 6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(R.mipmap.ic_launcher),
                     contentDescription = null,
-                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
+                    modifier = Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)),
                     contentScale = ContentScale.Fit
                 )
-                Spacer(Modifier.width(9.dp))
+                Spacer(Modifier.width(7.dp))
                 Column {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("DhanPulse Trader", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("DhanPulse Trader", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
                         val status = if (vm.stockOptionsVisible) null else if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
                         val stockAge = if (vm.stocksVisible) runCatching {
                             vm.stockScan?.timestamp?.let { System.currentTimeMillis() - java.time.Instant.parse(it).toEpochMilli() }
                         }.getOrNull() else null
                         val stockDelayed = vm.stocksVisible && (stockAge == null || stockAge > 45_000 || vm.stockScanError != null)
+                        val stockHistoryBlocked = vm.stocksVisible && vm.stockScan?.candidates?.any {
+                            it.reason.contains("403", ignoreCase = true)
+                        } == true
+                        val indexStreamDelayed = !vm.stocksVisible && !vm.stockOptionsVisible &&
+                            section in setOf("MARKET", "MCX") &&
+                            vm.liveStreamStatus != "LIVE"
                         val pillText = when {
                             section == "RESEARCH" -> "RESEARCH"
                             section == "ACCOUNT" || section == "POSITIONS" -> "ACCOUNT"
                             status == "MARKET_CLOSED" -> "CLOSED"
                             status == "NO_OPTIONS" -> "NO OPTIONS"
-                            status == "HISTORY_UNAVAILABLE" -> "NO HISTORY"
+                            status == "HISTORY_UNAVAILABLE" -> if (vm.analysis?.tradeDecision?.message?.contains("403") == true) "BROKER 403" else "NO HISTORY"
                             vm.stockOptionsVisible && (vm.stockOptionError != null || vm.stockOptionSnapshot?.spotFresh != true) -> "DELAYED"
                             stockDelayed || status == "DATA_STALE" || (!vm.stocksVisible && !vm.stockOptionsVisible && (vm.refreshWarning != null || vm.analysis == null)) -> "DELAYED"
                             vm.stockOptionsVisible -> "QUOTES"
                             vm.stocksVisible && status == "OPENING_RANGE" -> "OPENING RANGE"
                             vm.stocksVisible && status == "NO_NEW_ENTRIES" -> "ENTRIES CLOSED"
+                            stockHistoryBlocked -> "BROKER 403"
+                            vm.stocksVisible && (vm.stockScan?.dataUnavailable ?: 0) > 0 -> "DATA NEEDED"
+                            vm.stocksVisible && (vm.stockScan?.loading ?: 0) > 0 -> "CHECKING"
                             vm.stocksVisible -> "SCANNING"
+                            indexStreamDelayed && vm.analysis?.dataFresh == true -> "QUOTE LIVE"
+                            indexStreamDelayed -> "STREAM DELAYED"
                             else -> "LIVE"
                         }
                         StatusPill(
@@ -323,7 +334,15 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                     Text("v${BuildConfig.VERSION_NAME} • Build ${BuildConfig.VERSION_CODE}", color = Muted, fontSize = 9.sp)
                 }
             }
-            Surface(onClick = { if (vm.stockOptionsVisible) vm.fetchStockOptions() else if (vm.stocksVisible) vm.fetchStockScanner() else vm.fetchAnalysis(); vm.fetchAccount() }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
+            Surface(onClick = {
+                when (section) {
+                    "ACCOUNT", "POSITIONS" -> vm.fetchAccount()
+                    "STOCK_OPTIONS" -> vm.fetchStockOptions()
+                    "STOCKS" -> vm.fetchStockScanner()
+                    "TRADE" -> { vm.fetchAnalysis(); vm.fetchAccount() }
+                    else -> vm.fetchAnalysis()
+                }
+            }, color = Panel2, shape = RoundedCornerShape(12.dp)) {
                 Text("Refresh", maxLines = 1, softWrap = false, color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
         }
@@ -1018,10 +1037,10 @@ private fun SignalPerformanceCard(vm: DhanPulseViewModel, showRecent: Boolean = 
             }
 
             if (s.entered > 0) {
-                val t1Rate = 100.0 * s.target1Hits / s.entered
-                val t2Rate = 100.0 * s.target2Hits / s.entered
-                val t3Rate = 100.0 * s.target3Hits / s.entered
-                Text("Hit rate from entered calls: T1 ${String.format("%.1f", t1Rate)}% • T2 ${String.format("%.1f", t2Rate)}% • T3 ${String.format("%.1f", t3Rate)}%", color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text("Observed quote touches from ${s.entered} sampled entries: T1 ${s.target1Hits}, T2 ${s.target2Hits}, T3 ${s.target3Hits}, SL ${s.stopLossHits}.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text("${s.unresolved} unresolved. These counts are not a verified win rate, executed P&L or a measure of predictive accuracy.",
+                    color = Amber, style = MaterialTheme.typography.labelSmall)
             }
 
             if (showRecent && vm.visibleCalls.isNotEmpty()) {
@@ -1137,9 +1156,14 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         if (vm.stockScanLoading) Text("Updating quotes and stock checks...", color = Amber, style = MaterialTheme.typography.bodySmall)
                         Text("${scan.marketStatus.replace('_', ' ')} • ${stockTime(scan.timestamp)}", color = if (scan.marketStatus == "SCANNING") Green else Amber, fontWeight = FontWeight.Bold)
-                        Text("${scan.scanned} stock quotes screened • ${scan.evaluated} detailed checks • Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"}", color = Ink)
+                        Text("${scan.scanned} quotes screened • ${scan.evaluated} analysed • ${scan.dataUnavailable} need data • ${scan.loading} loading", color = Ink)
+                        Text("Nifty ${scan.niftyChangePct?.let { String.format("%+.2f%%", it) } ?: "NA"} • Live quotes are not confirmed trading signals", color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (scan.candidates.any { it.reason.contains("403") }) {
+                            Text("Angel One historical candle requests are being rejected. Stock prices can still update, but BUY and SELL setups remain unverified until broker access returns.",
+                                color = Amber, style = MaterialTheme.typography.bodySmall)
+                        }
                         if (scan.strongestSector != null && scan.weakestSector != null) {
                             HorizontalDivider(color = Line)
                             Text("Strongest: ${scan.strongestSector.name} ${String.format("%+.2f%%", scan.strongestSector.changePct)} (${scan.strongestSector.count} stocks)", color = Green, style = MaterialTheme.typography.bodySmall)
@@ -1317,7 +1341,7 @@ private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
         Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(stock.symbol, color = Ink, fontWeight = FontWeight.ExtraBold)
-                Text(if (ready) stock.side else if (stock.decisionState == "DATA_UNAVAILABLE") "DATA NEEDED" else "WAIT", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
+                Text(if (ready) stock.side else if (stock.decisionState == "DATA_UNAVAILABLE") "DATA NEEDED" else "NO TRADE", color = if (ready) { if (stock.side == "BUY") Green else Red } else Amber, fontWeight = FontWeight.Bold)
             }
             Text("${stock.sector} • ${stock.setup?.replace('_', ' ') ?: "No setup"} • LTP ${stockRs(stock.price)}", color = Muted, style = MaterialTheme.typography.bodySmall)
             Text(stock.reason, color = if (ready) Green else Muted, style = MaterialTheme.typography.bodySmall)
@@ -1330,14 +1354,19 @@ private fun StockCandidateCard(vm: DhanPulseViewModel, stock: StockCandidate) {
                 Text("Completed candle: ${stock.candleTime?.let { stockTime(it) } ?: "Unavailable"}", color = Muted)
                 Text("VWAP ${stockRs(stock.vwap)} • 15 minute trend ${stock.trend ?: "Unavailable"}", color = Muted)
                 Text(if (ready) "Ready" else if (stock.decisionState == "DATA_UNAVAILABLE") "Data unavailable" else "Waiting for setup", color = Amber)
-                stock.selectionScore?.let { Text("Shortlist score: ${String.format("%.1f", it)} / 100. This is a ranking score, not a win probability.", color = Muted) }
+                if (stock.volumeRatio != null && stock.decisionState != "DATA_UNAVAILABLE" &&
+                    stock.selectionNotes.any { it.startsWith("Ranked by turnover, movement and same time relative volume.") }) {
+                    stock.selectionScore?.let { Text("Shortlist score: ${String.format("%.1f", it)} / 100. Ranking only, not a win probability.", color = Muted) }
+                } else {
+                    Text("Full ranking pending verified historical volume. Do not treat the shortlist as a trading signal.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
                 stock.selectionNotes.forEach { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
                 stock.diagnostics.forEach { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
                 stock.families.forEach { Text("${it.name}: ${it.side}", color = Muted, style = MaterialTheme.typography.bodySmall) }
                 if (!ready) {
                     Text("Entry, stop loss and targets unavailable until a setup is confirmed.", color = Amber)
                     Text("Blocking check: ${stock.reason}", color = Amber)
-                    Text("Remaining checks may not have run after this rejection. Tap Refresh to evaluate again.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Remaining checks may not have run. Recheck after the broker cooldown or when historical data becomes available.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (ready && plan != null) {
@@ -1654,7 +1683,7 @@ private fun TradeDeskHero(a: AnalysisResponse, vm: DhanPulseViewModel) {
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, c.copy(alpha = 0.30f))) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
                     Text("Trader Desk", color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                     Text(if (a.dataFresh == false) "Last reported market snapshot • new calls paused" else "Signal, execution and risk • live scan every 3 sec", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
@@ -1804,7 +1833,9 @@ private fun AccountSettingRow(label: String, value: String) {
 
 @Composable
 fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
-    val color = when (a.signal.uppercase()) { "CE" -> Green; "PE" -> Red; else -> Amber }
+    val qualified = a.dataFresh == true && a.tradeDecision.setupAllowed && a.signal in setOf("CE", "PE")
+    val color = if (qualified) when (a.signal.uppercase()) { "CE" -> Green; "PE" -> Red; else -> Amber } else Amber
+    val displayBias = if (a.signal == "WAIT") "WAIT" else if (qualified) a.signal else "${a.signal} WATCH"
     val streamPrice = vm.liveDisplayPrice(a)
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
@@ -1815,14 +1846,14 @@ fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
                 Column {
                     Text(a.symbol.replace("BANKNIFTY", "BANK NIFTY"), color = Muted, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                    Text("CURRENT MARKET BIAS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(if (qualified) "CONFIRMED SETUP DIRECTION" else "MARKET BIAS • NOT A TRADE CALL", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
                 Surface(onClick = vm::fetchAnalysis, color = Panel2, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Line)) {
                     Text("Refresh", color = Ink, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontWeight = FontWeight.Bold)
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(a.signal, color = color, fontSize = 48.sp, fontWeight = FontWeight.Black)
+                Text(displayBias, color = color, fontSize = if (qualified) 40.sp else 31.sp, fontWeight = FontWeight.Black)
                 Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(1f)) {
                     Text(if (streamPrice != null) "STREAM LTP" else "QUOTE LTP", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     Text(n(streamPrice ?: a.market.ltp), color = Ink, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
@@ -1831,7 +1862,12 @@ fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             Text(if (streamPrice != null) "Broker price stream active. Analysis follows the selected ${timeframeShort(vm.selectedTimeframe)} timeframe."
                 else "Price stream ${vm.liveStreamStatus.lowercase().replace('_', ' ')}. Analysis uses broker quotes and the selected timeframe.",
                 color = if (streamPrice != null) Green else Muted, fontSize = 10.sp)
-            Text(if (a.signal == "WAIT") "Market bias only • no trade call" else if (a.signal == "CE") "Bullish market bias • not yet a trade call" else "Bearish market bias • not yet a trade call", color = Muted)
+            Text(if (qualified) "Directional setup passes current data and strategy checks. Review entry and risk before trading."
+                else if (a.dataFresh != true) "Market data incomplete or delayed. No confirmed call."
+                else if (a.signal == "WAIT") "No directional setup confirmed."
+                else "${if (a.signal == "CE") "Bullish" else "Bearish"} bias only. Strategy checks have not confirmed an entry.",
+                color = if (qualified) Green else Amber)
+            Text("Indicator votes describe current evidence, not forecast accuracy.", color = Muted, fontSize = 10.sp)
             HorizontalDivider(color = Line)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 ScoreMetric("BULL", a.ruleScore.bullish.toString(), Green)
@@ -2043,11 +2079,14 @@ fun ManualTradeCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Purple.copy(alpha = 0.32f))) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
                     Text("Manual Trade", color = Ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
                     Text("Choose CE or PE and place your own order", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                StatusPill(a.timeframe ?: vm.selectedTimeframe, Blue)
+                StatusPill(when (a.timeframe ?: vm.selectedTimeframe) {
+                    "ONE_MINUTE" -> "1m"; "THREE_MINUTE" -> "3m"; "FIVE_MINUTE" -> "5m"
+                    "TEN_MINUTE" -> "10m"; "FIFTEEN_MINUTE" -> "15m"; else -> "Timeframe"
+                }, Blue)
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
