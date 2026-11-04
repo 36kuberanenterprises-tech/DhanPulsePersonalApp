@@ -24,7 +24,9 @@ android {
             manifestPlaceholders["appLabel"] = "DhanPulse $appVersion Flow Preview"
         }
         getByName("release") {
-            manifestPlaceholders["appLabel"] = "DhanPulse Stable"
+            // Install alongside Stable until the original private signing key is available.
+            applicationIdSuffix = ".keep67"
+            manifestPlaceholders["appLabel"] = "DhanPulse Keep Eye"
         }
     }
 
