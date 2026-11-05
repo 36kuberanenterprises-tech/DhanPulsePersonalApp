@@ -100,10 +100,19 @@ data class KeepEyeCandidate(
     val latestTwoHour: String? = null, val latestDaily: String? = null,
     val latestFifteenMinute: String? = null, val bars: KeepEyeBars = KeepEyeBars()
 )
+data class KeepEyeQuoteCandidate(
+    val symbol: String = "", val sector: String = "", val price: Double? = null,
+    val quoteTime: String? = null, val rank: Int = 0,
+    val changePct: Double? = null, val turnoverEstimate: Double? = null,
+    val spreadPct: Double? = null, val status: String = "QUOTE_SCREENED",
+    val reason: String = ""
+)
 data class KeepEyeScanResponse(
     val status: String = "RUNNING", val timestamp: String = "",
-    val updatedAt: String = "", val scanned: Int = 0, val checked: Int = 0,
+    val updatedAt: String = "", val scanned: Int = 0, val selected: Int = 0,
+    val checked: Int = 0, val verified: Int = 0,
     val matched: Int = 0, val needData: Int = 0, val universeSource: String = "",
+    val quoteWatchlist: List<KeepEyeQuoteCandidate> = emptyList(),
     val results: List<KeepEyeCandidate> = emptyList(), val note: String = ""
 )
 
