@@ -1187,7 +1187,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun showStocks(visible: Boolean) {
         if (stocksVisible == visible) return
         stocksVisible = visible
-        if (!visible) keepEyeVisible = false
+        if (!visible) {
+            keepEyeVisible = false
+            moversVisible = false
+        }
         if (visible) stopLivePriceStream() else startLivePriceStream()
         if (visible) fetchStockScanner() else fetchAnalysis()
         startAutoRefresh()
