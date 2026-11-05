@@ -11,6 +11,20 @@ const RESCAN_GAP_MS = 120_000;
 const HISTORY_BLOCK_RECHECK_MS = 5 * 60_000;
 const maxCandidates = 8;
 const results = new Map();
+export function normalizedQuoteTime(raw, now = Date.now()) {
+  const age=quoteFeedAgeMs({exchFeedTime:raw},now);
+  return Number.isFinite(age) && age >= 0 ? new Date(now-age).toISOString() : null;
+}
+export function quoteWatchlistCandidates(selected, maxCount = 3) {
+  return selected.slice(0, maxCount).map((row,index)=>({
+    symbol:row.symbol, sector:row.sector,price:rounded(row.price),
+    quoteTime:normalizedQuoteTime(row.quote?.exchFeedTime), rank:index+1,
+    changePct:rounded(row.pct), turnoverEstimate:rounded(row.turnover),
+    spreadPct:rounded(100 * quoteSpread(row.quote) / row.price),
+    status:'QUOTE_SCREENED',
+    reason:'Passed live quote freshness, price, turnover, spread and movement filters. This is not a confirmed seven condition strategy match.'
+  }));
+}
 
 const istDate = time => new Date(time + IST_MS);
 const day = time => istDate(time).toISOString().slice(0, 10);
@@ -193,6 +207,8 @@ export async function evaluateKeepEyeCandidates(session, now, state, selected, f
     }
     state.matched = state.results.filter(x => x.status === 'MATCH').length;
     state.needData = state.results.filter(x => x.status === 'DATA_UNAVAILABLE').length;
+    state.verified = state.results.filter(x => x.checks.length === 7 &&
+      x.checks.every(check => check.status !== 'DATA_UNAVAILABLE')).length;
     state.updatedAt = new Date().toISOString();
   }
   state.status = blocked ? 'BROKER_HISTORY_BLOCKED' : state.needData === state.results.length
@@ -200,7 +216,7 @@ export async function evaluateKeepEyeCandidates(session, now, state, selected, f
   state.note = blocked
     ? 'Historical broker access is blocked (' + blocked.code.replace(/_/g, ' ') +
       '). Only ' + state.checked + ' of ' + selected.length +
-      ' shortlisted stocks were attempted; the remaining stocks were not rejected by the strategy. Retry after broker cooldown.'
+      ' shortlisted stocks had historical requests attempted. The remaining stocks are quote watchlist candidates only, not rejected strategy matches. Retry after broker cooldown.'
     : state.matched
     ? state.matched + ' stock(s) passed all seven verified conditions. Research watch only, not an entry signal.'
     : state.needData
@@ -234,8 +250,13 @@ async function run(session,now,state) {
   });
   const selected=shortlistStocks(candidates).slice(0,maxCandidates);
   state.scanned=stocks.length;
-  state.results=selected.map(s=>({symbol:s.symbol,sector:s.sector,price:rounded(s.price),
-    quoteTime:s.quote?.exchFeedTime||null,status:'CHECKING',passed:0,total:7,checks:[],message:'Loading completed candles for Keep Eye checks.'}));
+  state.selected=selected.length;
+  // A valid quote-based shortlist is an observable result even if the broker
+  // refuses all historical candle requests. Never call it a technical match.
+  state.quoteWatchlist=quoteWatchlistCandidates(selected);
+  state.results=selected.map((row,index)=>({symbol:row.symbol,sector:row.sector,price:rounded(row.price),
+    selectionRank:index+1,quoteTime:row.quote?.exchFeedTime||null,status:'CHECKING',
+    passed:0,total:7,checks:[],message:'Loading completed candles for Keep Eye checks.'}));
   if(!selected.length){
     state.status='NO_CANDIDATES';
     state.note='No fresh stock quotes passed the existing liquidity, spread and movement filters. No match is inferred.';
@@ -252,7 +273,8 @@ export async function keepEyeScan(session,now=new Date(),force=false) {
     (item.data.brokerBlock && Date.now() < item.data.brokerBlock.retryAt) ||
     Date.now()-item.at<(force?RESCAN_GAP_MS:CACHE_MS))) return item.data;
   const state={status:'RUNNING',timestamp:now.toISOString(),updatedAt:now.toISOString(),
-    scanned:0,checked:0,matched:0,needData:0,brokerBlock:null,universeSource:'',results:[],
+    scanned:0,selected:0,checked:0,verified:0,matched:0,needData:0,brokerBlock:null,
+    quoteWatchlist:[],universeSource:'',results:[],
     note:'Loading NSE cash universe and eligible live quotes.'};
   results.set(key,{at:Date.now(),data:state});
   // Return status immediately, then publish progress without blocking the API.

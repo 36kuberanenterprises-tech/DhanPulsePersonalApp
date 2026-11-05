@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resampleNseCandles, completedDailyCandles, upperBollinger, simpleMovingAverage, evaluateKeepEye, classifyKeepEyeHistoryError, evaluateKeepEyeCandidates } from '../src/keep-eye-finder.js';
+import { resampleNseCandles, completedDailyCandles, upperBollinger, simpleMovingAverage, evaluateKeepEye, classifyKeepEyeHistoryError, evaluateKeepEyeCandidates, quoteWatchlistCandidates, normalizedQuoteTime } from '../src/keep-eye-finder.js';
 
 const start=Date.parse('2026-11-04T03:45:00Z'); // 09:15 IST
 const now=new Date('2026-11-04T10:15:30Z'); // 15:45 IST
@@ -91,5 +91,29 @@ test('one denied history request prevents repeatedly retrying seven more shortli
   assert.equal(state.status, 'BROKER_HISTORY_BLOCKED');
   assert.equal(state.brokerBlock.code, 'BROKER_ACCESS_DENIED');
   assert.ok(state.results.every(x => x.status === 'DATA_UNAVAILABLE'));
-  assert.match(state.note, /remaining stocks were not rejected by the strategy/);
+  assert.match(state.note, /quote watchlist candidates only, not rejected strategy matches/);
+});
+
+test('a live quote screened stock is visible without inventing a historical strategy match', () => {
+  const q = (symbol, price, rank) => ({
+    symbol, sector:'Financial Services', price, pct:0.5+rank,
+    turnover:20_000_000 + rank, quote:{exchFeedTime:'2026-11-05T09:47:00+05:30',
+      depth:{buy:[{price:price-0.1}],sell:[{price:price+0.1}]}}
+  });
+  const result=quoteWatchlistCandidates([q('A',100,1),q('B',110,2),q('C',120,3),q('D',130,4)]);
+  assert.equal(result.length,3);
+  assert.deepEqual(result.map(r=>r.symbol),['A','B','C']);
+  assert.equal(result[0].rank,1);
+  assert.equal(result[0].status,'QUOTE_SCREENED');
+  assert.equal(result[0].price,100);
+  assert.ok(result[0].spreadPct>0);
+  assert.match(result[0].reason,/not a confirmed seven condition/);
+  assert.equal(result.some(row=>row.status==='MATCH'),false);
+});
+
+test('Angel One exchange quote time is converted to ISO for the Android watchlist', () => {
+  const now=Date.parse('2026-11-05T04:17:30Z');
+  const actual=normalizedQuoteTime('05-Nov-2026 09:47:00',now);
+  assert.equal(actual,'2026-11-05T04:17:00.000Z');
+  assert.equal(normalizedQuoteTime('unverified',now),null);
 });
