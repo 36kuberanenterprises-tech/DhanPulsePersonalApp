@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resampleNseCandles, completedDailyCandles, upperBollinger, simpleMovingAverage, evaluateKeepEye } from '../src/keep-eye-finder.js';
+import { resampleNseCandles, completedDailyCandles, upperBollinger, simpleMovingAverage, evaluateKeepEye, keepEyeBrokerDenial } from '../src/keep-eye-finder.js';
 
 const start=Date.parse('2026-11-04T03:45:00Z'); // 09:15 IST
 const now=new Date('2026-11-04T10:15:30Z'); // 15:45 IST
@@ -54,4 +54,38 @@ test('the seven mandatory checks must all have completed data before any match',
   assert.equal(result.checks.length,7);
   assert.deepEqual(result.checks.map(c=>c.timeframe),['2H','1D','2H','1D','2H','1D','15M']);
   assert.ok(result.checks.every(c=>c.status==='DATA_UNAVAILABLE'));
+});
+
+
+test('403 broker error is treated as one scanner wide block, not eight independent data failures', () => {
+  const now=Date.parse('2026-11-05T04:17:00Z');
+  const denied=keepEyeBrokerDenial(Object.assign(new Error(
+    'Candle data: HTTP 403: Access denied because of exceeding access rate'),{status:403}),now);
+  assert.equal(denied.rejected,true);
+  assert.equal(denied.reason,'RATE_LIMIT_OR_COOLDOWN');
+  assert.ok(denied.retryAt>=now+15*60_000);
+  const forbidden=keepEyeBrokerDenial(Object.assign(new Error('HTTP 403 Forbidden'),{status:403}),now);
+  assert.equal(forbidden.rejected,true);
+  assert.equal(forbidden.reason,'HISTORY_ACCESS_DENIED');
+  assert.ok(forbidden.retryAt>=now+20*60_000);
+  const transient=keepEyeBrokerDenial(new Error('Unexpected parse error'),now);
+  assert.equal(transient.rejected,false);
+  assert.equal(transient.retryAt,null);
+});
+
+test('broker specific retry time is respected when greater than local cooldown',()=>{
+  const now=Date.parse('2026-11-05T04:17:00Z');
+  const retryAt=now+45*60_000;
+  const denied=keepEyeBrokerDenial(Object.assign(new Error('Historical request cooldown'),{retryAt}),now);
+  assert.equal(denied.retryAt,retryAt);
+  assert.equal(denied.rejected,true);
+});
+
+test('daily-only screening can reject a nonmatch without two hour historical requests',()=>{
+  const now=new Date('2026-11-05T04:17:00Z');
+  const daily=Array.from({length:32},(_,i)=>make(Date.parse('2026-09-15T03:45:00Z')+i*86_400_000,100-i*2));
+  const result=evaluateKeepEye({symbol:'EXAMPLE',sector:'Testing',price:40,fiveMinute:[],daily,now});
+  assert.equal(result.status,'NOT_MATCH');
+  assert.ok(result.checks.some(c=>c.timeframe==='1D'&&c.status==='FAIL'));
+  assert.ok(result.checks.some(c=>c.timeframe==='2H'&&c.status==='DATA_UNAVAILABLE'));
 });
