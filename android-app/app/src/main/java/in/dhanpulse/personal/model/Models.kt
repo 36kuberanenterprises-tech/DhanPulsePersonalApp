@@ -83,6 +83,34 @@ data class StockScanResponse(
     val trackedQuote: StockQuote? = null, val note: String = ""
 )
 // Seven verified conditions from the user supplied Chartink Keep Eye filter.
+data class MoverSectorBreadth(
+    val sector: String = "", val count: Int = 0,
+    val advancers: Int = 0, val averageChangePct: Double? = null
+)
+data class MoversBreadth(
+    val scanned: Int = 0, val advancers: Int = 0, val decliners: Int = 0,
+    val unchanged: Int = 0, val advancingPct: Double? = null,
+    val sectorBreadth: List<MoverSectorBreadth> = emptyList(), val note: String = ""
+)
+data class LiveMoverStock(
+    val symbol: String = "", val sector: String = "", val token: String = "",
+    val price: Double? = null, val priorClose: Double? = null, val open: Double? = null,
+    val dayHigh: Double? = null, val changePct: Double? = null, val gapPct: Double? = null,
+    val fromOpenPct: Double? = null, val distanceHighPct: Double? = null,
+    val estimatedTurnover: Double? = null, val spreadPct: Double? = null,
+    val circuitBufferPct: Double? = null, val quoteTime: String? = null,
+    val ageSeconds: Double? = null, val pattern: String = "", val score: Double? = null,
+    val status: String = "LIVE_MOVER", val warnings: List<String> = emptyList(),
+    val note: String = ""
+)
+data class LiveMoversResponse(
+    val status: String = "RUNNING", val timestamp: String = "", val updatedAt: String = "",
+    val universeSource: String = "", val universeCount: Int = 0,
+    val eligibleUniverse: Int = 0, val processed: Int = 0, val batchErrors: Int = 0,
+    val lastError: String? = null, val movers: List<LiveMoverStock> = emptyList(),
+    val breadth: MoversBreadth = MoversBreadth(), val note: String = ""
+)
+
 data class KeepEyeCheck(
     val name: String = "", val timeframe: String = "",
     val observed: Double? = null, val reference: Double? = null,
