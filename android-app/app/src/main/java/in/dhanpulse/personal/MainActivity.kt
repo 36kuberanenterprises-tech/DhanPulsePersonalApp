@@ -51,6 +51,7 @@ import `in`.dhanpulse.personal.model.BacktestStrategy
 import `in`.dhanpulse.personal.model.AdaptivePhase
 import `in`.dhanpulse.personal.model.StockCandidate
 import `in`.dhanpulse.personal.model.KeepEyeCandidate
+import `in`.dhanpulse.personal.model.LiveMoverStock
 import `in`.dhanpulse.personal.model.KeepEyeQuoteCandidate
 import `in`.dhanpulse.personal.model.PaperStockTrade
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
@@ -353,7 +354,8 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                 when (section) {
                     "ACCOUNT", "POSITIONS" -> vm.fetchAccount()
                     "STOCK_OPTIONS" -> vm.fetchStockOptions()
-                    "STOCKS" -> if (vm.keepEyeVisible) vm.fetchKeepEye(refresh = true) else vm.fetchStockScanner()
+                    "STOCKS" -> if (vm.moversVisible) vm.fetchMovers(refresh = true)
+                        else if (vm.keepEyeVisible) vm.fetchKeepEye(refresh = true) else vm.fetchStockScanner()
                     "TRADE" -> { vm.fetchAnalysis(); vm.fetchAccount() }
                     else -> vm.fetchAnalysis()
                 }
@@ -1154,13 +1156,16 @@ private fun stockTime(raw: String?): String = runCatching {
 @Composable
 private fun StocksSection(vm: DhanPulseViewModel) {
     var selection by remember { mutableStateOf("DAILY") }
-    LaunchedEffect(selection) { vm.showKeepEye(selection == "KEEP_EYE") }
+    LaunchedEffect(selection) {
+        vm.showKeepEye(selection == "KEEP_EYE")
+        vm.showMovers(selection == "MOVERS")
+    }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("DAILY" to "Daily Scanner", "KEEP_EYE" to "Intraday Finder").forEach { (key, label) ->
+            listOf("DAILY" to "Daily", "KEEP_EYE" to "Keep Eye", "MOVERS" to "Live Movers").forEach { (key, label) ->
                 val active = selection == key
                 Surface(
                     onClick = { selection = key },
@@ -1170,11 +1175,120 @@ private fun StocksSection(vm: DhanPulseViewModel) {
                     border = BorderStroke(1.dp, if (active) Purple.copy(alpha = 0.45f) else Line)
                 ) {
                     Text(label, color = Ink, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = 12.sp, maxLines = 1,
                         textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp))
                 }
             }
         }
-        if (selection == "KEEP_EYE") KeepEyeFinderSection(vm) else DailyStocksSection(vm)
+        when (selection) {
+            "KEEP_EYE" -> KeepEyeFinderSection(vm)
+            "MOVERS" -> LiveMoversSection(vm)
+            else -> DailyStocksSection(vm)
+        }
+    }
+}
+
+@Composable
+private fun LiveMoversSection(vm: DhanPulseViewModel) {
+    val scan = vm.liveMovers
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 10.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { SectionTitle("Daily Live Movers", "NSE 500 opening gap continuation and strong intraday price movements") }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel),
+                shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Early price movement watch", color = Ink, fontWeight = FontWeight.Bold)
+                    Text("Checks live opening gaps, gains from the open, distance from the day's high, turnover, quote freshness, spread and circuit limits. Scans up to 50 stocks per broker quote request.",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("The heatmap below summarises stocks actually screened. This is not an NSE index heatmap or a trading signal.",
+                        color = Amber, style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = { vm.fetchMovers(refresh = true) },
+                        enabled = !vm.moversLoading && scan?.status != "RUNNING") {
+                        Text(if (vm.moversLoading) "Refreshing..." else "Run Live Movers Scan")
+                    }
+                }
+            }
+        }
+        vm.moversError?.let { item { InfoStrip("Live movers unavailable", it) } }
+        if (scan != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Panel),
+                    shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+                    Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text("${scan.status.replace('_', ' ')} • ${stockTime(scan.updatedAt)}",
+                            color = if (scan.status == "COMPLETE") Green else Amber, fontWeight = FontWeight.Bold)
+                        Text("${scan.processed} of ${scan.eligibleUniverse} stocks scanned • ${scan.movers.size} watch alerts", color = Ink)
+                        Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (scan.status == "RUNNING") LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (scan.batchErrors > 0) {
+                            Text("${scan.batchErrors} quote groups unavailable. The market scan is incomplete.",
+                                color = Amber, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            if (scan.breadth.scanned > 0) {
+                item {
+                    Card(colors = CardDefaults.cardColors(containerColor = Panel),
+                        shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+                        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text("Market Breadth from Live Quotes", color = Ink, fontWeight = FontWeight.Bold)
+                            Text("${scan.breadth.advancers} advancing • ${scan.breadth.decliners} declining • ${scan.breadth.unchanged} unchanged",
+                                color = Muted, style = MaterialTheme.typography.bodySmall)
+                            scan.breadth.sectorBreadth.forEach { sector ->
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("${sector.sector} (${sector.count})", modifier = Modifier.weight(1f),
+                                        color = Ink, style = MaterialTheme.typography.labelSmall)
+                                    val change = sector.averageChangePct
+                                    Text(change?.let { String.format("%+.2f%%", it) } ?: "NA",
+                                        color = if ((change ?: 0.0) >= 0.0) Green else Red,
+                                        style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                            Text(scan.breadth.note, color = Amber, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+            if (scan.movers.isNotEmpty()) {
+                item { SectionTitle("Stocks Showing Unusual Strength",
+                    "Quote based watchlist only. No confirmed entry, stop loss or target.") }
+                items(scan.movers, key = { "MOVER_" + it.symbol }) { stock ->
+                    Card(colors = CardDefaults.cardColors(containerColor = Panel),
+                        shape = RoundedCornerShape(17.dp), border = BorderStroke(1.dp, Line)) {
+                        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(stock.symbol, color = Ink, fontWeight = FontWeight.ExtraBold)
+                                Text(if (stock.status == "LIVE_MOVER") "MOMENTUM WATCH" else "VERIFY FIRST",
+                                    color = if (stock.status == "LIVE_MOVER") Green else Amber,
+                                    style = MaterialTheme.typography.labelSmall)
+                            }
+                            val change = stock.changePct
+                            Text("${stockRs(stock.price)} • ${change?.let { String.format("%+.2f%%", it) } ?: "NA"} today",
+                                color = if ((change ?: 0.0) >= 0.0) Green else Red, fontWeight = FontWeight.SemiBold)
+                            Text(if (stock.pattern == "GAP_CONTINUATION") "Opening gap with follow through" else "Intraday strength near day's high",
+                                color = Muted, style = MaterialTheme.typography.bodySmall)
+                            Text("Opening gap ${stock.gapPct?.let { String.format("%+.2f%%", it) } ?: "NA"} • From open ${stock.fromOpenPct?.let { String.format("%+.2f%%", it) } ?: "NA"} • Below high ${stock.distanceHighPct?.let { String.format("%.2f%%", it) } ?: "NA"}",
+                                color = Muted, style = MaterialTheme.typography.bodySmall)
+                            Text("Quote ${stockTime(stock.quoteTime)} • Spread ${stock.spreadPct?.let { String.format("%.2f%%", it) } ?: "Unverified"}",
+                                color = Muted, style = MaterialTheme.typography.labelSmall)
+                            stock.warnings.forEach { warning ->
+                                Text(warning, color = Amber, style = MaterialTheme.typography.labelSmall)
+                            }
+                            Text("Price movement alert only. Do not enter without an independently verified setup.",
+                                color = Amber, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            } else if (scan.status != "RUNNING") {
+                item { EmptyStateCard("No qualifying live movers", scan.note) }
+            }
+        } else if (vm.moversLoading) {
+            item { LoadingMarketCard() }
+        }
     }
 }
 
