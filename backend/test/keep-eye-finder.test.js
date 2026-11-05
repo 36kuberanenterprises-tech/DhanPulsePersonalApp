@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resampleNseCandles, completedDailyCandles, upperBollinger, simpleMovingAverage, evaluateKeepEye, keepEyeBrokerDenial } from '../src/keep-eye-finder.js';
+import { resampleNseCandles, completedDailyCandles, upperBollinger, simpleMovingAverage, evaluateKeepEye, classifyKeepEyeHistoryError, evaluateKeepEyeCandidates } from '../src/keep-eye-finder.js';
 
 const start=Date.parse('2026-11-04T03:45:00Z'); // 09:15 IST
 const now=new Date('2026-11-04T10:15:30Z'); // 15:45 IST
@@ -57,35 +57,39 @@ test('the seven mandatory checks must all have completed data before any match',
 });
 
 
-test('403 broker error is treated as one scanner wide block, not eight independent data failures', () => {
-  const now=Date.parse('2026-11-05T04:17:00Z');
-  const denied=keepEyeBrokerDenial(Object.assign(new Error(
-    'Candle data: HTTP 403: Access denied because of exceeding access rate'),{status:403}),now);
-  assert.equal(denied.rejected,true);
-  assert.equal(denied.reason,'RATE_LIMIT_OR_COOLDOWN');
-  assert.ok(denied.retryAt>=now+15*60_000);
-  const forbidden=keepEyeBrokerDenial(Object.assign(new Error('HTTP 403 Forbidden'),{status:403}),now);
-  assert.equal(forbidden.rejected,true);
-  assert.equal(forbidden.reason,'HISTORY_ACCESS_DENIED');
-  assert.ok(forbidden.retryAt>=now+20*60_000);
-  const transient=keepEyeBrokerDenial(new Error('Unexpected parse error'),now);
-  assert.equal(transient.rejected,false);
-  assert.equal(transient.retryAt,null);
+test('generic HTTP 403 reports access denial rather than claiming the account exceeded rate limits', () => {
+  const x = classifyKeepEyeHistoryError(Object.assign(new Error('Candle data HTTP 403 Forbidden'), { status: 403 }), 0);
+  assert.equal(x.code, 'BROKER_ACCESS_DENIED');
+  assert.equal(x.block, true);
+  assert.match(x.message, /permission, IP or access restriction/);
 });
 
-test('broker specific retry time is respected when greater than local cooldown',()=>{
-  const now=Date.parse('2026-11-05T04:17:00Z');
-  const retryAt=now+45*60_000;
-  const denied=keepEyeBrokerDenial(Object.assign(new Error('Historical request cooldown'),{retryAt}),now);
-  assert.equal(denied.retryAt,retryAt);
-  assert.equal(denied.rejected,true);
+test('explicit broker rate response reports a rate cooldown independently from HTTP 403 denial', () => {
+  const error = Object.assign(new Error('HTTP 403 Access denied because of exceeding access rate'), { status: 403, retryAt: 300_000 });
+  const x = classifyKeepEyeHistoryError(error, 0);
+  assert.equal(x.code, 'BROKER_RATE_LIMIT');
+  assert.equal(x.retryAt, 300_000);
+  assert.equal(x.block, true);
 });
 
-test('daily-only screening can reject a nonmatch without two hour historical requests',()=>{
-  const now=new Date('2026-11-05T04:17:00Z');
-  const daily=Array.from({length:32},(_,i)=>make(Date.parse('2026-09-15T03:45:00Z')+i*86_400_000,100-i*2));
-  const result=evaluateKeepEye({symbol:'EXAMPLE',sector:'Testing',price:40,fiveMinute:[],daily,now});
-  assert.equal(result.status,'NOT_MATCH');
-  assert.ok(result.checks.some(c=>c.timeframe==='1D'&&c.status==='FAIL'));
-  assert.ok(result.checks.some(c=>c.timeframe==='2H'&&c.status==='DATA_UNAVAILABLE'));
+test('one denied history request prevents repeatedly retrying seven more shortlisted stocks', async () => {
+  const selected = ['A','B','C'].map((symbol,i) => ({
+    symbol, sector: 'Test', price: 110 + i, instrument: { token: String(i + 100) }, quote: {}
+  }));
+  const state = { checked: 0, matched: 0, needData: 0, brokerBlock: null,
+    results: selected.map(x => ({ symbol: x.symbol, status: 'CHECKING', total: 7, passed: 0, checks: [] })) };
+  let calls = 0;
+  const fetchHistory = async () => {
+    calls++;
+    throw Object.assign(new Error('HTTP 403 Forbidden'), { status: 403 });
+  };
+  await evaluateKeepEyeCandidates({clientCode:'test'}, new Date('2026-11-05T04:15:00Z'), state, selected, fetchHistory);
+  assert.equal(calls, 1);
+  assert.equal(state.checked, 1);
+  assert.equal(state.needData, 3);
+  assert.equal(state.matched, 0);
+  assert.equal(state.status, 'BROKER_HISTORY_BLOCKED');
+  assert.equal(state.brokerBlock.code, 'BROKER_ACCESS_DENIED');
+  assert.ok(state.results.every(x => x.status === 'DATA_UNAVAILABLE'));
+  assert.match(state.note, /remaining stocks were not rejected by the strategy/);
 });
