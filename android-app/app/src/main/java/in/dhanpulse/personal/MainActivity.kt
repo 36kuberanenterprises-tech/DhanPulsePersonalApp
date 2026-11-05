@@ -51,6 +51,7 @@ import `in`.dhanpulse.personal.model.BacktestStrategy
 import `in`.dhanpulse.personal.model.AdaptivePhase
 import `in`.dhanpulse.personal.model.StockCandidate
 import `in`.dhanpulse.personal.model.KeepEyeCandidate
+import `in`.dhanpulse.personal.model.KeepEyeQuoteCandidate
 import `in`.dhanpulse.personal.model.PaperStockTrade
 import `in`.dhanpulse.personal.ui.DhanPulseViewModel
 import kotlin.math.abs
@@ -1281,7 +1282,9 @@ private fun KeepEyeFinderSection(vm: DhanPulseViewModel) {
                     Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(scan.status.replace('_', ' ') + " • " + stockTime(scan.updatedAt),
                             fontWeight = FontWeight.Bold, color = if (scan.status == "COMPLETE") Green else Amber)
-                        Text("${scan.scanned} screened • ${scan.checked} checked • ${scan.matched} matches • ${scan.needData} data gaps", color = Ink)
+                        Text("${scan.scanned} quotes screened • ${scan.selected} shortlisted • ${scan.checked} history attempts", color = Ink)
+                        Text("${scan.verified} fully checked • ${scan.matched} exact matches • ${scan.needData} needing data", color = Muted,
+                            style = MaterialTheme.typography.bodySmall)
                         Text(scan.universeSource, color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text(scan.note, color = Muted, style = MaterialTheme.typography.bodySmall)
                         if (scan.status == "RUNNING") {
@@ -1291,8 +1294,35 @@ private fun KeepEyeFinderSection(vm: DhanPulseViewModel) {
                     }
                 }
             }
+            if (scan.status == "BROKER_HISTORY_BLOCKED") {
+                item {
+                    InfoStrip("Broker historical data blocked",
+                        "The broker did not provide the candles needed for seven conditions. Quote watchlist entries are visible below, but they are NOT confirmed matches.")
+                }
+            }
+            if (scan.quoteWatchlist.isNotEmpty()) {
+                item { SectionTitle("Quote Based Watchlist", "Eligible live quotes only. Technical checks remain separate.") }
+                items(scan.quoteWatchlist, key = { "QUOTE_" + it.symbol }) { row ->
+                    Card(colors = CardDefaults.cardColors(containerColor = Panel),
+                        shape = RoundedCornerShape(15.dp), border = BorderStroke(1.dp, Line)) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("${row.rank}. ${row.symbol}", color = Ink, fontWeight = FontWeight.Bold)
+                                Text("QUOTE ONLY", color = Amber, fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.labelSmall)
+                            }
+                            Text("${stockRs(row.price)} • ${row.sector} • Change ${row.changePct?.let { String.format("%+.2f%%", it) } ?: "NA"}",
+                                color = Muted, style = MaterialTheme.typography.bodySmall)
+                            Text("Quote: ${stockTime(row.quoteTime)} • Spread ${row.spreadPct?.let { String.format("%.2f%%", it) } ?: "NA"}",
+                                color = Muted, style = MaterialTheme.typography.labelSmall)
+                            Text("Live quote screening only. A BUY or SELL signal requires seven completed historical checks.",
+                                color = Amber, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
             if (scan.results.isNotEmpty()) {
-                item { SectionTitle("Stocks to Keep an Eye On", "A match is a technical filter result, not an entry recommendation") }
+                item { SectionTitle("Keep Eye Technical Checks", "Only stocks passing all seven verified conditions are exact matches") }
                 val sorted = scan.results.sortedWith(compareBy<KeepEyeCandidate> {
                     when (it.status) { "MATCH" -> 0; "NOT_MATCH" -> 1; "DATA_UNAVAILABLE" -> 2; else -> 3 }
                 }.thenByDescending { it.passed })
