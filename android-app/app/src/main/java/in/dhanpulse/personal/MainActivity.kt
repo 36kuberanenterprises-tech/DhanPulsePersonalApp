@@ -311,7 +311,7 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                             updated?.let { System.currentTimeMillis() - java.time.Instant.parse(it).toEpochMilli() }
                         }.getOrNull() else null
                         val stockDelayed = vm.stocksVisible && (stockAge == null ||
-                            stockAge > if (moverActive) 180_000 else 45_000 ||
+                            stockAge > (if (moverActive) 180_000L else 45_000L) ||
                             if (moverActive) vm.moversError != null
                             else if (eyeActive) vm.keepEyeError != null else vm.stockScanError != null)
                         val stockHistoryBlocked = if (moverActive) false
