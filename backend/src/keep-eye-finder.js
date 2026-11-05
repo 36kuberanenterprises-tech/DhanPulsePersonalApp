@@ -1,5 +1,6 @@
 import { candleData, instrumentMaster, marketData, parseCandles, parseFetched, quoteFeedAgeMs, quoteLtp } from './angel.js';
 import { rsi, supertrend } from './indicators.js';
+import { isRateError } from './history-control.js';
 import { quoteSpread, shortlistStocks, stockWatchlist, scannerSession } from './stock-scanner.js';
 
 const IST_MS = 330 * 60_000;
@@ -8,6 +9,7 @@ const FIVE_MIN = 300_000;
 const SETTLE_MS = 20_000;
 const CACHE_MS = 5 * 60_000;
 const RESCAN_GAP_MS = 120_000;
+const HISTORY_BLOCK_RECHECK_MS = 5 * 60_000;
 const maxCandidates = 8;
 const results = new Map();
 
@@ -132,26 +134,77 @@ export function evaluateKeepEye({symbol,sector,price,quoteTime,fiveMinute,daily,
       :'At least one Keep Eye condition is not met. No confirmed match.'};
 }
 
-const errorText = error => {
-  const raw=String(error?.message||'Data unavailable');
-  if (error?.status===403 || /\b403\b|exceeding access rate|rate limit|cooldown/i.test(raw))
-    return 'Angel One historical API restricted access (HTTP 403 or cooldown). No indicator can be confirmed without broker candles.';
-  if (/timeout/i.test(raw)) return 'Broker candle request timed out. Retry after the cooldown.';
-  return 'Verified historical data unavailable. '+raw.slice(0,140);
+export function classifyKeepEyeHistoryError(error, now = Date.now()) {
+  const raw = String(error?.message || 'Data unavailable');
+  const rateLimited = isRateError(error) || /cooldown|exceeding access rate|rate limit/i.test(raw);
+  const forbidden = error?.status === 403 || /\b403\b|forbidden/i.test(raw);
+  const retryAt = Number.isFinite(error?.retryAt)
+    ? error.retryAt : now + HISTORY_BLOCK_RECHECK_MS;
+  if (rateLimited) return {
+    code: 'BROKER_RATE_LIMIT', block: true, retryAt,
+    message: 'Angel One historical requests are rate limited or in cooldown. Live stock prices may still work. Wait for broker access before evaluating all seven conditions.'
+  };
+  if (forbidden) return {
+    code: 'BROKER_ACCESS_DENIED', block: true, retryAt,
+    message: 'Angel One denied historical candles (HTTP 403). This can be a broker permission, IP or access restriction, not necessarily excessive requests. Verify the broker response and backend egress IP.'
+  };
+  if (/timeout/i.test(raw)) return {
+    code: 'BROKER_TIMEOUT', block: false, retryAt,
+    message: 'Angel One historical candle request timed out. No technical match can be confirmed.'
+  };
+  return {
+    code: 'DATA_UNAVAILABLE', block: false, retryAt,
+    message: 'Verified historical candle data unavailable. ' + raw.slice(0, 140)
+  };
 };
-// Angel One may deny the entire historical API even while quote requests succeed.
-// One denial must stop the remaining symbols; repeating it for every stock
-// makes the account lockout worse and cannot produce legitimate signals.
-export function keepEyeBrokerDenial(error, now=Date.now()) {
-  const reason=String(error?.message||'');
-  const rejected=error?.status===403 || error?.rateLimited===true ||
-    /\b403\b|forbidden|exceeding access rate|rate limit|historical request cooldown/i.test(reason);
-  const limited=error?.rateLimited===true || /exceeding access rate|rate limit|cooldown/i.test(reason);
-  const fromBroker=Number(error?.retryAt);
-  const minimum=now+(limited ? 15 : 20)*60_000;
-  return {rejected,reason:limited?'RATE_LIMIT_OR_COOLDOWN':'HISTORY_ACCESS_DENIED',
-    retryAt:rejected?Math.max(Number.isFinite(fromBroker)?fromBroker:0,minimum):null};
+const errorText = error => classifyKeepEyeHistoryError(error).message;
+export async function evaluateKeepEyeCandidates(session, now, state, selected, fetchHistory = candleData) {
+  state.note='Analysing up to eight shortlisted stocks. Broker candle calls are paced across all DhanPulse markets.';
+  let blocked = null;
+  for (let i = 0; i < selected.length; i++) {
+    const item = selected[i];
+    if (blocked) {
+      state.results[i] = { ...state.results[i], status: 'DATA_UNAVAILABLE', unavailable: 7,
+        checks: [], message: 'Not analysed because the broker blocked historical access for ' +
+          blocked.symbol + '. Further history requests are paused to avoid repeated rejections.' };
+    } else {
+      try {
+        const token = String(item.instrument.token);
+        // Completed 5-minute and daily history are required to validate each rule.
+        const five = await fetchHistory(session, { exchange: 'NSE', symboltoken: token,
+          interval: 'FIVE_MINUTE', fromdate: format(now.getTime() - 35*DAY_MS), todate: format(now.getTime()) });
+        const daily = await fetchHistory(session, { exchange: 'NSE', symboltoken: token,
+          interval: 'ONE_DAY', fromdate: format(now.getTime() - 100*DAY_MS), todate: format(now.getTime()) });
+        state.results[i] = evaluateKeepEye({ symbol: item.symbol, sector: item.sector, price: item.price,
+          quoteTime: item.quote?.exchFeedTime, fiveMinute: parseCandles(five), daily: parseCandles(daily), now });
+      } catch (error) {
+        const diagnosis = classifyKeepEyeHistoryError(error);
+        state.results[i] = { ...state.results[i], status: 'DATA_UNAVAILABLE', unavailable: 7,
+          checks: [], message: diagnosis.message };
+        if (diagnosis.block) {
+          blocked = { code: diagnosis.code, symbol: item.symbol, retryAt: diagnosis.retryAt };
+          state.brokerBlock = blocked;
+        }
+      }
+      state.checked++;
+    }
+    state.matched = state.results.filter(x => x.status === 'MATCH').length;
+    state.needData = state.results.filter(x => x.status === 'DATA_UNAVAILABLE').length;
+    state.updatedAt = new Date().toISOString();
+  }
+  state.status = blocked ? 'BROKER_HISTORY_BLOCKED' : state.needData === state.results.length
+    ? 'DATA_UNAVAILABLE' : 'COMPLETE';
+  state.note = blocked
+    ? 'Historical broker access is blocked (' + blocked.code.replace(/_/g, ' ') +
+      '). Only ' + state.checked + ' of ' + selected.length +
+      ' shortlisted stocks were attempted; the remaining stocks were not rejected by the strategy. Retry after broker cooldown.'
+    : state.matched
+    ? state.matched + ' stock(s) passed all seven verified conditions. Research watch only, not an entry signal.'
+    : state.needData
+    ? state.needData + ' shortlisted stocks lack enough verified historical data. No valid strategy match can be decided for those stocks.'
+    : 'No stocks passed all seven conditions on verified historical candles.';
 }
+
 async function run(session,now,state) {
   const list=await stockWatchlist();
   state.universeSource=list.source;
@@ -185,53 +238,7 @@ async function run(session,now,state) {
     state.note='No fresh stock quotes passed the existing liquidity, spread and movement filters. No match is inferred.';
     return;
   }
-  state.note='Checking completed daily candles first. Intraday history is only requested when the daily conditions pass.';
-  for(let i=0;i<selected.length;i++){
-    const item=selected[i];
-    try{
-      const token=String(item.instrument.token);
-      // The three daily conditions are mandatory. First reject failed daily
-      // setups without wasting a second historical call on a nonmatch.
-      const daily=await candleData(session,{exchange:'NSE',symboltoken:token,
-        interval:'ONE_DAY',fromdate:format(now.getTime()-100*DAY_MS),todate:format(now.getTime())});
-      const base={symbol:item.symbol,sector:item.sector,price:item.price,
-        quoteTime:item.quote?.exchFeedTime,daily:parseCandles(daily),now};
-      const preliminary=evaluateKeepEye({...base,fiveMinute:[]});
-      const dailyFailed=preliminary.checks.some(check=>check.timeframe==='1D' && check.status==='FAIL');
-      if(dailyFailed){
-        state.results[i]={...preliminary,message:'A completed daily condition failed. Intraday history was not requested.'};
-      }else{
-        const five=await candleData(session,{exchange:'NSE',symboltoken:token,
-          interval:'FIVE_MINUTE',fromdate:format(now.getTime()-35*DAY_MS),todate:format(now.getTime())});
-        state.results[i]=evaluateKeepEye({...base,fiveMinute:parseCandles(five)});
-      }
-      state.checked++;
-    }catch(e){
-      const denial=keepEyeBrokerDenial(e);
-      state.results[i]={...state.results[i],status:'DATA_UNAVAILABLE',unavailable:7,
-        message:errorText(e),checks:[]};
-      if(denial.rejected){
-        state.status='BROKER_BLOCKED';
-        state.blockReason=denial.reason;
-        state.retryAt=new Date(denial.retryAt).toISOString();
-        for(let rest=i+1;rest<selected.length;rest++)
-          state.results[rest]={...state.results[rest],status:'DATA_UNAVAILABLE',unavailable:7,
-            message:'Historical requests paused after an earlier broker denial. This stock has not been analysed.',checks:[]};
-        state.needData=state.results.filter(x=>x.status==='DATA_UNAVAILABLE').length;
-        state.matched=state.results.filter(x=>x.status==='MATCH').length;
-        state.updatedAt=new Date().toISOString();
-        state.note='Angel One blocked historical candles. The scanner stopped after the first rejection to avoid more requests. Quotes remain available, but no new technical matches can be verified.';
-        return;
-      }
-    }
-    state.matched=state.results.filter(x=>x.status==='MATCH').length;
-    state.needData=state.results.filter(x=>x.status==='DATA_UNAVAILABLE').length;
-    state.updatedAt=new Date().toISOString();
-  }
-  state.status=state.checked===0?'DATA_UNAVAILABLE':'COMPLETE';
-  state.note=state.matched
-    ? state.matched+' stock(s) passed all seven historical conditions. These are watchlist matches, not entry signals.'
-    : 'No confirmed Keep Eye matches. Failed conditions and missing historical data are reported separately.';
+  await evaluateKeepEyeCandidates(session, now, state, selected);
 }
 
 export async function keepEyeScan(session,now=new Date(),force=false) {
@@ -239,10 +246,10 @@ export async function keepEyeScan(session,now=new Date(),force=false) {
   const key=client+':'+day(now.getTime());
   const item=results.get(key);
   if(item && (item.data.status==='RUNNING' ||
-    (item.data.status==='BROKER_BLOCKED' && Date.now()<Date.parse(item.data.retryAt||'')) ||
+    (item.data.brokerBlock && Date.now() < item.data.brokerBlock.retryAt) ||
     Date.now()-item.at<(force?RESCAN_GAP_MS:CACHE_MS))) return item.data;
   const state={status:'RUNNING',timestamp:now.toISOString(),updatedAt:now.toISOString(),
-    scanned:0,checked:0,matched:0,needData:0,blockReason:null,retryAt:null,universeSource:'',results:[],
+    scanned:0,checked:0,matched:0,needData:0,brokerBlock:null,universeSource:'',results:[],
     note:'Loading NSE cash universe and eligible live quotes.'};
   results.set(key,{at:Date.now(),data:state});
   // Return status immediately, then publish progress without blocking the API.
