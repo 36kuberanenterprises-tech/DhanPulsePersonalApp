@@ -18,6 +18,24 @@ test('client cooldown respects broker retry time, grows on repeated rejection an
   assert.equal(budget.state('A').failures, 0);
 });
 
+test('plain historical HTTP 403 pauses further history even without a rate-limit phrase', async () => {
+  let now = 10_000, brokerCalls = 0;
+  const budget = new HistoryBudget({ now: () => now, sleep: async ms => { now += ms; } });
+  await assert.rejects(budget.run('same-client', async () => {}, async () => {
+    brokerCalls++;
+    throw Object.assign(new Error('Candle data: HTTP 403: Access denied'), { status: 403 });
+  }), /403/);
+  const deniedUntil = budget.state('same-client').blockedUntil;
+  assert.ok(deniedUntil >= now + 15 * 60_000);
+  await assert.rejects(budget.run('same-client', async () => {}, async () => {
+    brokerCalls++;
+  }), /cooldown/);
+  assert.equal(brokerCalls, 1, 'other instruments must not hit historical API during the same account block');
+  assert.equal(await budget.run('different-client', async () => {}, async () => 'OK'), 'OK');
+  now = deniedUntil;
+  assert.equal(await budget.run('same-client', async () => {}, async () => 'Recovered'), 'Recovered');
+});
+
 test('minute and hour budgets reject excess calls before sending, even with small configured spacing', async () => {
   for (const [minute, hour, wait] of [[2, 10, 60_000], [10, 2, 3_600_000]]) {
     let now = 0, sent = 0;
