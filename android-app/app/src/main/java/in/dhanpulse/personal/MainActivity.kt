@@ -296,14 +296,22 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("DhanPulse Trader", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(7.dp))
-                        val status = if (vm.stockOptionsVisible) null else if (vm.stocksVisible) vm.stockScan?.marketStatus else vm.analysis?.tradeDecision?.status
+                        val eyeActive = vm.stocksVisible && vm.keepEyeVisible
+                        val status = if (vm.stockOptionsVisible) null
+                            else if (eyeActive) vm.keepEyeScan?.status
+                            else if (vm.stocksVisible) vm.stockScan?.marketStatus
+                            else vm.analysis?.tradeDecision?.status
                         val stockAge = if (vm.stocksVisible) runCatching {
-                            vm.stockScan?.timestamp?.let { System.currentTimeMillis() - java.time.Instant.parse(it).toEpochMilli() }
+                            val updated = if (eyeActive) vm.keepEyeScan?.updatedAt else vm.stockScan?.timestamp
+                            updated?.let { System.currentTimeMillis() - java.time.Instant.parse(it).toEpochMilli() }
                         }.getOrNull() else null
-                        val stockDelayed = vm.stocksVisible && (stockAge == null || stockAge > 45_000 || vm.stockScanError != null)
-                        val stockHistoryBlocked = vm.stocksVisible && vm.stockScan?.candidates?.any {
-                            it.reason.contains("403", ignoreCase = true)
-                        } == true
+                        val stockDelayed = vm.stocksVisible && (stockAge == null || stockAge > 45_000 ||
+                            if (eyeActive) vm.keepEyeError != null else vm.stockScanError != null)
+                        val stockHistoryBlocked = if (eyeActive) status == "BROKER_HISTORY_BLOCKED" ||
+                            vm.keepEyeScan?.results?.any { it.message.contains("HTTP 403", true) } == true
+                            else vm.stocksVisible && vm.stockScan?.candidates?.any {
+                                it.reason.contains("403", ignoreCase = true)
+                            } == true
                         val indexStreamDelayed = !vm.stocksVisible && !vm.stockOptionsVisible &&
                             section in setOf("MARKET", "MCX") &&
                             vm.liveStreamStatus != "LIVE"
@@ -312,10 +320,15 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                             section == "ACCOUNT" || section == "POSITIONS" -> "ACCOUNT"
                             status == "MARKET_CLOSED" -> "CLOSED"
                             status == "NO_OPTIONS" -> "NO OPTIONS"
+                            status == "BROKER_HISTORY_BLOCKED" -> "BROKER HISTORY BLOCKED"
                             status == "HISTORY_UNAVAILABLE" -> if (vm.analysis?.tradeDecision?.message?.contains("403") == true) "BROKER 403" else "NO HISTORY"
                             vm.stockOptionsVisible && (vm.stockOptionError != null || vm.stockOptionSnapshot?.spotFresh != true) -> "DELAYED"
                             stockDelayed || status == "DATA_STALE" || (!vm.stocksVisible && !vm.stockOptionsVisible && (vm.refreshWarning != null || vm.analysis == null)) -> "DELAYED"
                             vm.stockOptionsVisible -> "QUOTES"
+                            eyeActive && status == "RUNNING" -> "CHECKING"
+                            eyeActive && status == "COMPLETE" && (vm.keepEyeScan?.matched ?: 0) > 0 -> "MATCHES FOUND"
+                            eyeActive && status == "COMPLETE" -> "NO MATCH"
+                            eyeActive && status == "DATA_UNAVAILABLE" -> "DATA NEEDED"
                             vm.stocksVisible && status == "OPENING_RANGE" -> "OPENING RANGE"
                             vm.stocksVisible && status == "NO_NEW_ENTRIES" -> "ENTRIES CLOSED"
                             stockHistoryBlocked -> "BROKER 403"
@@ -339,7 +352,7 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                 when (section) {
                     "ACCOUNT", "POSITIONS" -> vm.fetchAccount()
                     "STOCK_OPTIONS" -> vm.fetchStockOptions()
-                    "STOCKS" -> vm.fetchStockScanner()
+                    "STOCKS" -> if (vm.keepEyeVisible) vm.fetchKeepEye(refresh = true) else vm.fetchStockScanner()
                     "TRADE" -> { vm.fetchAnalysis(); vm.fetchAccount() }
                     else -> vm.fetchAnalysis()
                 }
