@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ main, add-mcx-index-options-v26, add-mcx-energy-options-v261 ]
+    branches: [ main, add-mcx-index-options-v26, add-mcx-energy-options-v261, fix/keep-eye-broker-403-session-20261105 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
