@@ -12,6 +12,7 @@ const CACHE_MS = 120_000;
 const WATCH_MAX = 10;
 const sessions = new Map();
 let universeCache = {at:0,items:[],source:''};
+let nextNseUniverseAttempt = 0;
 
 const round = (x,places=2) => Number.isFinite(x) ? Number(x.toFixed(places)) : null;
 const ist = time => new Date(time + IST_MS);
@@ -46,25 +47,38 @@ export function parseNifty500Csv(csv) {
   if(unique.size<450 || unique.size>550)throw new Error('NSE Nifty 500 list failed constituent count validation');
   return [...unique.values()];
 }
-async function moversUniverse() {
+export function selectRotatingBrokerUniverse(master,priority,now,max=500) {
+  // Rotating exchange-listed EQ universe keeps discovery broad even when NSE
+  // official index constituent downloads fail. Never claim index membership.
+  const eq=[...new Set(master.filter(r=>r.exch_seg==='NSE'&&String(r.symbol||'').endsWith('-EQ'))
+    .map(r=>String(r.symbol).slice(0,-3)))].sort();
+  const active=new Set(eq),selected=new Set(priority.map(row=>row.symbol).filter(sym=>active.has(sym)));
+  if(active.has('ASHOKLEY'))selected.add('ASHOKLEY');
+  const capacity=Math.max(0,max-selected.size);
+  const rotationSlot=Math.max(0,Math.floor((minuteOfDay(now.getTime())-555)/2));
+  const start=(rotationSlot*capacity)%Math.max(eq.length,1);
+  for(let i=0;i<eq.length&&selected.size<max;i++)selected.add(eq[(start+i)%eq.length]);
+  return [...selected].map(symbol=>({symbol,
+    sector:priority.find(row=>row.symbol===symbol)?.sector||'Unclassified'}));
+}
+async function moversUniverse(master,now) {
   if(universeCache.items.length&&Date.now()-universeCache.at<6*60*60_000)return universeCache;
-  for(const url of NIFTY_500_URLS) {
-    try{
-      const res=await fetch(url,{signal:AbortSignal.timeout(8000)});
-      if(!res.ok)throw new Error('NSE constituent feed unavailable');
-      const items=parseNifty500Csv(await res.text());
-      universeCache={at:Date.now(),items,source:'Official NSE Nifty 500 constituent list'};
-      return universeCache;
-    }catch{ /* Try alternate official NSE index file. */ }
+  if(Date.now()>=nextNseUniverseAttempt){
+    for(const url of NIFTY_500_URLS) {
+      try{
+        const res=await fetch(url,{signal:AbortSignal.timeout(8000)});
+        if(!res.ok)throw new Error('NSE constituent feed unavailable');
+        const items=parseNifty500Csv(await res.text());
+        universeCache={at:Date.now(),items,source:'Official NSE Nifty 500 constituent list'};
+        return universeCache;
+      }catch{ /* Try alternate official NSE constituent file. */ }
+    }
+    nextNseUniverseAttempt=Date.now()+30*60_000;
   }
-  // Never mislabel the limited fallback as a Nifty 500 scan.
   const limited=await stockWatchlist();
-  const items=[...limited.items];
-  if(!items.some(x=>x.symbol==='ASHOKLEY'))
-    items.push({symbol:'ASHOKLEY',sector:'Unclassified'});
-  universeCache={at:Date.now(),items,
-    source:'LIMITED fallback stock watchlist (including ASHOKLEY); NSE 500 file unavailable'};
-  return universeCache;
+  const items=selectRotatingBrokerUniverse(master,limited.items,now,500);
+  return {at:Date.now(),items,
+    source:'Rotating NSE cash EQ stocks from broker instruments. Official Nifty 500 list unavailable; index membership unverified.'};
 }
 export function evaluateMoverQuote(stock,quote,now=Date.now()) {
   const price=quoteLtp(quote);
@@ -133,9 +147,9 @@ async function run(session,now,state) {
     state.status='MARKET_CLOSED';state.note='Live Movers scans during the NSE cash session (09:15 to 15:30 IST).';
     state.updatedAt=new Date().toISOString();return;
   }
-  const universe=await moversUniverse();
-  state.universeSource=universe.source;state.universeCount=universe.items.length;
   const master=await instrumentMaster();
+  const universe=await moversUniverse(master,now);
+  state.universeSource=universe.source;state.universeCount=universe.items.length;
   const eq=new Map(master.filter(r=>r.exch_seg==='NSE'&&String(r.symbol||'').endsWith('-EQ'))
     .map(r=>[String(r.symbol).slice(0,-3),r]));
   const stocks=universe.items.map(r=>({...r,instrument:eq.get(r.symbol)})).filter(r=>r.instrument);
