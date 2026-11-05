@@ -11,6 +11,16 @@ const RESCAN_GAP_MS = 120_000;
 const HISTORY_BLOCK_RECHECK_MS = 5 * 60_000;
 const maxCandidates = 8;
 const results = new Map();
+export function quoteWatchlistCandidates(selected, maxCount = 3) {
+  return selected.slice(0, maxCount).map((row,index)=>({
+    symbol:row.symbol, sector:row.sector,price:rounded(row.price),
+    quoteTime:row.quote?.exchFeedTime||null, rank:index+1,
+    changePct:rounded(row.pct), turnoverEstimate:rounded(row.turnover),
+    spreadPct:rounded(100 * quoteSpread(row.quote) / row.price),
+    status:'QUOTE_SCREENED',
+    reason:'Passed live quote freshness, price, turnover, spread and movement filters. This is not a confirmed seven condition strategy match.'
+  }));
+}
 
 const istDate = time => new Date(time + IST_MS);
 const day = time => istDate(time).toISOString().slice(0, 10);
@@ -239,14 +249,7 @@ async function run(session,now,state) {
   state.selected=selected.length;
   // A valid quote-based shortlist is an observable result even if the broker
   // refuses all historical candle requests. Never call it a technical match.
-  state.quoteWatchlist=selected.slice(0,3).map((row,index)=>({
-    symbol:row.symbol, sector:row.sector,price:rounded(row.price),
-    quoteTime:row.quote?.exchFeedTime||null, rank:index+1,
-    changePct:rounded(row.pct),turnoverEstimate:rounded(row.turnover),
-    spreadPct:rounded(100 * quoteSpread(row.quote) / row.price),
-    status:'HISTORY_UNVERIFIED',
-    reason:'Passed live quote freshness, price, turnover, spread and movement filters. Seven historical conditions are not yet confirmed.'
-  }));
+  state.quoteWatchlist=quoteWatchlistCandidates(selected);
   state.results=selected.map((row,index)=>({symbol:row.symbol,sector:row.sector,price:rounded(row.price),
     selectionRank:index+1,quoteTime:row.quote?.exchFeedTime||null,status:'CHECKING',
     passed:0,total:7,checks:[],message:'Loading completed candles for Keep Eye checks.'}));
