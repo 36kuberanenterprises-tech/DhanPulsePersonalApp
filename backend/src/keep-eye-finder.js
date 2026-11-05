@@ -158,6 +158,53 @@ export function classifyKeepEyeHistoryError(error, now = Date.now()) {
   };
 };
 const errorText = error => classifyKeepEyeHistoryError(error).message;
+export async function evaluateKeepEyeCandidates(session, now, state, selected, fetchHistory = candleData) {
+  state.note='Analysing up to eight shortlisted stocks. Broker candle calls are paced across all DhanPulse markets.';
+  let blocked = null;
+  for (let i = 0; i < selected.length; i++) {
+    const item = selected[i];
+    if (blocked) {
+      state.results[i] = { ...state.results[i], status: 'DATA_UNAVAILABLE', unavailable: 7,
+        checks: [], message: 'Not analysed because the broker blocked historical access for ' +
+          blocked.symbol + '. Further history requests are paused to avoid repeated rejections.' };
+    } else {
+      try {
+        const token = String(item.instrument.token);
+        // Completed 5-minute and daily history are required to validate each rule.
+        const five = await fetchHistory(session, { exchange: 'NSE', symboltoken: token,
+          interval: 'FIVE_MINUTE', fromdate: format(now.getTime() - 35*DAY_MS), todate: format(now.getTime()) });
+        const daily = await fetchHistory(session, { exchange: 'NSE', symboltoken: token,
+          interval: 'ONE_DAY', fromdate: format(now.getTime() - 100*DAY_MS), todate: format(now.getTime()) });
+        state.results[i] = evaluateKeepEye({ symbol: item.symbol, sector: item.sector, price: item.price,
+          quoteTime: item.quote?.exchFeedTime, fiveMinute: parseCandles(five), daily: parseCandles(daily), now });
+      } catch (error) {
+        const diagnosis = classifyKeepEyeHistoryError(error);
+        state.results[i] = { ...state.results[i], status: 'DATA_UNAVAILABLE', unavailable: 7,
+          checks: [], message: diagnosis.message };
+        if (diagnosis.block) {
+          blocked = { code: diagnosis.code, symbol: item.symbol, retryAt: diagnosis.retryAt };
+          state.brokerBlock = blocked;
+        }
+      }
+      state.checked++;
+    }
+    state.matched = state.results.filter(x => x.status === 'MATCH').length;
+    state.needData = state.results.filter(x => x.status === 'DATA_UNAVAILABLE').length;
+    state.updatedAt = new Date().toISOString();
+  }
+  state.status = blocked ? 'BROKER_HISTORY_BLOCKED' : state.needData === state.results.length
+    ? 'DATA_UNAVAILABLE' : 'COMPLETE';
+  state.note = blocked
+    ? 'Historical broker access is blocked (' + blocked.code.replace(/_/g, ' ') +
+      '). Only ' + state.checked + ' of ' + selected.length +
+      ' shortlisted stocks were attempted; the remaining stocks were not rejected by the strategy. Retry after broker cooldown.'
+    : state.matched
+    ? state.matched + ' stock(s) passed all seven verified conditions. Research watch only, not an entry signal.'
+    : state.needData
+    ? state.needData + ' shortlisted stocks lack enough verified historical data. No valid strategy match can be decided for those stocks.'
+    : 'No stocks passed all seven conditions on verified historical candles.';
+}
+
 async function run(session,now,state) {
   const list=await stockWatchlist();
   state.universeSource=list.source;
@@ -191,50 +238,7 @@ async function run(session,now,state) {
     state.note='No fresh stock quotes passed the existing liquidity, spread and movement filters. No match is inferred.';
     return;
   }
-  state.note='Analysing up to eight shortlisted stocks. Broker candle calls are paced across all DhanPulse markets.';
-  let blocked = null;
-  for (let i = 0; i < selected.length; i++) {
-    const item = selected[i];
-    if (blocked) {
-      state.results[i] = { ...state.results[i], status: 'DATA_UNAVAILABLE', unavailable: 7,
-        checks: [], message: 'Not analysed because the broker blocked historical access for ' +
-          blocked.symbol + '. Further history requests are paused to avoid repeated rejections.' };
-    } else {
-      try {
-        const token = String(item.instrument.token);
-        // Completed 5-minute and daily history are required to validate each rule.
-        const five = await candleData(session, { exchange: 'NSE', symboltoken: token,
-          interval: 'FIVE_MINUTE', fromdate: format(now.getTime() - 35*DAY_MS), todate: format(now.getTime()) });
-        const daily = await candleData(session, { exchange: 'NSE', symboltoken: token,
-          interval: 'ONE_DAY', fromdate: format(now.getTime() - 100*DAY_MS), todate: format(now.getTime()) });
-        state.results[i] = evaluateKeepEye({ symbol: item.symbol, sector: item.sector, price: item.price,
-          quoteTime: item.quote?.exchFeedTime, fiveMinute: parseCandles(five), daily: parseCandles(daily), now });
-      } catch (error) {
-        const diagnosis = classifyKeepEyeHistoryError(error);
-        state.results[i] = { ...state.results[i], status: 'DATA_UNAVAILABLE', unavailable: 7,
-          checks: [], message: diagnosis.message };
-        if (diagnosis.block) {
-          blocked = { code: diagnosis.code, symbol: item.symbol, retryAt: diagnosis.retryAt };
-          state.brokerBlock = blocked;
-        }
-      }
-      state.checked++;
-    }
-    state.matched = state.results.filter(x => x.status === 'MATCH').length;
-    state.needData = state.results.filter(x => x.status === 'DATA_UNAVAILABLE').length;
-    state.updatedAt = new Date().toISOString();
-  }
-  state.status = blocked ? 'BROKER_HISTORY_BLOCKED' : state.needData === state.results.length
-    ? 'DATA_UNAVAILABLE' : 'COMPLETE';
-  state.note = blocked
-    ? 'Historical broker access is blocked (' + blocked.code.replace(/_/g, ' ') +
-      '). Only ' + state.checked + ' of ' + selected.length +
-      ' shortlisted stocks were attempted; the remaining stocks were not rejected by the strategy. Retry after broker cooldown.'
-    : state.matched
-    ? state.matched + ' stock(s) passed all seven verified conditions. Research watch only, not an entry signal.'
-    : state.needData
-    ? state.needData + ' shortlisted stocks lack enough verified historical data. No valid strategy match can be decided for those stocks.'
-    : 'No stocks passed all seven conditions on verified historical candles.';
+  await evaluateKeepEyeCandidates(session, now, state, selected);
 }
 
 export async function keepEyeScan(session,now=new Date(),force=false) {
