@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateMoverQuote, parseNifty500Csv, moverMarketBreadth, moversMarketOpen } from '../src/live-movers.js';
+import { evaluateMoverQuote, parseNifty500Csv, moverMarketBreadth, moversMarketOpen, selectRotatingBrokerUniverse } from '../src/live-movers.js';
 
 const now=Date.parse('2026-11-05T05:13:10Z'); // 10:43:10 IST
 function fullQuote(override={}){
@@ -64,4 +64,18 @@ test('scan is only allowed during NSE cash hours in IST',()=>{
  assert.equal(moversMarketOpen(new Date('2026-11-05T03:44:00Z')),false);
  assert.equal(moversMarketOpen(new Date('2026-11-05T03:46:00Z')),true);
  assert.equal(moversMarketOpen(new Date('2026-11-05T10:00:00Z')),false);
+});
+
+test('broker EQ fallback is broad, rotates and always includes ASHOKLEY when available',()=>{
+  const master=[{exch_seg:'NSE',symbol:'ASHOKLEY-EQ'}];
+  for(let i=0;i<1100;i++)master.push({exch_seg:'NSE',symbol:'EQ'+String(i).padStart(4,'0')+'-EQ'});
+  const priority=[{symbol:'ASHOKLEY',sector:'Automobiles'},{symbol:'EQ0000',sector:'Services'}];
+  const a=selectRotatingBrokerUniverse(master,priority,new Date('2026-11-05T03:47:00Z'),500);
+  const b=selectRotatingBrokerUniverse(master,priority,new Date('2026-11-05T03:49:00Z'),500);
+  assert.equal(a.length,500);
+  assert.ok(a.some(row=>row.symbol==='ASHOKLEY'));
+  assert.ok(b.some(row=>row.symbol==='ASHOKLEY'));
+  assert.ok(a.some(row=>row.symbol==='EQ0000'));
+  assert.notDeepEqual(a,b);
+  assert.ok(a.every(row=>row.symbol==='ASHOKLEY'||row.symbol.startsWith('EQ')));
 });
