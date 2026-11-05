@@ -12,6 +12,7 @@ import { runBacktest } from './backtest.js';
 import { backtestCatalog, findBacktestChoice } from './backtest-catalog.js';
 import { scanStocks } from './stock-scanner.js';
 import { keepEyeScan } from './keep-eye-finder.js';
+import { scanLiveMovers } from './live-movers.js';
 import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
 import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
 import { deltaBackendConfigured, verifyDeltaAccessToken, deltaAccountSummary } from './delta.js';
@@ -269,6 +270,16 @@ app.get('/api/stocks/scanner', requireSession, async (req, res) => {
   } catch (e) {
     console.error('Stock scanner failed:', e?.message || e);
     res.status(503).json({ error: 'Stock scanner data is temporarily unavailable. ' + (e?.message || 'Please retry.') });
+  }
+});
+
+// Broad-market price movement watchlist. No historical candles or order creation.
+app.get('/api/stocks/live-movers', requireSession, async (req,res) => {
+  try {
+    res.json(await scanLiveMovers(req.smartSession,new Date(),req.query.refresh === 'true'));
+  } catch(error) {
+    console.warn('Live movers scan failed:',String(error?.message||error).slice(0,200));
+    res.status(503).json({error:'Broad market quote data is unavailable. No trade signal confirmed.'});
   }
 });
 
