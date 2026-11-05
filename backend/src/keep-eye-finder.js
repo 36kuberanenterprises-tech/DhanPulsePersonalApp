@@ -263,6 +263,13 @@ async function run(session,now,state) {
     return;
   }
   await evaluateKeepEyeCandidates(session, now, state, selected);
+  // Previous Android clients do not parse the quoteWatchlist field, so keep
+  // the quote shortlisted names visible in their existing scanner summary.
+  if (state.quoteWatchlist.length) {
+    const symbols=state.quoteWatchlist.map(row=>row.symbol).join(', ');
+    state.note='Live quote watchlist: '+symbols+
+      '. NOT seven condition matches or BUY recommendations. '+state.note;
+  }
 }
 
 export async function keepEyeScan(session,now=new Date(),force=false) {
