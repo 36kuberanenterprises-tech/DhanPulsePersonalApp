@@ -24,7 +24,9 @@ android {
             manifestPlaceholders["appLabel"] = "DhanPulse $appVersion Flow Preview"
         }
         getByName("release") {
-            manifestPlaceholders["appLabel"] = "DhanPulse Stable"
+            // Separate test package: cannot replace installed Stable without original signing key.
+            applicationIdSuffix = ".keep69"
+            manifestPlaceholders["appLabel"] = "DhanPulse Finder 69"
         }
     }
 
