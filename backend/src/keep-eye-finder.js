@@ -1,6 +1,5 @@
 import { candleData, instrumentMaster, marketData, parseCandles, parseFetched, quoteFeedAgeMs, quoteLtp } from './angel.js';
 import { rsi, supertrend } from './indicators.js';
-import { isRateError } from './history-control.js';
 import { quoteSpread, shortlistStocks, stockWatchlist, scannerSession } from './stock-scanner.js';
 
 const IST_MS = 330 * 60_000;
@@ -136,7 +135,11 @@ export function evaluateKeepEye({symbol,sector,price,quoteTime,fiveMinute,daily,
 
 export function classifyKeepEyeHistoryError(error, now = Date.now()) {
   const raw = String(error?.message || 'Data unavailable');
-  const rateLimited = isRateError(error) || /cooldown|exceeding access rate|rate limit/i.test(raw);
+  // HTTP 403 alone proves access was denied, not that the caller exceeded a rate limit.
+  // The shared history budget may cool down for every 403, but the user-facing
+  // cause must be based on the actual broker error text or explicit rate metadata.
+  const rateLimited = error?.rateLimited === true || error?.status === 429 ||
+    /cooldown|exceeding access rate|rate limit|too many requests|AB1021|\b429\b/i.test(raw);
   const forbidden = error?.status === 403 || /\b403\b|forbidden/i.test(raw);
   const retryAt = Number.isFinite(error?.retryAt)
     ? error.retryAt : now + HISTORY_BLOCK_RECHECK_MS;
