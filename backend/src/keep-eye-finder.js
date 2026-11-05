@@ -11,10 +11,14 @@ const RESCAN_GAP_MS = 120_000;
 const HISTORY_BLOCK_RECHECK_MS = 5 * 60_000;
 const maxCandidates = 8;
 const results = new Map();
+export function normalizedQuoteTime(raw, now = Date.now()) {
+  const age=quoteFeedAgeMs({exchFeedTime:raw},now);
+  return Number.isFinite(age) && age >= 0 ? new Date(now-age).toISOString() : null;
+}
 export function quoteWatchlistCandidates(selected, maxCount = 3) {
   return selected.slice(0, maxCount).map((row,index)=>({
     symbol:row.symbol, sector:row.sector,price:rounded(row.price),
-    quoteTime:row.quote?.exchFeedTime||null, rank:index+1,
+    quoteTime:normalizedQuoteTime(row.quote?.exchFeedTime), rank:index+1,
     changePct:rounded(row.pct), turnoverEstimate:rounded(row.turnover),
     spreadPct:rounded(100 * quoteSpread(row.quote) / row.price),
     status:'QUOTE_SCREENED',
