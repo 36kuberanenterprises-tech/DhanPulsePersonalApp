@@ -3,8 +3,10 @@
 // Keep historical requests below the shared broker ceiling to reduce rate denials.
 export const HISTORY_LIMITS = { gap: 1600, minute: 35, hour: 1800 };
 export function isRateError(error) {
-  return error?.status === 429 || error?.rateLimited === true ||
-    /exceeding access rate|rate limit|too many requests|AB1021|\b429\b/i.test(error?.message || '');
+  // This budget is used exclusively for historical candles. Angel One
+  // sometimes returns HTTP 403 without a recognisable rate-limit message.
+  return error?.status === 403 || error?.status === 429 || error?.rateLimited === true ||
+    /exceeding access rate|rate limit|too many requests|AB1021|\b403\b|\b429\b/i.test(error?.message || '');
 }
 export function cooldownError(until, now = Date.now()) {
   const seconds = Math.max(1, Math.ceil((until - now) / 1000));
@@ -41,7 +43,13 @@ export class HistoryBudget {
         return result;
       } catch (error) {
         if (isRateError(error)) {
-          const backoff = Math.min(900_000, 60_000 * 2 ** Math.min(state.failures++, 4));
+          // A broker HTTP 403 can persist well beyond short burst limits.
+          // Pause *all* historical callers for this client, but leave live
+          // quote and account endpoints independent and unaffected.
+          const isDenied = error.status === 403 || /\b403\b/i.test(error.message || '');
+          const backoff = isDenied
+            ? Math.min(2_700_000, 900_000 * 2 ** Math.min(state.failures++, 2))
+            : Math.min(900_000, 60_000 * 2 ** Math.min(state.failures++, 4));
           state.blockedUntil = this.now() + Math.max(backoff, error.retryAfterMs || 0);
           error.retryAt = state.blockedUntil;
           error.retryAfterMs = state.blockedUntil - this.now();
