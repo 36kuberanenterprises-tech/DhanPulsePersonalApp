@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resampleNseCandles, completedDailyCandles, upperBollinger, simpleMovingAverage, evaluateKeepEye, classifyKeepEyeHistoryError, evaluateKeepEyeCandidates, quoteWatchlistCandidates } from '../src/keep-eye-finder.js';
+import { resampleNseCandles, completedDailyCandles, upperBollinger, simpleMovingAverage, evaluateKeepEye, classifyKeepEyeHistoryError, evaluateKeepEyeCandidates, quoteWatchlistCandidates, normalizedQuoteTime } from '../src/keep-eye-finder.js';
 
 const start=Date.parse('2026-11-04T03:45:00Z'); // 09:15 IST
 const now=new Date('2026-11-04T10:15:30Z'); // 15:45 IST
@@ -109,4 +109,11 @@ test('a live quote screened stock is visible without inventing a historical stra
   assert.ok(result[0].spreadPct>0);
   assert.match(result[0].reason,/not a confirmed seven condition/);
   assert.equal(result.some(row=>row.status==='MATCH'),false);
+});
+
+test('Angel One exchange quote time is converted to ISO for the Android watchlist', () => {
+  const now=Date.parse('2026-11-05T04:17:30Z');
+  const actual=normalizedQuoteTime('05-Nov-2026 09:47:00',now);
+  assert.equal(actual,'2026-11-05T04:17:00.000Z');
+  assert.equal(normalizedQuoteTime('unverified',now),null);
 });
