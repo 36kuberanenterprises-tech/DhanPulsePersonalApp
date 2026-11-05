@@ -137,7 +137,7 @@ export function evaluateKeepEye({symbol,sector,price,quoteTime,fiveMinute,daily,
 export function classifyKeepEyeHistoryError(error, now = Date.now()) {
   const raw = String(error?.message || 'Data unavailable');
   const rateLimited = isRateError(error) || /cooldown|exceeding access rate|rate limit/i.test(raw);
-  const forbidden = error?.status === 403 || /\\b403\\b|forbidden/i.test(raw);
+  const forbidden = error?.status === 403 || /\b403\b|forbidden/i.test(raw);
   const retryAt = Number.isFinite(error?.retryAt)
     ? error.retryAt : now + HISTORY_BLOCK_RECHECK_MS;
   if (rateLimited) return {
