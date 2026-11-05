@@ -145,7 +145,7 @@ const errorText = error => {
 export function keepEyeBrokerDenial(error, now=Date.now()) {
   const reason=String(error?.message||'');
   const rejected=error?.status===403 || error?.rateLimited===true ||
-    /\\b403\\b|forbidden|exceeding access rate|rate limit|historical request cooldown/i.test(reason);
+    /\b403\b|forbidden|exceeding access rate|rate limit|historical request cooldown/i.test(reason);
   const limited=error?.rateLimited===true || /exceeding access rate|rate limit|cooldown/i.test(reason);
   const fromBroker=Number(error?.retryAt);
   const minimum=now+(limited ? 15 : 20)*60_000;
