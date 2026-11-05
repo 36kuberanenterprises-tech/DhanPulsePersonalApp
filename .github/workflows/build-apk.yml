@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -71,33 +71,31 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Build unsigned release APK
+      - name: Build signed standalone watchlist preview APK
         working-directory: android-app
-        run: gradle --no-daemon :app:testReleaseUnitTest :app:assembleRelease
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
       - name: Check installer app label
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/release/app-release-unsigned.apk | grep -F "application-label:'DhanPulse Stable'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Watchlist 69'"
 
       - name: Rename APK
         id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/release/app-release-unsigned.apk "DhanPulse-v${version}-Build69-unsigned.apk"
-          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" apksigner.jar
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build69-Installable-Watchlist.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Personal-v${{ env.APK_VERSION }}-Preview-APK
+          name: DhanPulse-Watchlist-Build69-Installable-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build69-unsigned.apk
-            apksigner.jar
+            DhanPulse-v${{ env.APK_VERSION }}-Build69-Installable-Watchlist.apk
           if-no-files-found: error
           retention-days: 30
 
