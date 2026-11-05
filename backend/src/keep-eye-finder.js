@@ -232,6 +232,7 @@ async function run(session,now,state) {
   state.note=state.matched
     ? state.matched+' stock(s) passed all seven historical conditions. These are watchlist matches, not entry signals.'
     : 'No confirmed Keep Eye matches. Failed conditions and missing historical data are reported separately.';
+}
 
 export async function keepEyeScan(session,now=new Date(),force=false) {
   const client=String(session.clientCode||session.apiKey||'');
