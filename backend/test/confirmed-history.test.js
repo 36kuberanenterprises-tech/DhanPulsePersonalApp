@@ -43,6 +43,11 @@ test('confirmed SENSEX candles are not repolled every refresh; failed refresh re
     await confirmedBrokerCandles(...args, new Date(clock));
     assert.equal(calls, 2, 'broker rejection must not cause a refresh loop');
     clock += 30_001;
+    // HTTP 403 now has an account wide 15-minute cooldown; the old one-minute
+    // retry was responsible for continued broker denials across market tabs.
+    await confirmedBrokerCandles(...args, new Date(clock));
+    assert.equal(calls, 2, 'HTTP 403 should not be retried after only one minute');
+    clock += 14 * 60_000;
     globalThis.fetch = async () => {
       calls++;
       const end = Math.floor(clock / 300_000) * 300_000 - 300_000;
