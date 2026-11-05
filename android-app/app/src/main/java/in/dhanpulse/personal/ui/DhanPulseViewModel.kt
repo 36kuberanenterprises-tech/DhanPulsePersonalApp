@@ -93,6 +93,15 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var keepEyeVisible by mutableStateOf(false)
         private set
     private var keepEyeRequestInFlight = false
+    var liveMovers by mutableStateOf<LiveMoversResponse?>(null)
+        private set
+    var moversLoading by mutableStateOf(false)
+        private set
+    var moversError by mutableStateOf<String?>(null)
+        private set
+    var moversVisible by mutableStateOf(false)
+        private set
+    private var moversRequestInFlight = false
     var stockPaperMessage by mutableStateOf<String?>(null)
         private set
     var paperStockTrades by mutableStateOf<List<PaperStockTrade>>(emptyList())
@@ -1328,6 +1337,33 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         if (visible) fetchKeepEye()
     }
 
+    fun showMovers(visible: Boolean) {
+        moversVisible = visible
+        if (visible && liveMovers == null) fetchMovers()
+    }
+
+    fun fetchMovers(refresh: Boolean = false) {
+        val s = sessionId ?: return
+        if (moversRequestInFlight) return
+        moversRequestInFlight = true
+        moversLoading = true
+        viewModelScope.launch {
+            try {
+                val response = client().liveMovers(s, refresh)
+                if (s != sessionId) return@launch
+                liveMovers = response
+                moversError = null
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (s != sessionId) return@launch
+                moversError = friendlyError(e, "Live Movers quote scan unavailable")
+            } finally {
+                moversLoading = false
+                moversRequestInFlight = false
+            }
+        }
+    }
+
     fun fetchKeepEye(refresh: Boolean = false) {
         val s = sessionId ?: return
         if (keepEyeRequestInFlight) return
@@ -1464,6 +1500,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     if (stocksVisible) {
                         fetchStockScanner()
                         if (keepEyeVisible && keepEyeScan?.status == "RUNNING") fetchKeepEye()
+                        if (moversVisible && (liveMovers?.status == "RUNNING" ||
+                            (tick % 40 == 0 && marketOpen))) fetchMovers()
                     }
                     if (stockOptionsVisible) {
                         fetchStockOptions()
