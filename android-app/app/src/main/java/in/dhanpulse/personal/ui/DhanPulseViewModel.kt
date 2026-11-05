@@ -90,7 +90,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var keepEyeError by mutableStateOf<String?>(null)
         private set
-    private var keepEyeVisible = false
+    var keepEyeVisible by mutableStateOf(false)
+        private set
     private var keepEyeRequestInFlight = false
     var stockPaperMessage by mutableStateOf<String?>(null)
         private set
