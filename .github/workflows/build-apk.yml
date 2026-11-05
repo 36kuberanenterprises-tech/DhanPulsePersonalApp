@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ main, add-mcx-index-options-v26, add-mcx-energy-options-v261 ]
+    branches: [ main, add-mcx-index-options-v26, add-mcx-energy-options-v261, fix/keep-eye-history-block-diagnostics ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -52,6 +52,7 @@ jobs:
           node --check backend/src/backtest-catalog.js
           node --check backend/src/server.js
           node --check backend/src/stock-scanner.js
+          node --check backend/src/keep-eye-finder.js
 
       - name: Test live market rules
         working-directory: backend
