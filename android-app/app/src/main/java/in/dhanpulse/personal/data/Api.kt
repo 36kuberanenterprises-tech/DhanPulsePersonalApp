@@ -30,6 +30,12 @@ interface DhanPulseApi {
         @Query("trackedToken") trackedToken: String? = null
     ): StockScanResponse
 
+    @GET("api/stocks/live-movers")
+    suspend fun liveMovers(
+        @Header("X-Session-Id") sessionId: String,
+        @Query("refresh") refresh: Boolean = false
+    ): LiveMoversResponse
+
     @GET("api/stocks/keep-eye")
     suspend fun keepEyeScanner(
         @Header("X-Session-Id") sessionId: String,
