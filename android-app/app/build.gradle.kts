@@ -20,8 +20,10 @@ android {
 
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".flowpreview"
-            manifestPlaceholders["appLabel"] = "DhanPulse $appVersion Flow Preview"
+            // Distinct installable preview until the original Stable signing key is available.
+            // It cannot replace an existing Stable installation or read its private data.
+            applicationIdSuffix = ".watchlist69"
+            manifestPlaceholders["appLabel"] = "DhanPulse Watchlist 69"
         }
         getByName("release") {
             manifestPlaceholders["appLabel"] = "DhanPulse Stable"
