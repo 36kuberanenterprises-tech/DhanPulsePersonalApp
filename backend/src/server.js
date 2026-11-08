@@ -16,6 +16,8 @@ import { scanLiveMovers } from './live-movers.js';
 import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './stock-options.js';
 import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
 import { deltaBackendConfigured, verifyDeltaAccessToken, deltaAccountSummary } from './delta.js';
+import { ipMatchesRegistered, probeRelayHealth, probeProxyEgress } from './network-route.js';
+import { capacityGate } from './request-capacity.js';
 
 const APP_VERSION = '2.9.8';
 const app = express();
@@ -33,62 +35,87 @@ const deltaAccessAttempts = new Map();
 const LIVE_ANALYSIS_MIN_MS = 2500;
 const ACCOUNT_CACHE_MS = 15_000;
 const ACCOUNT_ERROR_RETRY_MS = 30_000;
+// Avoid heavy historical research starving login, quotes, and account reads.
+const researchCapacity = capacityGate(1);
 const IST_OFFSET_MS = 330 * 60 * 1000;
 const nextIndiaMidnight = now => {
   const indiaTime = new Date(now + IST_OFFSET_MS);
   return Date.UTC(indiaTime.getUTCFullYear(), indiaTime.getUTCMonth(), indiaTime.getUTCDate() + 1) - IST_OFFSET_MS;
 };
-async function orderGatewayState() {
+// Verified networking is separate from login: the registered static IP
+// applies to broker order execution, not to ordinary health or authentication.
+const gatewayProbeCache = { at: 0, key: null, result: null };
+async function orderGatewayState(force = false) {
   const registeredPublicIp = String(process.env.CLIENT_PUBLIC_IP || '34.70.199.153').trim();
   const registeredSecondaryIp = String(process.env.CLIENT_SECONDARY_PUBLIC_IP || '').trim() || null;
   const relayUrl = String(process.env.ORDER_RELAY_URL || '').trim();
+  const relaySecretPresent = !!String(process.env.ORDER_RELAY_SECRET || '').trim();
   const proxyUrl = String(process.env.ORDER_PROXY_URL || '').trim();
   const proxyIps = String(process.env.ORDER_PROXY_IPS || '')
-    .split(',')
-    .map(x => x.trim())
-    .filter(Boolean);
+    .split(',').map(x => x.trim()).filter(Boolean);
+  const key = JSON.stringify([registeredPublicIp, registeredSecondaryIp,
+    relayUrl, relaySecretPresent, proxyUrl, proxyIps]);
+  if (!force && gatewayProbeCache.key === key && gatewayProbeCache.result &&
+      Date.now() - gatewayProbeCache.at < 10_000) return gatewayProbeCache.result;
 
+  // A matching X-ClientPublicIP header alone never proves the actual source IP.
+  const actualEgressIp = await getEgressIp();
   const relayConfigured = !!relayUrl;
   const proxyConfigured = !!proxyUrl;
-  const actualEgressIp = (relayConfigured || proxyConfigured) ? null : await getEgressIp();
-
-  const registered = [registeredPublicIp, registeredSecondaryIp].filter(Boolean);
-  const proxyAllowed = proxyConfigured && proxyIps.length > 0 && proxyIps.every(ip => registered.includes(ip));
-  const sourceIpReady = relayConfigured || proxyAllowed || (actualEgressIp != null && registered.includes(actualEgressIp));
-
+  let orderSourceEgressIp = actualEgressIp;
+  let executionReady = false;
   let status = 'IP_CHECK_UNAVAILABLE';
-  if (sourceIpReady) status = 'READY';
-  else if (proxyConfigured && !proxyIps.length) status = 'PROXY_IPS_MISSING';
-  else if (proxyConfigured && !proxyAllowed) status = 'PROXY_IP_NOT_REGISTERED';
-  else if (actualEgressIp) status = 'STATIC_IP_MISMATCH';
+  let message = 'Unable to verify outbound IP. Order execution is paused.';
 
-  let message;
-  if (sourceIpReady) {
-    if (relayConfigured) message = 'Orders will be routed through the configured static-IP relay.';
-    else if (proxyConfigured) message = 'Orders will be routed through the configured static outbound proxy.';
-    else message = 'Backend outbound IP matches an Angel One registered static IP.';
-  } else if (status === 'PROXY_IPS_MISSING') {
-    message = 'Static proxy is configured, but its two outbound IPs are not configured on the backend yet.';
-  } else if (status === 'PROXY_IP_NOT_REGISTERED') {
-    message = `Static proxy is configured, but its outbound IPs are not the Angel One registered Primary/Secondary IPs.`;
-  } else if (actualEgressIp) {
-    message = `Order execution is blocked because backend egress IP ${actualEgressIp} does not match Angel One registered IP ${registered.join(' / ')}.`;
+  if (relayConfigured) {
+    if (!relaySecretPresent) {
+      status = 'RELAY_SECRET_MISSING';
+      message = 'Order relay secret is missing. Order execution is paused.';
+    } else {
+      const relay = await probeRelayHealth(relayUrl, registeredPublicIp, registeredSecondaryIp);
+      orderSourceEgressIp = relay.ip;
+      executionReady = relay.status === 'RELAY_IP_VERIFIED';
+      status = relay.status;
+      message = executionReady
+        ? 'Relay health check confirmed a registered outbound IP. The relay also verifies IP at order submission.'
+        : 'Relay is not confirmed to use a registered outbound IP. Orders are paused.';
+    }
+  } else if (proxyConfigured) {
+    orderSourceEgressIp = await probeProxyEgress(proxyUrl);
+    if (!proxyIps.length) {
+      status = 'PROXY_IPS_MISSING';
+      message = 'Configured proxy IP list is missing. Orders are paused.';
+    } else {
+      executionReady = !!orderSourceEgressIp &&
+        proxyIps.includes(orderSourceEgressIp) &&
+        ipMatchesRegistered(orderSourceEgressIp, registeredPublicIp, registeredSecondaryIp);
+      status = executionReady ? 'PROXY_IP_VERIFIED' :
+        orderSourceEgressIp ? 'PROXY_IP_MISMATCH' : 'PROXY_EGRESS_UNAVAILABLE';
+      message = executionReady
+        ? 'Proxy outbound IP is currently verified against a registered IP.'
+        : 'Proxy outbound IP is unavailable or not registered with Angel One. Orders are paused.';
+    }
   } else {
-    message = 'Unable to verify the real order source IP. Live order execution is not marked ready.';
+    executionReady = ipMatchesRegistered(actualEgressIp, registeredPublicIp, registeredSecondaryIp);
+    status = executionReady ? 'DIRECT_IP_VERIFIED' :
+      actualEgressIp ? 'STATIC_IP_MISMATCH' : 'IP_CHECK_UNAVAILABLE';
+    message = executionReady
+      ? 'Backend outbound IP currently matches a registered static IP.'
+      : actualEgressIp
+        ? 'Backend outbound IP does not match registered Angel One static IP. Orders are paused. A header value cannot change the actual IP.'
+        : 'Backend outbound IP could not be measured. Orders are paused.';
   }
 
-  return {
-    registeredPublicIp,
-    registeredSecondaryIp,
-    actualEgressIp,
-    relayConfigured,
-    relayHost: relayConfigured ? new URL(relayUrl).host : null,
-    proxyConfigured,
-    proxyIps,
-    executionReady: sourceIpReady,
-    status,
-    message
+  const result = {
+    registeredPublicIp, registeredSecondaryIp, actualEgressIp,
+    orderSourceEgressIp, relayConfigured, relayHost: relayConfigured ?
+      (() => { try { return new URL(relayUrl).host; } catch { return null; } })() : null,
+    proxyConfigured, proxyIps, executionReady, status, message
   };
+  gatewayProbeCache.key = key;
+  gatewayProbeCache.at = Date.now();
+  gatewayProbeCache.result = result;
+  return result;
 }
 
 async function routedPlaceOrder(session, payload) {
@@ -487,6 +514,10 @@ app.get('/api/backtest/catalog', requireSession, async (_req, res) => {
 });
 
 app.post('/api/backtest', requireSession, async (req, res) => {
+  const release = researchCapacity.acquire();
+  if (!release) return res.status(429).set('Retry-After', '20').json({
+    error: 'Another research request is already running. Try again after it finishes.'
+  });
   try {
     const body = req.body || {};
     const allowedIntervals = ['ONE_MINUTE','THREE_MINUTE','FIVE_MINUTE','TEN_MINUTE','FIFTEEN_MINUTE'];
@@ -508,6 +539,8 @@ app.post('/api/backtest', requireSession, async (req, res) => {
   } catch (e) {
     console.error('Backtest failed:', e?.message || e);
     res.status(503).json({ error: e.message || 'Backtest failed' });
+  } finally {
+    release();
   }
 });
 
@@ -766,4 +799,19 @@ export { app };
 if (process.env.NODE_ENV !== 'test') app.listen(port, () => {
   console.log(`DhanPulse Personal API running on :${port}`);
   console.log('Angel One login configuration:', loginConfigurationReady() ? 'READY' : 'INCOMPLETE');
+  // Read-only remote IP reflector and optional relay/proxy checks. No orders.
+  // A mismatch is logged rather than quietly rewriting the user's registered IP.
+  void orderGatewayState(true).then(network => {
+    console.info('DHANPULSE_NETWORK_DIAGNOSTICS', JSON.stringify({
+      registeredPrimaryIp: network.registeredPublicIp,
+      registeredSecondaryIp: network.registeredSecondaryIp,
+      observedBackendIp: network.actualEgressIp,
+      observedOrderRouteIp: network.orderSourceEgressIp,
+      route: network.relayConfigured ? 'RELAY' : network.proxyConfigured ? 'PROXY' : 'DIRECT',
+      status: network.status,
+      executionReady: network.executionReady
+    }));
+  }).catch(error => {
+    console.warn('DHANPULSE_NETWORK_DIAGNOSTICS_FAILED', String(error?.message || error).slice(0,140));
+  });
 });
