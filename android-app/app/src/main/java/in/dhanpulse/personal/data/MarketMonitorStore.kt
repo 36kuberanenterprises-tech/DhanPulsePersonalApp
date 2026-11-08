@@ -21,6 +21,14 @@ class MarketMonitorStore(context: Context) {
         get() = prefs.getBoolean("ui_visible", false)
         set(value) = prefs.edit().putBoolean("ui_visible", value).apply()
 
+    var uiHeartbeatAt: Long
+        get() = prefs.getLong("ui_heartbeat_at", 0L)
+        set(value) = prefs.edit().putLong("ui_heartbeat_at", value).apply()
+
+    // Do not let a stale UI flag hold the native service idle after a crash.
+    fun hasVisibleApp(now: Long = System.currentTimeMillis()): Boolean =
+        uiVisible && uiHeartbeatAt in (now - 90_000L)..now
+
     var status: String
         get() = prefs.getString("status", "OFF") ?: "OFF"
         set(value) = prefs.edit().putString("status", value.take(120)).apply()
