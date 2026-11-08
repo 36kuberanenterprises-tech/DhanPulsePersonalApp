@@ -52,6 +52,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var backgroundMonitorRequested by mutableStateOf(nativeMonitor.requested)
         private set
+    var backgroundMonitorRunning by mutableStateOf(nativeMonitor.running)
+        private set
     var backgroundMonitorStatus by mutableStateOf(nativeMonitor.status)
         private set
     var backgroundMonitorMessage by mutableStateOf<String?>(null)
@@ -59,6 +61,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshBackgroundMonitorStatus() {
         backgroundMonitorRequested = nativeMonitor.requested
+        backgroundMonitorRunning = nativeMonitor.running
         backgroundMonitorStatus = nativeMonitor.status
     }
 
@@ -75,6 +78,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 .setAction(MarketMonitoringService.ACTION_START)
             ContextCompat.startForegroundService(getApplication(), intent)
             backgroundMonitorRequested = true
+            backgroundMonitorRunning = true
             backgroundMonitorStatus = "STARTING"
             backgroundMonitorMessage = "Monitoring started. A persistent notification appears while the service is active."
         } catch (e: Exception) {
