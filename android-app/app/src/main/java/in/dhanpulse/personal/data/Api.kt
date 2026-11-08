@@ -109,9 +109,9 @@ object ApiFactory {
                 // Reachability uses a credential-free GET so a sleeping backend
                 // cannot consume or expire the user's one-time TOTP.
                 if (request.url.encodedPath == "/health") {
-                    chain.call().timeout().timeout(65, TimeUnit.SECONDS)
+                    chain.call().timeout().timeout(90, TimeUnit.SECONDS)
                 } else if (request.url.encodedPath == "/api/auth/login") {
-                    chain.call().timeout().timeout(35, TimeUnit.SECONDS)
+                    chain.call().timeout().timeout(30, TimeUnit.SECONDS)
                 }
                 val builder = request.newBuilder().header("Accept", "application/json")
                 if (request.url.encodedPath.startsWith("/api/analysis/")) {
