@@ -439,6 +439,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 sessionStore.profileCode = r.profile?.clientcode
                 lastActivityWrite = now
                 succeeded = true
+                // Restart only if the user opted into native monitoring before
+                // this new broker session. Never relogin in the background.
+                if (nativeMonitor.requested) startBackgroundMonitoring()
                 backendCheckState = "READY"
                 backendCheckedAt = now
                 backendCheckMessage = "Authenticated successfully."
