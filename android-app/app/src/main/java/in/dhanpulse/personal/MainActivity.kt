@@ -146,6 +146,7 @@ fun DhanPulseApp(vm: DhanPulseViewModel = viewModel()) {
 
 @Composable
 fun LoginScreen(vm: DhanPulseViewModel) {
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     var pin by remember { mutableStateOf("") }
     var totp by remember { mutableStateOf("") }
     LaunchedEffect(vm) { vm.checkBackendConnection() }
@@ -188,7 +189,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("Secure sign in", color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("The app prepares its backend before login. Wait for READY, then enter a fresh Angel One TOTP.",
+                    Text("The app checks the server and Angel One configuration before login. Wait for READY, then use a fresh TOTP.",
                         color = Muted, style = MaterialTheme.typography.bodySmall)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween) {
@@ -199,11 +200,19 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                             if (vm.backendCheckLoading) vm.cancelBackendCheck()
                             else vm.checkBackendConnection()
                         }, enabled = !vm.loginBusy) {
-                            Text(if (vm.backendCheckLoading) "Cancel check" else if (vm.backendCheckState == "UNAVAILABLE") "Retry connection" else "Test connection")
+                            Text(if (vm.backendCheckLoading) "Cancel check" else if (vm.backendCheckState in setOf("UNAVAILABLE", "CONFIGURATION")) "Retry connection" else "Test connection")
                         }
                     }
                     Text(vm.backendCheckMessage, color = if (vm.backendCheckState == "READY") Green else Muted,
                         style = MaterialTheme.typography.bodySmall)
+                    if (vm.backendCheckState in setOf("UNAVAILABLE", "CONFIGURATION")) {
+                        TextButton(onClick = {
+                            uriHandler.openUri("https://dhanpulse-personal-api.onrender.com/api/auth/readiness")
+                        }) {
+                            Text("Open server status in browser", color = Purple,
+                                style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
 
                     OutlinedTextField(
                         pin, { pin = it },
@@ -245,7 +254,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                         else Text("Connect securely", fontWeight = FontWeight.Bold)
                     }
 
-                    Text("Backend READY is required before sending login details. If unavailable, use Retry connection. No automatic login retries. PIN and TOTP are not saved.",
+                    Text("The app checks backend readiness automatically. It never retries Angel One login without you. PIN and TOTP are not saved.",
                         color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
