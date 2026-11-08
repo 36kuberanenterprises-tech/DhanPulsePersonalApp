@@ -13,6 +13,9 @@ interface DhanPulseApi {
     @GET("health")
     suspend fun health(): BackendHealth
 
+    @GET("api/auth/readiness")
+    suspend fun loginReadiness(): BackendHealth
+
     @GET("api/flow/catalog")
     suspend fun flowCatalog(@Header("X-Session-Id") sessionId:String, @Query("group") group:String,
         @Query("q") query:String, @Query("guided") guided:Boolean=true,
@@ -109,7 +112,7 @@ object ApiFactory {
                 // Reachability uses a credential-free GET so a sleeping backend
                 // cannot consume or expire the user's one-time TOTP.
                 if (request.url.encodedPath == "/health") {
-                    chain.call().timeout().timeout(90, TimeUnit.SECONDS)
+                    chain.call().timeout().timeout(30, TimeUnit.SECONDS)
                 } else if (request.url.encodedPath == "/api/auth/login") {
                     chain.call().timeout().timeout(30, TimeUnit.SECONDS)
                 }
