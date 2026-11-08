@@ -1,5 +1,10 @@
 package `in`.dhanpulse.personal.model
 
+data class BackendHealth(
+    val ok: Boolean = false,
+    val status: String? = null,
+    val version: String? = null
+)
 data class LoginRequest(val apiKey: String, val clientCode: String, val pin: String, val totp: String)
 data class UserProfile(val clientcode: String? = null, val name: String? = null)
 data class LoginResponse(val sessionId: String, val expiresAt: String? = null, val profile: UserProfile? = null)
