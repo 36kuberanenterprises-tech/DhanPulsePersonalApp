@@ -367,34 +367,77 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         return ApiFactory.create(backendUrl).also { api = it }
     }
 
-    // Health checking is advisory: never trap the user behind a disabled
-    // login button when a backend cold start or DNS issue delays /health.
+    // Check HTTP and broker configuration before using a time-limited TOTP.
+    // Render free services can return errors or a loading page while waking.
+    // Only GET requests are retried. Never automatically repeat a login POST.
     fun checkBackendConnection() {
         if (backendCheckLoading || loginBusy) return
         backendCheckLoading = true
         backendCheckState = "STARTING"
-        backendCheckMessage = "Preparing backend connection. A sleeping server may need over a minute to start. Use a fresh TOTP once READY."
+        backendCheckMessage = "Connecting to DhanPulse backend. Login will open after the server is ready."
         backendCheckJob = viewModelScope.launch {
+            val deadline = SystemClock.elapsedRealtime() + 120_000L
+            var attempts = 0
+            var lastProblem = "Server has not responded."
             try {
-                val health = withTimeout(80_000L) { client().health() }
-                if (!health.ok) throw IllegalStateException("Backend health returned an unhealthy response.")
-                backendCheckState = "READY"
-                backendCheckedAt = System.currentTimeMillis()
-                backendCheckMessage = "Backend reachable. Use a fresh TOTP for Angel One login."
-                error = null
-            } catch (e: TimeoutCancellationException) {
-                backendCheckState = "UNAVAILABLE"
-                backendCheckedAt = 0L
-                backendCheckMessage = "The backend did not respond within 80 seconds. Check your internet connection, then tap Retry connection. Login has not been attempted."
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                backendCheckState = "UNAVAILABLE"
-                backendCheckedAt = 0L
-                backendCheckMessage = when (e) {
-                    is java.net.UnknownHostException -> "Unable to resolve the DhanPulse backend hostname. Verify mobile data, WiFi or DNS."
-                    is java.net.SocketTimeoutException, is java.io.InterruptedIOException ->
-                        "The backend did not respond. Retry later or test using another internet connection."
-                    else -> "Backend check failed: " + friendlyError(e, "Connection unavailable")
+                while (isActive && SystemClock.elapsedRealtime() < deadline) {
+                    attempts++
+                    backendCheckMessage = "Checking server connection (attempt $attempts). Do not enter a TOTP yet."
+                    try {
+                        val health = withTimeout(25_000L) { client().health() }
+                        if (!health.ok) throw IllegalStateException("Server health is not ready.")
+                        val readiness = withTimeout(15_000L) { client().loginReadiness() }
+                        if (!readiness.ok) throw IllegalStateException("Server login status is unavailable.")
+                        if (readiness.loginReady != true) {
+                            backendCheckState = "CONFIGURATION"
+                            backendCheckedAt = 0L
+                            backendCheckMessage = "Backend is online, but required Angel One login settings are missing or invalid on the server. Check Render environment settings. Do not share PIN or TOTP."
+                            break
+                        }
+                        backendCheckState = "READY"
+                        backendCheckedAt = System.currentTimeMillis()
+                        backendCheckMessage = "Backend and login configuration are ready. Enter a fresh Angel One TOTP."
+                        error = null
+                        break
+                    } catch (e: TimeoutCancellationException) {
+                        lastProblem = "Backend request exceeded the response timeout."
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        when {
+                            e is java.net.UnknownHostException -> {
+                                backendCheckState = "UNAVAILABLE"
+                                backendCheckedAt = 0L
+                                backendCheckMessage = "DNS cannot find the backend. Check mobile data, WiFi, VPN or Private DNS. You can open Server status in your browser."
+                                break
+                            }
+                            e is HttpException && e.code() == 404 -> {
+                                backendCheckState = "UNAVAILABLE"
+                                backendCheckedAt = 0L
+                                backendCheckMessage = "Backend is reachable but login readiness is missing. Update the Render server before trying a TOTP."
+                                break
+                            }
+                            e is java.net.SocketTimeoutException ||
+                                e is java.io.InterruptedIOException -> {
+                                lastProblem = "The server connection timed out."
+                            }
+                            e is HttpException -> {
+                                lastProblem = "Server returned HTTP ${e.code()} while preparing login."
+                            }
+                            else -> {
+                                lastProblem = friendlyError(e, "Server is not ready.")
+                            }
+                        }
+                    }
+                    val remaining = deadline - SystemClock.elapsedRealtime()
+                    if (remaining < 5_000L) break
+                    backendCheckMessage = "Server is not ready yet (attempt $attempts). $lastProblem Retrying automatically without sending login details."
+                    delay(5_000L)
+                }
+                if (backendCheckState == "STARTING") {
+                    backendCheckState = "UNAVAILABLE"
+                    backendCheckedAt = 0L
+                    backendCheckMessage = "Backend did not become ready after $attempts checks. $lastProblem Use Retry connection or open Server status in your browser."
                 }
             } finally {
                 backendCheckLoading = false
