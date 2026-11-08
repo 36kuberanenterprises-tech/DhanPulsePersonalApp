@@ -188,7 +188,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("Secure sign in", color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Backend connectivity check is optional. You can sign in with your PIN and a fresh Angel One TOTP even while it is checking.",
+                    Text("The app prepares its backend before login. Wait for READY, then enter a fresh Angel One TOTP.",
                         color = Muted, style = MaterialTheme.typography.bodySmall)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween) {
@@ -198,8 +198,8 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                         TextButton(onClick = {
                             if (vm.backendCheckLoading) vm.cancelBackendCheck()
                             else vm.checkBackendConnection()
-                        }, enabled = !vm.loading) {
-                            Text(if (vm.backendCheckLoading) "Cancel check" else "Test connection")
+                        }, enabled = !vm.loginBusy) {
+                            Text(if (vm.backendCheckLoading) "Cancel check" else if (vm.backendCheckState == "UNAVAILABLE") "Retry connection" else "Test connection")
                         }
                     }
                     Text(vm.backendCheckMessage, color = if (vm.backendCheckState == "READY") Green else Muted,
@@ -219,6 +219,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                         label = { Text("Current 6 digit TOTP") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
+                        enabled = vm.backendCheckState == "READY" && !vm.loginBusy,
                         shape = RoundedCornerShape(16.dp),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
@@ -234,16 +235,17 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                                 if (succeeded) pin = ""
                             }
                         },
-                        enabled = !vm.loading && pin.isNotBlank() && totp.trim().matches(Regex("\\d{6}")),
+                        enabled = !vm.loginBusy && vm.backendCheckState == "READY" &&
+                            pin.isNotBlank() && totp.trim().matches(Regex("\\d{6}")),
                         modifier = Modifier.fillMaxWidth().height(54.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Purple, contentColor = Color.White)
                     ) {
-                        if (vm.loading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
+                        if (vm.loginBusy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
                         else Text("Connect securely", fontWeight = FontWeight.Bold)
                     }
 
-                    Text("The connection check never blocks login. If the backend is unavailable, the app will show a specific error. No automatic login retries. PIN and TOTP are not saved.",
+                    Text("Backend READY is required before sending login details. If unavailable, use Retry connection. No automatic login retries. PIN and TOTP are not saved.",
                         color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
