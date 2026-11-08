@@ -141,6 +141,7 @@ fun DhanPulseApp(vm: DhanPulseViewModel = viewModel()) {
 fun LoginScreen(vm: DhanPulseViewModel) {
     var pin by remember { mutableStateOf("") }
     var totp by remember { mutableStateOf("") }
+    LaunchedEffect(vm) { vm.checkBackendConnection() }
 
     Box(
         Modifier
@@ -180,7 +181,20 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("Secure sign in", color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Backend and SmartAPI are already configured. Enter only your current Angel One login details.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("First verify the backend connection. Use a fresh Angel One TOTP only after the backend is ready.",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Backend: " + vm.backendCheckState.replace('_', ' '),
+                            color = if (vm.backendCheckState == "READY") Green else Amber,
+                            fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { vm.checkBackendConnection() },
+                            enabled = !vm.backendCheckLoading && !vm.loading) {
+                            Text(if (vm.backendCheckLoading) "Checking" else "Test connection")
+                        }
+                    }
+                    Text(vm.backendCheckMessage, color = if (vm.backendCheckState == "READY") Green else Muted,
+                        style = MaterialTheme.typography.bodySmall)
 
                     OutlinedTextField(
                         pin, { pin = it },
@@ -203,8 +217,15 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                     vm.error?.let { ErrorStrip(it) }
 
                     Button(
-                        onClick = { vm.login(pin, totp) { pin = ""; totp = "" } },
-                        enabled = !vm.loading,
+                        onClick = {
+                            vm.login(pin, totp) { succeeded ->
+                                // Keep the PIN in memory after a network error so it need not
+                                // be typed again. Never reuse an expired one-time TOTP.
+                                totp = ""
+                                if (succeeded) pin = ""
+                            }
+                        },
+                        enabled = !vm.loading && !vm.backendCheckLoading && vm.backendCheckState == "READY",
                         modifier = Modifier.fillMaxWidth().height(54.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Purple, contentColor = Color.White)
