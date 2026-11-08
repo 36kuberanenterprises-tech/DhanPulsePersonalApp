@@ -9,14 +9,14 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness ]
     paths:
       - 'android-app/**'
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   ANDROID_HOME: /usr/local/lib/android/sdk
@@ -71,7 +71,7 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Build signed standalone live movers APK
+      - name: Build standalone login readiness APK
         working-directory: android-app
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
@@ -79,23 +79,46 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 73'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 74'"
 
       - name: Rename APK
         id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build73-Native-Monitor.apk"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build74-Login-Ready.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build73-Installable-APK
+          name: DhanPulse-Monitor-Build74-Installable-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build73-Native-Monitor.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build74-Login-Ready.apk
           if-no-files-found: error
           retention-days: 30
 
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build74-login-readiness'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested APK
+        uses: actions/download-artifact@v4
+        with:
+          name: DhanPulse-Monitor-Build74-Installable-APK
+
+      - name: Publish direct Build 74 APK link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk="DhanPulse-v2.9.7-Build74-Login-Ready.apk"
+          test -s "$apk"
+          gh release create "build74-login-ready-20261108" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "DhanPulse Build 74 Login Readiness" \
+            --notes "Standalone testing build. Prepares Render before accepting a fresh Angel One TOTP, separates login progress from market refresh, and preserves native read only background monitoring. Requires live device and broker verification. A different debug signing key prevents replacement of Build 73." \
+            --prerelease
