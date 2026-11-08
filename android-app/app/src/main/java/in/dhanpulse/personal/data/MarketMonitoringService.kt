@@ -122,6 +122,7 @@ class MarketMonitoringService : Service() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setContentIntent(activityIntent())
             .setOngoing(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -149,8 +150,15 @@ class MarketMonitoringService : Service() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
             .setContentIntent(activityIntent())
             .setAutoCancel(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build())
+    }
+
+    private fun isRecent(raw: String?, maxAgeMs: Long = 60_000L): Boolean {
+        val timestamp = runCatching { Instant.parse(raw ?: "").toEpochMilli() }.getOrNull() ?: return false
+        val delta = System.currentTimeMillis() - timestamp
+        return delta in 0L..maxAgeMs
     }
 
     private fun marketHours(): Pair<Boolean, Boolean> {
@@ -207,8 +215,10 @@ class MarketMonitoringService : Service() {
                     when (choice) {
                         "MOVERS" -> {
                             val movers = withTimeout(28_000L) { api.liveMovers(session) }
-                            val top = movers.movers.firstOrNull { it.ageSeconds != null &&
-                                it.ageSeconds in 0.0..15.0 && (it.price ?: 0.0) > 0 }
+                            val top = if (isRecent(movers.updatedAt)) movers.movers.firstOrNull {
+                                it.status == "LIVE_MOVER" && it.ageSeconds != null &&
+                                it.ageSeconds in 0.0..15.0 && (it.price ?: 0.0) > 0
+                            } else null
                             if (top != null) {
                                 monitorState.lastMarketDataAt = System.currentTimeMillis()
                                 status("LIVE MOVERS", top.symbol + " • quote screened, not a confirmed trade")
@@ -219,7 +229,8 @@ class MarketMonitoringService : Service() {
                             val result = withTimeout(28_000L) { api.stockScanner(session) }
                             val ready = result.candidates.firstOrNull { it.status == "READY" &&
                                 it.plan != null && it.side in setOf("BUY","SELL") }
-                            if (result.marketStatus == "SCANNING" && ready != null) {
+                            if (result.marketStatus == "SCANNING" && isRecent(result.timestamp) &&
+                                ready != null) {
                                 monitorState.lastMarketDataAt = System.currentTimeMillis()
                                 status("STOCK SETUP", ready.symbol + " " + ready.side + " • review in app")
                                 alert("stock:" + ready.symbol + ":" + ready.side + ":" + ready.setup,
@@ -259,14 +270,16 @@ class MarketMonitoringService : Service() {
 
     private fun processAnalysis(result: AnalysisResponse) {
         val side = result.tradeDecision.direction.uppercase()
-        if (result.dataFresh == true && result.tradeDecision.setupAllowed &&
+        if (result.dataFresh == true && isRecent(result.timestamp) &&
+            result.tradeDecision.setupAllowed &&
             side in setOf("BUY","SELL","CE","PE")) {
             monitorState.lastMarketDataAt = System.currentTimeMillis()
             status("SETUP READY", result.symbol + " " + side + " • review")
             alert("index:" + result.symbol + ":" + side + ":" + result.tradeDecision.strategyFamily,
                 "DhanPulse " + result.symbol + " " + side,
                 "Confirmed with fresh broker data. Review the app; no order placed.")
-        } else if (result.dataFresh == true && (result.market.ltp ?: 0.0) > 0) {
+        } else if (result.dataFresh == true && isRecent(result.timestamp) &&
+            (result.market.ltp ?: 0.0) > 0) {
             monitorState.lastMarketDataAt = System.currentTimeMillis()
             status("LIVE", result.symbol + " price feed active • no trade setup")
         } else status("DATA NEEDED", result.symbol + " historical confirmation unavailable")
