@@ -14,6 +14,7 @@ import `in`.dhanpulse.personal.MainActivity
 import `in`.dhanpulse.personal.model.AnalysisResponse
 import `in`.dhanpulse.personal.model.LiveMoverStock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -235,7 +236,9 @@ class MarketMonitoringService : Service() {
                     failures = 0
                     if (monitorState.hasLiveMonitoring()) secure.lastUserActivity = System.currentTimeMillis()
                 } catch (e: Exception) {
-                    if (e is CancellationException) throw e
+                    // One timed-out broker request must not terminate the
+                    // entire native market monitor; only actual job cancellation does.
+                    if (e is CancellationException && e !is TimeoutCancellationException) throw e
                     if (e is HttpException && e.code() == 401) {
                         stopMonitor("Session invalid • sign in again", false)
                         break
