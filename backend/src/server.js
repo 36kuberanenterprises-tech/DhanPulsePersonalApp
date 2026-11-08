@@ -17,6 +17,7 @@ import { stockOptionCatalog, stockOptionWindow, stockOptionBuyWindow } from './s
 import { chooseStockSetup, chooseStockOption } from './stock-opportunities.js';
 import { deltaBackendConfigured, verifyDeltaAccessToken, deltaAccountSummary } from './delta.js';
 import { ipMatchesRegistered, probeRelayHealth, probeProxyEgress } from './network-route.js';
+import { capacityGate } from './request-capacity.js';
 
 const APP_VERSION = '2.9.8';
 const app = express();
@@ -34,6 +35,8 @@ const deltaAccessAttempts = new Map();
 const LIVE_ANALYSIS_MIN_MS = 2500;
 const ACCOUNT_CACHE_MS = 15_000;
 const ACCOUNT_ERROR_RETRY_MS = 30_000;
+// Avoid heavy historical research starving login, quotes, and account reads.
+const researchCapacity = capacityGate(1);
 const IST_OFFSET_MS = 330 * 60 * 1000;
 const nextIndiaMidnight = now => {
   const indiaTime = new Date(now + IST_OFFSET_MS);
@@ -511,6 +514,10 @@ app.get('/api/backtest/catalog', requireSession, async (_req, res) => {
 });
 
 app.post('/api/backtest', requireSession, async (req, res) => {
+  const release = researchCapacity.acquire();
+  if (!release) return res.status(429).set('Retry-After', '20').json({
+    error: 'Another research request is already running. Try again after it finishes.'
+  });
   try {
     const body = req.body || {};
     const allowedIntervals = ['ONE_MINUTE','THREE_MINUTE','FIVE_MINUTE','TEN_MINUTE','FIFTEEN_MINUTE'];
@@ -532,6 +539,8 @@ app.post('/api/backtest', requireSession, async (req, res) => {
   } catch (e) {
     console.error('Backtest failed:', e?.message || e);
     res.status(503).json({ error: e.message || 'Backtest failed' });
+  } finally {
+    release();
   }
 });
 
