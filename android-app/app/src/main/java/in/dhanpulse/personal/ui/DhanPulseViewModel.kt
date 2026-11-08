@@ -20,6 +20,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import retrofit2.HttpException
 import java.time.Instant
@@ -141,6 +143,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var backendCheckLoading by mutableStateOf(false)
         private set
     private var backendCheckedAt = 0L
+    private var backendCheckJob: Job? = null
     var refreshWarning by mutableStateOf<String?>(null)
     var orderBusy by mutableStateOf(false)
     var orderMessage by mutableStateOf<String?>(null)
@@ -295,55 +298,69 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         return ApiFactory.create(backendUrl).also { api = it }
     }
 
-    // A public health check runs before collecting a fresh TOTP. This does not
-    // contact Angel One or submit any PIN, OTP or account information.
+    // Health checking is advisory: never trap the user behind a disabled
+    // login button when a backend cold start or DNS issue delays /health.
     fun checkBackendConnection() {
         if (backendCheckLoading || loading) return
         backendCheckLoading = true
         backendCheckState = "CHECKING"
-        backendCheckMessage = "Checking DhanPulse backend without sending login details."
-        viewModelScope.launch {
+        backendCheckMessage = "Testing the DhanPulse backend. You can still try Connect securely."
+        backendCheckJob = viewModelScope.launch {
             try {
-                val health = client().health()
-                if (!health.ok) throw IllegalStateException("Backend health check returned an unhealthy response.")
+                val health = withTimeout(12_000L) { client().health() }
+                if (!health.ok) throw IllegalStateException("Backend health returned an unhealthy response.")
                 backendCheckState = "READY"
                 backendCheckedAt = System.currentTimeMillis()
-                backendCheckMessage = "Backend reachable. Enter a fresh Angel One TOTP to sign in."
+                backendCheckMessage = "Backend reachable. Use a fresh TOTP for Angel One login."
                 error = null
+            } catch (e: TimeoutCancellationException) {
+                backendCheckState = "UNAVAILABLE"
+                backendCheckedAt = 0L
+                backendCheckMessage = "Backend check timed out. You may retry the check or attempt login. If login also fails, the service or network needs attention."
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 backendCheckState = "UNAVAILABLE"
                 backendCheckedAt = 0L
                 backendCheckMessage = when (e) {
-                    is java.net.UnknownHostException -> "Backend address cannot be resolved. Check your mobile internet or DNS."
+                    is java.net.UnknownHostException -> "Unable to resolve the DhanPulse backend hostname. Verify mobile data, WiFi or DNS."
                     is java.net.SocketTimeoutException, is java.io.InterruptedIOException ->
-                        "Backend did not respond. Check its service status and internet connection."
-                    else -> "Backend health check failed: " + friendlyError(e, "Connection unavailable")
+                        "The backend did not respond. Retry later or test using another internet connection."
+                    else -> "Backend check failed: " + friendlyError(e, "Connection unavailable")
                 }
             } finally {
                 backendCheckLoading = false
+                backendCheckJob = null
             }
         }
     }
 
+    fun cancelBackendCheck() {
+        if (!backendCheckLoading) return
+        backendCheckJob?.cancel()
+        backendCheckJob = null
+        backendCheckLoading = false
+        backendCheckState = "UNCHECKED"
+        backendCheckMessage = "Backend check cancelled. Login is available independently."
+    }
+
     fun login(pin: String, totp: String, onDone: (Boolean) -> Unit) {
+        if (loading) return
         error = null
-        if (backendCheckState != "READY" || System.currentTimeMillis() - backendCheckedAt > 300_000L) {
-            error = "Check the backend connection first. No PIN or TOTP was sent."
-            onDone(false)
-            return
-        }
         if (pin.isBlank() || !totp.trim().matches(Regex("\\d{6}"))) {
             error = "Enter your PIN and current six digit Angel One TOTP."
             onDone(false)
             return
         }
-        if (loading) return
+        // The connection check must not block login. Cancel an in-progress
+        // health probe before attempting one authenticated request.
+        cancelBackendCheck()
         loading = true
         viewModelScope.launch {
             var succeeded = false
             try {
-                val r = client().login(LoginRequest("", "", pin.trim(), totp.trim()))
+                val r = withTimeout(35_000L) {
+                    client().login(LoginRequest("", "", pin.trim(), totp.trim()))
+                }
                 if (r.sessionId.isBlank()) throw IllegalStateException("Backend returned no session after login.")
                 sessionId = r.sessionId
                 profile = r.profile
@@ -356,19 +373,28 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 sessionStore.profileCode = r.profile?.clientcode
                 lastActivityWrite = now
                 succeeded = true
+                backendCheckState = "READY"
+                backendCheckedAt = now
+                backendCheckMessage = "Authenticated successfully."
                 fetchAnalysis()
                 startLivePriceStream()
                 fetchAccount()
                 fetchOrderDiagnostics()
+            } catch (e: TimeoutCancellationException) {
+                error = "Login request timed out. The DhanPulse backend or Angel One did not respond. No automatic retry was made. Check service connectivity before using a fresh TOTP."
+                backendCheckState = "UNAVAILABLE"
+                backendCheckedAt = 0L
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 error = when {
                     e is java.net.SocketTimeoutException || e is java.io.InterruptedIOException ->
-                        "Backend health was reachable, but the login request timed out. Check DhanPulse server and Angel One connection. No automatic retry was made."
+                        "Login request timed out. DhanPulse backend or Angel One may be unreachable. No automatic retry was made."
                     e is java.net.UnknownHostException ->
-                        "Backend connection was lost. Recheck the backend before signing in."
+                        "Cannot resolve the DhanPulse backend address. Check internet access or DNS."
                     e is HttpException && e.code() == 504 ->
-                        "DhanPulse backend reached Angel One, but the broker login timed out. Check broker reachability and the registered server IP."
+                        "DhanPulse reached the broker, but Angel One login timed out. Check broker reachability and the registered server IP."
+                    e is HttpException && e.code() == 503 ->
+                        "The backend returned a service error. Angel One authentication or the server may be unavailable: " + friendlyError(e, "Service unavailable")
                     else -> friendlyError(e, "Login failed")
                 }
                 if (e is java.net.UnknownHostException) {
