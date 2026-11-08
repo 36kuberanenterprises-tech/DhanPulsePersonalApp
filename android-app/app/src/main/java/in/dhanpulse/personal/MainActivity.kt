@@ -1991,7 +1991,7 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(onClick = {
-                            if (vm.backgroundMonitorRequested) {
+                            if (vm.backgroundMonitorRunning) {
                                 vm.stopBackgroundMonitoring()
                             } else if (Build.VERSION.SDK_INT >= 33 &&
                                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
@@ -2001,7 +2001,11 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                                 vm.startBackgroundMonitoring()
                             }
                         }, modifier = Modifier.weight(1f)) {
-                            Text(if (vm.backgroundMonitorRequested) "Stop monitoring" else "Start monitoring")
+                            Text(when {
+                                vm.backgroundMonitorRunning -> "Stop monitoring"
+                                vm.backgroundMonitorRequested -> "Restart monitoring"
+                                else -> "Start monitoring"
+                            })
                         }
                         TextButton(onClick = { vm.refreshBackgroundMonitorStatus() }) {
                             Text("Refresh")
