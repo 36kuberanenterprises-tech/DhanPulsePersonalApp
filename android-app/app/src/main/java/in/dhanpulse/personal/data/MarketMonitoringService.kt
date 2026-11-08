@@ -191,7 +191,7 @@ class MarketMonitoringService : Service() {
                     delay(60_000L)
                     continue
                 }
-                if (monitorState.uiVisible) {
+                if (monitorState.hasVisibleApp()) {
                     status("ACTIVE", "Monitoring is handed to the visible app.")
                     delay(10_000L)
                     continue
@@ -285,7 +285,7 @@ class MarketMonitoringService : Service() {
     private suspend fun liveFeedLoop(secure: SecurePrefs) {
         val feed = LivePriceStream(SERVER)
         while (scope.isActive && monitorState.requested) {
-            if (monitorState.uiVisible || validSession(secure) == null) {
+            if (monitorState.hasVisibleApp() || validSession(secure) == null) {
                 delay(3_000L)
                 continue
             }
@@ -298,7 +298,7 @@ class MarketMonitoringService : Service() {
             }
             try {
                 feed.collect(validSession(secure) ?: break, symbol) { price ->
-                    if (monitorState.uiVisible || !monitorState.requested ||
+                    if (monitorState.hasVisibleApp() || !monitorState.requested ||
                         monitorState.selectedSymbol != symbol)
                         throw CancellationException("Visible app or symbol change")
                     if (price.status == "LIVE" && (price.price ?: 0.0) > 0) {
@@ -311,7 +311,7 @@ class MarketMonitoringService : Service() {
             } catch (_: CancellationException) {
                 // The app resumed or the watched symbol changed.
             } catch (e: Exception) {
-                if (!monitorState.uiVisible)
+                if (!monitorState.hasVisibleApp())
                     status("RECONNECTING", symbol + " broker stream interrupted")
             }
             delay(5_000L)
