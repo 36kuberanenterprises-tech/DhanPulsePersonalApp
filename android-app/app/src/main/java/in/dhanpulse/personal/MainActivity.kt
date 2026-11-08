@@ -1,9 +1,14 @@
 package `in`.dhanpulse.personal
 
 import android.os.Bundle
+import android.os.Build
+import android.Manifest
+import android.content.pm.PackageManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -38,6 +43,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -1898,6 +1905,13 @@ private fun BacktestContextBar(vm: DhanPulseViewModel) {
 
 @Composable
 private fun AccountSection(vm: DhanPulseViewModel) {
+    val context = LocalContext.current
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) vm.startBackgroundMonitoring()
+        else vm.backgroundNotificationsDenied()
+    }
     var showThemeDialog by remember { mutableStateOf(false) }
     if (showThemeDialog) {
         AlertDialog(
@@ -1952,7 +1966,51 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                         }
                         Switch(checked = vm.keepScreenOn, onCheckedChange = null)
                     }
-                    Text("Your session still logs out after one hour without interaction.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    Text("Session lasts until midnight IST. Without active background monitoring, it logs out after one hour of inactivity.",
+                        color = Muted, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel),
+                shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Native Background Monitoring", color = Ink,
+                        fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text("Like Crypto DhanPulse: a native Android service continues checking NSE, stocks and MCX after you minimise the app or lock the screen.",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Status: " + vm.backgroundMonitorStatus,
+                        color = if (vm.backgroundMonitorRequested) Green else Amber,
+                        fontWeight = FontWeight.Bold)
+                    Text("Persistent notification with Stop action. Alerts are read only. No automatic trading.",
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Android 15 and newer limits continuous data sync service time. After the limit, reopen the app. Force Stop and expired broker login stop monitoring.",
+                        color = Amber, style = MaterialTheme.typography.bodySmall)
+                    vm.backgroundMonitorMessage?.let { message ->
+                        Text(message, color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = {
+                            if (vm.backgroundMonitorRunning) {
+                                vm.stopBackgroundMonitoring()
+                            } else if (Build.VERSION.SDK_INT >= 33 &&
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                                    != PackageManager.PERMISSION_GRANTED) {
+                                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                vm.startBackgroundMonitoring()
+                            }
+                        }, modifier = Modifier.weight(1f)) {
+                            Text(when {
+                                vm.backgroundMonitorRunning -> "Stop monitoring"
+                                vm.backgroundMonitorRequested -> "Restart monitoring"
+                                else -> "Start monitoring"
+                            })
+                        }
+                        TextButton(onClick = { vm.refreshBackgroundMonitorStatus() }) {
+                            Text("Refresh")
+                        }
+                    }
                 }
             }
         }
@@ -1964,7 +2022,7 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                     Text("Trading controls", color = Ink, fontWeight = FontWeight.ExtraBold)
                     AccountSettingRow("Broker", "Angel One SmartAPI")
                     AccountSettingRow("App version", BuildConfig.VERSION_NAME)
-                    AccountSettingRow("Login", "Until midnight IST; logout after 1 hour without use")
+                    AccountSettingRow("Login", "Until midnight IST; active monitoring keeps a validated read only session")
                     AccountSettingRow("Auto Trade", if (vm.autoTradeEnabled) "ON" else "OFF")
                     AccountSettingRow("Auto lots", vm.autoLots.toString())
                     AccountSettingRow("Account / P&L refresh", "Every 15 seconds")

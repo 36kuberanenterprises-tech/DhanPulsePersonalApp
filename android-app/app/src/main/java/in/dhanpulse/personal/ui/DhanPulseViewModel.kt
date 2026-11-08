@@ -1,6 +1,8 @@
 package `in`.dhanpulse.personal.ui
 
 import android.app.Application
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -12,6 +14,8 @@ import `in`.dhanpulse.personal.data.DhanPulseApi
 import `in`.dhanpulse.personal.data.SecurePrefs
 import `in`.dhanpulse.personal.data.LivePriceStream
 import `in`.dhanpulse.personal.data.LivePriceEvent
+import `in`.dhanpulse.personal.data.MarketMonitorStore
+import `in`.dhanpulse.personal.data.MarketMonitoringService
 import `in`.dhanpulse.personal.model.*
 import android.os.SystemClock
 import kotlinx.coroutines.CancellationException
@@ -34,6 +38,7 @@ import kotlin.math.round
 class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val backendUrl = "https://dhanpulse-personal-api.onrender.com"
     private val sessionStore = SecurePrefs(app)
+    private val nativeMonitor = MarketMonitorStore(app)
     private val displayPrefs = app.getSharedPreferences("dhanpulse_display_settings", 0)
     private val indiaZone = ZoneId.of("Asia/Kolkata")
     private val inactivityLimitMs = 60 * 60 * 1000L
@@ -45,6 +50,58 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var keepScreenOn by mutableStateOf(displayPrefs.getBoolean("keep_screen_on", false))
         private set
+    var backgroundMonitorRequested by mutableStateOf(nativeMonitor.requested)
+        private set
+    var backgroundMonitorRunning by mutableStateOf(nativeMonitor.running)
+        private set
+    var backgroundMonitorStatus by mutableStateOf(nativeMonitor.status)
+        private set
+    var backgroundMonitorMessage by mutableStateOf<String?>(null)
+        private set
+
+    fun refreshBackgroundMonitorStatus() {
+        backgroundMonitorRequested = nativeMonitor.requested
+        backgroundMonitorRunning = nativeMonitor.running
+        backgroundMonitorStatus = nativeMonitor.status
+    }
+
+    fun startBackgroundMonitoring() {
+        if (sessionId.isNullOrBlank() || System.currentTimeMillis() >= sessionStore.sessionExpiry) {
+            backgroundMonitorMessage = "Sign in to Angel One before starting the background monitor."
+            return
+        }
+        try {
+            nativeMonitor.requested = true
+            nativeMonitor.selectedSymbol = selectedSymbol
+            nativeMonitor.uiVisible = true
+            nativeMonitor.uiHeartbeatAt = System.currentTimeMillis()
+            val intent = Intent(getApplication(), MarketMonitoringService::class.java)
+                .setAction(MarketMonitoringService.ACTION_START)
+            ContextCompat.startForegroundService(getApplication(), intent)
+            backgroundMonitorRequested = true
+            backgroundMonitorRunning = true
+            backgroundMonitorStatus = "STARTING"
+            backgroundMonitorMessage = "Monitoring started. A persistent notification appears while the service is active."
+        } catch (e: Exception) {
+            nativeMonitor.stop("Service start blocked", true)
+            refreshBackgroundMonitorStatus()
+            backgroundMonitorMessage = "Android could not start monitoring: " + (e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    fun stopBackgroundMonitoring() {
+        nativeMonitor.stop("OFF", true)
+        getApplication<Application>().stopService(
+            Intent(getApplication(), MarketMonitoringService::class.java)
+        )
+        refreshBackgroundMonitorStatus()
+        backgroundMonitorMessage = "Monitoring stopped. No background broker requests will continue."
+    }
+
+    fun backgroundNotificationsDenied() {
+        backgroundMonitorMessage = "Allow DhanPulse notifications in Android settings to receive background alerts."
+    }
+
 
     fun updateThemeMode(mode: String) {
         if (mode !in setOf("SYSTEM", "LIGHT", "DARK")) return
@@ -238,7 +295,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         val saved = sessionStore.sessionId ?: return
         val now = System.currentTimeMillis()
         val last = sessionStore.lastUserActivity
-        val valid = now < sessionStore.sessionExpiry && last > 0 && last <= now && now - last < inactivityLimitMs
+        val monitoring = nativeMonitor.hasLiveMonitoring(now)
+        val valid = now < sessionStore.sessionExpiry && ((last > 0 && last <= now &&
+            now - last < inactivityLimitMs) || monitoring)
         if (!valid) {
             sessionStore.clearSession()
             return
@@ -251,6 +310,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         if (sessionId == null) return
         val now = System.currentTimeMillis()
         if (checkSessionTimeout(now)) return
+        if (appInForeground) nativeMonitor.uiHeartbeatAt = now
         if (now - lastActivityWrite >= 5_000) {
             sessionStore.lastUserActivity = now
             lastActivityWrite = now
@@ -264,7 +324,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun checkSessionTimeout(now: Long = System.currentTimeMillis()): Boolean {
         if (sessionId == null) return false
         val last = sessionStore.lastUserActivity
-        if (now >= sessionStore.sessionExpiry || (!appInForeground && (last <= 0 || now < last || now - last >= inactivityLimitMs))) {
+        if (now >= sessionStore.sessionExpiry ||
+            (!appInForeground && !nativeMonitor.hasLiveMonitoring(now) &&
+                (last <= 0 || now < last || now - last >= inactivityLimitMs))) {
             logout(if (now >= sessionStore.sessionExpiry) "Login again for the new day." else "Logged out after one hour without using the app.")
             return true
         }
@@ -272,6 +334,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onAppForeground() {
+        nativeMonitor.uiVisible = true
+        nativeMonitor.uiHeartbeatAt = System.currentTimeMillis()
+        refreshBackgroundMonitorStatus()
         if (!checkSessionTimeout()) {
             appInForeground = true
             markUserActive()
@@ -284,6 +349,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onAppBackground() {
+        nativeMonitor.uiVisible = false
         if (appInForeground && sessionId != null) {
             sessionStore.lastUserActivity = System.currentTimeMillis()
         }
@@ -373,6 +439,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 sessionStore.profileCode = r.profile?.clientcode
                 lastActivityWrite = now
                 succeeded = true
+                // Restart only if the user opted into native monitoring before
+                // this new broker session. Never relogin in the background.
+                if (nativeMonitor.requested) startBackgroundMonitoring()
                 backendCheckState = "READY"
                 backendCheckedAt = now
                 backendCheckMessage = "Authenticated successfully."
@@ -1233,6 +1302,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectSymbol(symbol: String) {
+        nativeMonitor.selectedSymbol = symbol
         if (selectedMarket == "MCX") {
             if (symbol != "MCXBULLDEX" && mcxIndices.none { it.symbol == symbol } && mcxEnergy.none { it.symbol == symbol }) return
             lastMcxSymbol = symbol
@@ -1677,6 +1747,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun logout(reason: String? = null) {
+        stopBackgroundMonitoring()
         val oldSession = sessionId
         sessionStore.clearSession()
         if (oldSession != null) viewModelScope.launch { runCatching { client().logout(oldSession) } }
