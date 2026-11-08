@@ -10,6 +10,9 @@ import retrofit2.http.*
 import java.util.concurrent.TimeUnit
 
 interface DhanPulseApi {
+    @GET("health")
+    suspend fun health(): BackendHealth
+
     @GET("api/flow/catalog")
     suspend fun flowCatalog(@Header("X-Session-Id") sessionId:String, @Query("group") group:String,
         @Query("q") query:String, @Query("guided") guided:Boolean=true,
@@ -103,8 +106,12 @@ object ApiFactory {
             .addInterceptor(logging)
             .addInterceptor(Interceptor { chain ->
                 val request = chain.request()
-                if (request.url.encodedPath == "/api/auth/login") {
-                    chain.call().timeout().timeout(75, TimeUnit.SECONDS)
+                // Reachability uses a credential-free GET so a sleeping backend
+                // cannot consume or expire the user's one-time TOTP.
+                if (request.url.encodedPath == "/health") {
+                    chain.call().timeout().timeout(65, TimeUnit.SECONDS)
+                } else if (request.url.encodedPath == "/api/auth/login") {
+                    chain.call().timeout().timeout(35, TimeUnit.SECONDS)
                 }
                 val builder = request.newBuilder().header("Accept", "application/json")
                 if (request.url.encodedPath.startsWith("/api/analysis/")) {
