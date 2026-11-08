@@ -2,6 +2,7 @@ package `in`.dhanpulse.personal.model
 
 data class BackendHealth(
     val ok: Boolean = false,
+    val loginReady: Boolean? = null,
     val status: String? = null,
     val version: String? = null
 )
