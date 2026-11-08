@@ -132,12 +132,15 @@ app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal
  * This is distinct from /health: the web server can be running even when
  * required SmartAPI settings are absent.
  */
-app.get('/api/auth/readiness', (_, res) => {
-  res.set('Cache-Control', 'no-store');
-  const loginReady =
-    !!String(process.env.ANGEL_API_KEY || '').trim() &&
+function loginConfigurationReady() {
+  return !!String(process.env.ANGEL_API_KEY || '').trim() &&
     !!String(process.env.ANGEL_CLIENT_CODE || '').trim() &&
     /^[0-9a-f]{64}$/i.test(String(process.env.SESSION_ENCRYPTION_KEY || '').trim());
+}
+
+app.get('/api/auth/readiness', (_, res) => {
+  res.set('Cache-Control', 'no-store');
+  const loginReady = loginConfigurationReady();
   res.json({
     ok: true,
     loginReady,
@@ -760,4 +763,7 @@ setInterval(() => {
 
 const port = Number(process.env.PORT || 8787);
 export { app };
-if (process.env.NODE_ENV !== 'test') app.listen(port, () => console.log(`DhanPulse Personal API running on :${port}`));
+if (process.env.NODE_ENV !== 'test') app.listen(port, () => {
+  console.log(`DhanPulse Personal API running on :${port}`);
+  console.log('Angel One login configuration:', loginConfigurationReady() ? 'READY' : 'INCOMPLETE');
+});
