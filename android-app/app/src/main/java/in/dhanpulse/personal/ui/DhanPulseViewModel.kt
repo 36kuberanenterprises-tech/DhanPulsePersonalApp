@@ -192,6 +192,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }?.price
     var account by mutableStateOf<AccountSummary?>(null)
     var loading by mutableStateOf(false)
+    // Login has its own state: market refreshes also use loading.
+    var loginBusy by mutableStateOf(false)
+        private set
     var error by mutableStateOf<String?>(null)
     var backendCheckState by mutableStateOf("UNCHECKED")
         private set
@@ -367,13 +370,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     // Health checking is advisory: never trap the user behind a disabled
     // login button when a backend cold start or DNS issue delays /health.
     fun checkBackendConnection() {
-        if (backendCheckLoading || loading) return
+        if (backendCheckLoading || loginBusy) return
         backendCheckLoading = true
-        backendCheckState = "CHECKING"
-        backendCheckMessage = "Testing the DhanPulse backend. You can still try Connect securely."
+        backendCheckState = "STARTING"
+        backendCheckMessage = "Preparing backend connection. A sleeping server may need over a minute to start. Use a fresh TOTP once READY."
         backendCheckJob = viewModelScope.launch {
             try {
-                val health = withTimeout(12_000L) { client().health() }
+                val health = withTimeout(80_000L) { client().health() }
                 if (!health.ok) throw IllegalStateException("Backend health returned an unhealthy response.")
                 backendCheckState = "READY"
                 backendCheckedAt = System.currentTimeMillis()
@@ -382,7 +385,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: TimeoutCancellationException) {
                 backendCheckState = "UNAVAILABLE"
                 backendCheckedAt = 0L
-                backendCheckMessage = "Backend check timed out. You may retry the check or attempt login. If login also fails, the service or network needs attention."
+                backendCheckMessage = "The backend did not respond within 80 seconds. Check your internet connection, then tap Retry connection. Login has not been attempted."
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 backendCheckState = "UNAVAILABLE"
@@ -406,25 +409,29 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         backendCheckJob = null
         backendCheckLoading = false
         backendCheckState = "UNCHECKED"
-        backendCheckMessage = "Backend check cancelled. Login is available independently."
+        backendCheckMessage = "Backend preparation cancelled. Run the connection check before signing in."
     }
 
     fun login(pin: String, totp: String, onDone: (Boolean) -> Unit) {
-        if (loading) return
+        if (loginBusy) return
         error = null
+        if (backendCheckState != "READY") {
+            error = "Backend not ready. Tap Retry connection and wait until READY before entering a fresh TOTP."
+            onDone(false)
+            return
+        }
         if (pin.isBlank() || !totp.trim().matches(Regex("\\d{6}"))) {
             error = "Enter your PIN and current six digit Angel One TOTP."
             onDone(false)
             return
         }
-        // The connection check must not block login. Cancel an in-progress
-        // health probe before attempting one authenticated request.
-        cancelBackendCheck()
-        loading = true
+        // Do not send a time-limited TOTP to a backend that has not started.
+        // A failed authentication is never automatically retried.
+        loginBusy = true
         viewModelScope.launch {
             var succeeded = false
             try {
-                val r = withTimeout(35_000L) {
+                val r = withTimeout(28_000L) {
                     client().login(LoginRequest("", "", pin.trim(), totp.trim()))
                 }
                 if (r.sessionId.isBlank()) throw IllegalStateException("Backend returned no session after login.")
@@ -471,7 +478,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     backendCheckedAt = 0L
                 }
             } finally {
-                loading = false
+                loginBusy = false
                 onDone(succeeded)
             }
         }
