@@ -74,6 +74,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             nativeMonitor.requested = true
             nativeMonitor.selectedSymbol = selectedSymbol
             nativeMonitor.uiVisible = true
+            nativeMonitor.uiHeartbeatAt = System.currentTimeMillis()
             val intent = Intent(getApplication(), MarketMonitoringService::class.java)
                 .setAction(MarketMonitoringService.ACTION_START)
             ContextCompat.startForegroundService(getApplication(), intent)
@@ -309,6 +310,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         if (sessionId == null) return
         val now = System.currentTimeMillis()
         if (checkSessionTimeout(now)) return
+        if (appInForeground) nativeMonitor.uiHeartbeatAt = now
         if (now - lastActivityWrite >= 5_000) {
             sessionStore.lastUserActivity = now
             lastActivityWrite = now
@@ -333,6 +335,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onAppForeground() {
         nativeMonitor.uiVisible = true
+        nativeMonitor.uiHeartbeatAt = System.currentTimeMillis()
         refreshBackgroundMonitorStatus()
         if (!checkSessionTimeout()) {
             appInForeground = true
