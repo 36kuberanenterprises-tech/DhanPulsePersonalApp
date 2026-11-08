@@ -181,16 +181,18 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("Secure sign in", color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("First verify the backend connection. Use a fresh Angel One TOTP only after the backend is ready.",
+                    Text("Backend connectivity check is optional. You can sign in with your PIN and a fresh Angel One TOTP even while it is checking.",
                         color = Muted, style = MaterialTheme.typography.bodySmall)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Backend: " + vm.backendCheckState.replace('_', ' '),
                             color = if (vm.backendCheckState == "READY") Green else Amber,
                             fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                        TextButton(onClick = { vm.checkBackendConnection() },
-                            enabled = !vm.backendCheckLoading && !vm.loading) {
-                            Text(if (vm.backendCheckLoading) "Checking" else "Test connection")
+                        TextButton(onClick = {
+                            if (vm.backendCheckLoading) vm.cancelBackendCheck()
+                            else vm.checkBackendConnection()
+                        }, enabled = !vm.loading) {
+                            Text(if (vm.backendCheckLoading) "Cancel check" else "Test connection")
                         }
                     }
                     Text(vm.backendCheckMessage, color = if (vm.backendCheckState == "READY") Green else Muted,
@@ -225,7 +227,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                                 if (succeeded) pin = ""
                             }
                         },
-                        enabled = !vm.loading && !vm.backendCheckLoading && vm.backendCheckState == "READY",
+                        enabled = !vm.loading && pin.isNotBlank() && totp.trim().matches(Regex("\\d{6}")),
                         modifier = Modifier.fillMaxWidth().height(54.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Purple, contentColor = Color.White)
@@ -234,7 +236,8 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                         else Text("Connect securely", fontWeight = FontWeight.Bold)
                     }
 
-                    Text("PIN and TOTP are not saved. Your encrypted session stays available today while you use the app. One hour without use logs you out.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    Text("The connection check never blocks login. If the backend is unavailable, the app will show a specific error. No automatic login retries. PIN and TOTP are not saved.",
+                        color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
