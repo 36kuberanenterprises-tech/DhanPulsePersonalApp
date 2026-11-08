@@ -126,6 +126,26 @@ async function routedPlaceOrder(session, payload) {
 
 app.get('/', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', version: APP_VERSION, status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
 app.get('/health', (_, res) => res.json({ ok: true, service: 'DhanPulse Personal API', version: APP_VERSION, status: 'live', mode: 'analysis-manual-auto-backtest', registeredPublicIp: process.env.CLIENT_PUBLIC_IP || '34.70.199.153' }));
+
+/*
+ * Credential-free login readiness. Do not expose credentials or user data.
+ * This is distinct from /health: the web server can be running even when
+ * required SmartAPI settings are absent.
+ */
+app.get('/api/auth/readiness', (_, res) => {
+  res.set('Cache-Control', 'no-store');
+  const loginReady =
+    !!String(process.env.ANGEL_API_KEY || '').trim() &&
+    !!String(process.env.ANGEL_CLIENT_CODE || '').trim() &&
+    /^[0-9a-f]{64}$/i.test(String(process.env.SESSION_ENCRYPTION_KEY || '').trim());
+  res.json({
+    ok: true,
+    loginReady,
+    status: loginReady ? 'READY' : 'LOGIN_CONFIGURATION_INCOMPLETE',
+    version: APP_VERSION
+  });
+});
+
 attachFlowRoutes(app, requireSession);
 
 app.get('/api/delta/status', (_req, res) => {
