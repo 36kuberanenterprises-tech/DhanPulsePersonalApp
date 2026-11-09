@@ -1,5 +1,6 @@
 package `in`.dhanpulse.personal
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
@@ -9,6 +10,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -37,7 +40,9 @@ data class FlowBar(val time:String="",val buy:Double=0.0,val sell:Double=0.0,val
     val unallocated:Double=0.0,val delta:Double=0.0,val levels:List<FlowLevel> = emptyList(),
     val observedVolume:Double=0.0,val classifiedCoveragePct:Double?=null,val priceCoveragePct:Double?=null,
     val pocPrice:Double?=null,val pocObservedVolume:Double=0.0,
-    val deltaLowerBound:Double=0.0,val deltaUpperBound:Double=0.0)
+    val deltaLowerBound:Double=0.0,val deltaUpperBound:Double=0.0,
+    val open:Double?=null,val high:Double?=null,val low:Double?=null,val close:Double?=null,
+    val priceSamples:Int=0,val intervalClosed:Boolean=false)
 data class FlowSnapshot(val status:String="WAITING_FOR_FEED",val symbol:String="",val startedAt:String="",
     val lastTickAt:String?=null,val price:Double?=null,val spread:Double?=null,val depthImbalance:Double?=null,
     val oi:Double?=null,val estimatedCvd:Double=0.0,val note:String="",val error:String?=null,
@@ -45,6 +50,29 @@ data class FlowSnapshot(val status:String="WAITING_FOR_FEED",val symbol:String="
     val bids:List<FlowDepth> = emptyList(),val asks:List<FlowDepth> = emptyList(),val bars:List<FlowBar> = emptyList())
 
 private fun flowNumber(value:Double?)=value?.let { String.format(Locale.US,"%,.2f",it) } ?: "Unavailable"
+
+// A sampled price sketch, NOT the broker's official OHLC candle.
+@Composable
+private fun SampledCandleSketch(bar:FlowBar) {
+    val open=bar.open ?: return
+    val close=bar.close ?: return
+    val high=bar.high ?: return
+    val low=bar.low ?: return
+    val upper=maxOf(open,close,high)
+    val lower=minOf(open,close,low)
+    val priceSpan=(upper-lower).takeIf { it>0.0 } ?: maxOf(open*0.0001,0.01)
+    val color=if(close>=open) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+    Canvas(Modifier.fillMaxWidth().height(84.dp)) {
+        val pad=8.dp.toPx()
+        fun y(price:Double)=pad+((upper-price)/priceSpan).toFloat()*(size.height-2f*pad)
+        val center=size.width*0.5f
+        drawLine(color,start=Offset(center,y(upper)),end=Offset(center,y(lower)),strokeWidth=2.dp.toPx())
+        val bodyWidth=26.dp.toPx()
+        val top=minOf(y(open),y(close))
+        val height=maxOf(kotlin.math.abs(y(open)-y(close)),3.dp.toPx())
+        drawRect(color,topLeft=Offset(center-bodyWidth/2f,top),size=Size(bodyWidth,height))
+    }
+}
 private fun flowTime(value:String?)=runCatching {
     DateTimeFormatter.ofPattern("dd MMM HH:mm:ss").withZone(ZoneId.of("Asia/Kolkata")).format(Instant.parse(value))
 }.getOrDefault("Waiting")
@@ -330,8 +358,12 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                     var shownLevels by remember(bar.time) { mutableIntStateOf(30) }
                     val peak=bar.levels.maxOfOrNull { it.buy+it.sell+it.unknown }?.coerceAtLeast(1.0) ?: 1.0
                     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                        Text("${flowTime(bar.time)} IST • Estimated delta ${flowNumber(bar.delta)}",style=MaterialTheme.typography.titleSmall)
-                        Text("Observed volume ${flowNumber(bar.observedVolume)} • Buy ${flowNumber(bar.buy)} • Sell ${flowNumber(bar.sell)}")
+                        Text("${flowTime(bar.time)} IST • ${if(bar.intervalClosed) "Time interval ended" else "Interval forming"}",style=MaterialTheme.typography.titleSmall)
+                        Text("Sampled price candle • ${bar.priceSamples} received price updates",style=MaterialTheme.typography.labelMedium)
+                        SampledCandleSketch(bar)
+                        Text("Sampled O ${flowNumber(bar.open)} • H ${flowNumber(bar.high)} • L ${flowNumber(bar.low)} • C ${flowNumber(bar.close)}",style=MaterialTheme.typography.bodySmall)
+                        Text("Estimated delta ${flowNumber(bar.delta)} • Observed volume ${flowNumber(bar.observedVolume)}")
+                        Text("Buy ${flowNumber(bar.buy)} • Sell ${flowNumber(bar.sell)}")
                         Text("Volume assigned to price ${bar.priceCoveragePct?.let { flowNumber(it)+"%" } ?: "Unavailable"} • Side classified ${bar.classifiedCoveragePct?.let { flowNumber(it)+"%" } ?: "Unavailable"}")
                         Text("Observed POC ${flowNumber(bar.pocPrice)} • Sampled volume at POC ${flowNumber(bar.pocObservedVolume)}")
                         Text("Estimated delta range if unknown volume changes side: ${flowNumber(bar.deltaLowerBound)} to ${flowNumber(bar.deltaUpperBound)}",style=MaterialTheme.typography.bodySmall)
