@@ -112,6 +112,26 @@ private fun displayColorScheme(p: DisplayPalette, dark: Boolean): ColorScheme {
     )
 }
 class MainActivity : ComponentActivity() {
+    // Restore the keep-awake setting when Android resumes this Activity.
+    // The user may return from the notification shade, another app or lock screen.
+    private fun syncKeepScreenOn(enabled: Boolean) {
+        if (enabled) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.decorView.keepScreenOn = enabled
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val settings = getSharedPreferences("dhanpulse_display_settings", MODE_PRIVATE)
+        syncKeepScreenOn(settings.getBoolean("keep_screen_on", false))
+    }
+
+    override fun onStop() {
+        // The setting is only for a visible screen; never hold a hidden window awake.
+        syncKeepScreenOn(false)
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -123,8 +143,7 @@ class MainActivity : ComponentActivity() {
             }
             val palette = if (dark) DarkPalette else LightPalette
             SideEffect {
-                if (vm.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                syncKeepScreenOn(vm.keepScreenOn)
                 WindowInsetsControllerCompat(window, window.decorView).apply {
                     isAppearanceLightStatusBars = !dark
                     isAppearanceLightNavigationBars = !dark
@@ -1971,14 +1990,17 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                     }
                     HorizontalDivider(color = Line)
                     Row(
-                        Modifier.fillMaxWidth().clickable { vm.updateKeepScreenOn(!vm.keepScreenOn) }.padding(vertical = 6.dp),
+                        Modifier.fillMaxWidth().padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text("Keep Screen On", color = Ink, fontWeight = FontWeight.Bold)
-                            Text("While this app is visible", color = Muted, style = MaterialTheme.typography.bodySmall)
+                            Text("Prevents normal screen timeout while the app is visible", color = Muted, style = MaterialTheme.typography.bodySmall)
                         }
-                        Switch(checked = vm.keepScreenOn, onCheckedChange = null)
+                        Switch(
+                            checked = vm.keepScreenOn,
+                            onCheckedChange = { enabled -> vm.updateKeepScreenOn(enabled) }
+                        )
                     }
                     Text("Session lasts until midnight IST. Without active background monitoring, it logs out after one hour of inactivity.",
                         color = Muted, style = MaterialTheme.typography.labelSmall)
