@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -71,7 +71,7 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Build verified login recovery APK
+      - name: Build market data diagnostics APK
         working-directory: android-app
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
@@ -79,29 +79,29 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 75'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 76'"
 
       - name: Rename APK
         id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build75-Login-Recovery.apk"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build76-Market-Direction.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build75-Installable-APK
+          name: DhanPulse-Monitor-Build76-Installable-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build75-Login-Recovery.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build76-Market-Direction.apk
           if-no-files-found: error
           retention-days: 30
 
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build75-login-recovery'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build76-market-direction'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -110,15 +110,15 @@ jobs:
       - name: Download tested APK
         uses: actions/download-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build75-Installable-APK
+          name: DhanPulse-Monitor-Build76-Installable-APK
 
-      - name: Publish direct Build 75 APK link
+      - name: Publish direct Build 76 APK link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="DhanPulse-v2.9.7-Build75-Login-Recovery.apk"
+          apk="DhanPulse-v2.9.7-Build76-Market-Direction.apk"
           test -s "$apk"
-          gh release create "build75-login-recovery-20261108" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DhanPulse Build 75 Login Recovery" \
-            --notes "Standalone testing build. Prepares Render before accepting a fresh Angel One TOTP, separates login progress from market refresh, and preserves native read only background monitoring. Requires live device and broker verification. A different debug signing key prevents replacement of Build 73." \
+          gh release create "build76-market-direction-20261109" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "DhanPulse Build 76 Login Recovery" \
+            --notes "Standalone testing build. Displays verified fresh quote movement independently of confirmed candle-based CE PE entry calls. No automatic order changes. Requires live device and broker validation." \
             --prerelease
