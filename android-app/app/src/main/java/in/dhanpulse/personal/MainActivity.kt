@@ -302,6 +302,7 @@ fun DashboardScreen(vm: DhanPulseViewModel) {
         }
     }
     var section by remember { mutableStateOf("MARKET") }
+    LaunchedEffect(section) { vm.setActiveScreen(section) }
 
     Scaffold(
         modifier = Modifier.pointerInput(vm) {
