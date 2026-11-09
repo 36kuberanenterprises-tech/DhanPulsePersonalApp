@@ -110,13 +110,13 @@ jobs:
       - name: Download tested APK
         uses: actions/download-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build77-Installable-APK
+          name: DhanPulse-Monitor-Build79-Test-APK
 
-      - name: Publish direct Build 77 APK link
+      - name: Publish direct Build 79 APK link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="DhanPulse-v2.9.7-Build77-Screen-On-Market-Refresh.apk"
+          apk="DhanPulse-v2.9.7-Build79-Candle-Footprint-Preview.apk"
           test -s "$apk"
           gh release create "build79-candle-footprint-preview-20261109" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "DhanPulse Build 79 Sampled Candle Footprint Preview" \
