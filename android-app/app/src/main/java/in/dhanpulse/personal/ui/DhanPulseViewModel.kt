@@ -1694,7 +1694,6 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             var tick = 0
-            var marketCursor = 0
             while (isActive && sessionId != null) {
                 val indiaTime = Instant.now().atZone(indiaZone)
                 val day = indiaTime.dayOfWeek.value
@@ -1705,29 +1704,25 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
                 val anyMarketOpen = day in 1..5 && !time.isBefore(LocalTime.of(9, 0)) && time.isBefore(LocalTime.of(23, 30))
                 delay(if (anyMarketOpen) 3_000 else 60_000)
-                if (tick % 5 == 0) {
-                    if (stocksVisible) {
-                        fetchStockScanner()
-                        if (keepEyeVisible && keepEyeScan?.status == "RUNNING") fetchKeepEye()
-                        if (moversVisible && (liveMovers?.status == "RUNNING" ||
-                            (tick % 40 == 0 && marketOpen))) fetchMovers()
-                    }
-                    if (stockOptionsVisible) {
-                        fetchStockOptions()
-                        fetchStockOpportunity()
-                    }
+                if (stocksVisible && tick % 10 == 0) {
+                    // The stock scanner owns its history requests. Never run unrelated
+                    // index and MCX candle scans behind this screen.
+                    fetchStockScanner()
+                    if (keepEyeVisible && keepEyeScan?.status == "RUNNING") fetchKeepEye()
+                    if (moversVisible && (liveMovers?.status == "RUNNING" ||
+                        (tick % 40 == 0 && marketOpen))) fetchMovers()
                 }
-                if (!analysisRefreshInFlight) {
-                    val activeSymbols = monitoredSymbols.filter { symbol ->
-                        val equity = symbol in listOf("NIFTY", "BANKNIFTY", "SENSEX")
-                        day in 1..5 && !time.isBefore(if (equity) LocalTime.of(9, 15) else LocalTime.of(9, 0)) &&
-                            time.isBefore(if (equity) LocalTime.of(15, 30) else LocalTime.of(23, 30))
-                    }.ifEmpty { listOf(selectedSymbol) }
-                    // Keep the visible market responsive; give background markets alternate turns.
-                    val background = activeSymbols.filter { it != selectedSymbol }
-                    val target = if (tick % 2 == 0 || background.isEmpty()) selectedSymbol
-                        else background[marketCursor++ % background.size]
-                    refreshMarket(target)
+                if (stockOptionsVisible && tick % 5 == 0) {
+                    fetchStockOptions()
+                    fetchStockOpportunity()
+                }
+                if (!stocksVisible && !stockOptionsVisible && tick % 2 == 0 &&
+                    !analysisRefreshInFlight) {
+                    // Only refresh the selected market. Scanning every inactive
+                    // index, MCX symbol and stock alongside the visible market
+                    // consumes shared Angel One historical access and triggers 403.
+                    // Native background monitoring remains a separate opt-in service.
+                    refreshMarket(selectedSymbol)
                 }
                 tick++
                 if (tick % 20 == 0) fetchAccount()
