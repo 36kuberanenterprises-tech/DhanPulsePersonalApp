@@ -136,6 +136,16 @@ export async function marketData(session, exchangeTokens, mode = 'FULL', orderSa
   }, 'Market data');
 }
 
+// A read-only status check for the shared historical rate-limit circuit breaker.
+// Do not infer candle freshness from a successful quote response.
+export function historyAccessStatus(session) {
+  const client = session?.clientCode || session?.apiKey;
+  if (!client) return { blocked: false, retryAt: null };
+  const state = historyBudget.state(client);
+  return { blocked: state.blockedUntil > Date.now(),
+    retryAt: state.blockedUntil > Date.now() ? new Date(state.blockedUntil).toISOString() : null };
+}
+
 export async function candleData(session, payload) {
   validateCandlePayload(payload);
   const client = session.clientCode || session.apiKey;

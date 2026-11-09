@@ -1,9 +1,10 @@
 import { latestBrokerTick } from './live-stream.js';
 import { combineSensexSystems } from './sensex-systems.js';
 import { mcxHistory } from './mcx-history.js';
+import { quoteDirection } from './quote-direction.js';
 import { isRateError } from './history-control.js';
 import { ema, rsi, macd, supertrend, atr } from './indicators.js';
-import { instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs } from './angel.js';
+import { instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs, historyAccessStatus } from './angel.js';
 import { evaluateSensexFamilies, buildSensexDecision, sensexHigherCandles } from './sensex-strategies.js';
 
 const round = (n, d = 2) => Number.isFinite(n) ? Number(n.toFixed(d)) : null;
@@ -557,6 +558,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
   if (tick) spot = tick.price;
   const indexFeedAge = tick ? now.getTime()-tick.exchangeTimestamp : quoteFeedAgeMs(uq, now.getTime());
   const marketStatus = marketDataState(now, indexFeedAge, Number.isFinite(spot) && spot > 0, segment);
+  const observedQuoteDirection = quoteDirection(uq, spot, indexFeedAge);
   let candles;
   try {
     // Use broker-confirmed history for every market. Quote samples cannot
@@ -580,6 +582,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
       signal: 'WAIT', dataFresh: false,
       ruleScore: { bullish: 0, bearish: 0, considered: 0 },
       market: { ltp: round(spot), instrumentLabel, feedTime: uq.exchFeedTime || null, lastCandleTime: null,
+        quoteDirection: observedQuoteDirection,
         ema9: null, ema15: null, vwap: futureAverage,
         vwapSource: futureAverage == null ? 'Futures traded average unavailable; broker candles are also unavailable'
           : `Broker traded average: ${future.symbol || future.name} (quote reference only; candles unavailable)`,
@@ -728,6 +731,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     computedDecision=combined.decision;
     selection={contract:combined.contract,reason:computedDecision.message,score:null};
   }
+  const brokerHistoryStatus = historyAccessStatus(session);
   const tradeDecision = segment === 'MCX' && (!mcxInstrument.hasOptions || !window.expiry) ? {
     ...computedDecision,
     direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: 'NO_OPTIONS', conflicts: [], cautions: [],
@@ -738,7 +742,7 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     ...computedDecision,
     direction: 'WAIT', setupAllowed: false, autoEntryAllowed: false, status: marketStatus === 'LIVE' && !historyFresh ? 'HISTORY_DELAYED' : marketStatus, conflicts: [], cautions: [],
     message: !historyFresh && marketStatus === 'LIVE'
-      ? `Latest completed ${symbol} broker candle is delayed. Quotes remain visible; calls and Auto Trade are paused.`
+      ? `Latest completed ${symbol} broker candle is delayed. ${brokerHistoryStatus.blocked ? 'Broker historical requests are cooling down after an access denial. ' : ''}Quotes remain visible; calls and Auto Trade are paused.`
       : marketStatus === 'MARKET_CLOSED'
       ? 'Market closed. Showing last available broker prices and prior candles. No new calls until fresh session quotes return.'
       : `${energy ? 'Futures' : 'Index'} quote feed time is missing or delayed. Showing last available prices. New calls are paused.`
@@ -761,7 +765,8 @@ export async function analyse(session, symbol = 'NIFTY', interval = 'FIVE_MINUTE
     ruleScore: sensexFamiliesEnabled ? { bullish: sensexFamily.votes.filter(v => v.vote === 'CE').length,
       bearish: sensexFamily.votes.filter(v => v.vote === 'PE').length, considered: 6 } :
       { bullish: engine.bullRules, bearish: engine.bearRules, considered: engine.consideredRules },
-    market: { ltp: round(spot), instrumentLabel, feedTime: uq.exchFeedTime || null, lastCandleTime: candles[candles.length - 1]?.timestamp || null, ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
+    market: { ltp: round(spot), instrumentLabel, feedTime: uq.exchFeedTime || null, lastCandleTime: candles[candles.length - 1]?.timestamp || null,
+      quoteDirection: observedQuoteDirection, ema9: round(e9), ema15: round(e15), vwap: round(vw), vwapSource, rsi: round(rv), macdHistogram: round(mv?.histogram, 4), supertrend: st ? { direction: st.direction, value: round(st.value) } : null, atr: round(a) },
     optionChain: { expiry: window.expiry, atm, nearAtmPcr: round(pcr), pcrCoverage: coverage, totalCeOi: ceOi || null, totalPeOi: peOi || null, support: sr.support, resistance: sr.resistance, contracts: chain },
     suggestedContract: marketStatus === 'LIVE' && historyFresh && (segment !== 'MCX' || (mcxInstrument.hasOptions && window.expiry)) ? suggested : null, trackedContract,
     tradeDecision,
