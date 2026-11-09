@@ -14,7 +14,11 @@ data class RuleScore(val bullish: Int = 0, val bearish: Int = 0, val considered:
 data class McxIndexInfo(val symbol: String = "", val optionContracts: Int = 0, val hasOptions: Boolean = false, val type: String = "INDEX")
 data class McxCatalog(val indices: List<McxIndexInfo> = emptyList(), val energy: List<McxIndexInfo> = emptyList(), val source: String? = null, val updatedAt: String? = null)
 data class SupertrendValue(val direction: String? = null, val value: Double? = null)
-data class MarketMetrics(val ltp: Double? = null, val instrumentLabel: String? = null, val feedTime: String? = null, val lastCandleTime: String? = null, val ema9: Double? = null, val ema15: Double? = null, val vwap: Double? = null, val vwapSource: String? = null, val rsi: Double? = null, val macdHistogram: Double? = null, val supertrend: SupertrendValue? = null, val atr: Double? = null)
+data class QuoteDirection(val status: String = "UNVERIFIED", val label: String = "Quote direction unavailable",
+    val detail: String = "", val open: Double? = null, val previousClose: Double? = null,
+    val vsOpenPct: Double? = null, val vsPreviousClosePct: Double? = null,
+    val ageSeconds: Int? = null, val tradeCall: Boolean = false)
+data class MarketMetrics(val ltp: Double? = null, val instrumentLabel: String? = null, val feedTime: String? = null, val lastCandleTime: String? = null, val ema9: Double? = null, val ema15: Double? = null, val vwap: Double? = null, val vwapSource: String? = null, val rsi: Double? = null, val macdHistogram: Double? = null, val supertrend: SupertrendValue? = null, val atr: Double? = null, val quoteDirection: QuoteDirection? = null)
 data class OptionContract(val token: String? = null, val tradingSymbol: String? = null, val exchange: String? = null, val strike: Double? = null, val optionType: String? = null, val ltp: Double? = null, val oi: Double? = null, val lotSize: Int? = null, val bid: Double? = null, val ask: Double? = null, val bidQty: Int? = null, val askQty: Int? = null)
 data class OptionChainSummary(val expiry: String? = null, val atm: Double? = null, val nearAtmPcr: Double? = null, val pcrCoverage: String? = null, val totalCeOi: Double? = null, val totalPeOi: Double? = null, val support: Double? = null, val resistance: Double? = null, val contracts: List<OptionContract> = emptyList())
 data class Levels(val underlyingEntry: Double? = null, val stop: Double? = null, val target1: Double? = null, val target2: Double? = null, val basis: String? = null)
