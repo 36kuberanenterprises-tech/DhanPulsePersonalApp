@@ -119,6 +119,6 @@ jobs:
           apk="DhanPulse-v2.9.7-Build77-Screen-On-Market-Refresh.apk"
           test -s "$apk"
           gh release create "build77-screen-on-market-refresh-20261109" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DhanPulse Build 77 Login Recovery" \
+            --title "DhanPulse Build 77 Screen and Market Refresh" \
             --notes "Standalone testing build. Restores keep-screen-awake on activity resume and prioritises the selected market without unsolicited background candle requests. Trade safety checks unchanged. Requires live phone verification." \
             --prerelease
