@@ -122,7 +122,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var activeScreen by mutableStateOf("MARKET")
         private set
 
-    fun setActiveScreen(screen: String) {
+    fun updateVisibleScreen(screen: String) {
         if (activeScreen == screen) return
         activeScreen = screen
         if (screen in setOf("MARKET", "MCX", "TRADE")) {
