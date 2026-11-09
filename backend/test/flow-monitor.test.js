@@ -46,6 +46,31 @@ test('feed interruptions leave quantity unallocated and new day resets cumulativ
   assert.equal(book.snapshot(next.time).bars.length,0);assert.equal(book.cvd,0);
 });
 
+
+test('per candle snapshot reports sampled price coverage, observed POC and uncertainty instead of false exact volume',()=>{
+  const book=new FlowBook(5);
+  book.ingest(tick(1,1000,10),start+1000);
+  book.ingest(tick(2,1010,10),start+2000);
+  book.ingest(tick(3,1015,5,99),start+3000);
+  book.ingest(tick(4,1045,10),start+4000);
+  book.ingest(tick(5,1049,4,100),start+5000);
+  const snapshot=book.snapshot(start+5000);
+  const bar=snapshot.bars[0];
+  assert.equal(snapshot.source,'ANGEL_SNAP_QUOTE_ESTIMATE');
+  assert.equal(snapshot.historicalComplete,false);
+  assert.equal(bar.observedVolume,49);
+  assert.equal(bar.priceCoveragePct,38.78);
+  assert.equal(bar.classifiedCoveragePct,30.61);
+  assert.equal(bar.pocPrice,101);
+  assert.equal(bar.pocObservedVolume,10);
+  assert.equal(bar.delta,-0+5);
+  assert.equal(bar.deltaLowerBound,-29);
+  assert.equal(bar.deltaUpperBound,39);
+  assert.equal(book.snapshot(start+20000).status,'STALE');
+  assert.equal(new FlowBook(5).snapshot(start+5000).bars.length,0,
+    'a fresh connection must not invent missing historic footprints');
+});
+
 test('contract catalogue separates derivatives, cash and MCX and excludes spot index footprints',()=>{
   const rows=[
     {token:'1',symbol:'NIFTY',name:'NIFTY',exch_seg:'NSE',instrumenttype:'AMXIDX'},
