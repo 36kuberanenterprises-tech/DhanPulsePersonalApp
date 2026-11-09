@@ -59,13 +59,32 @@ export class FlowBook {
   snapshot(now=Date.now()) {
     const t=this.previous, bid=t?.bids[0]?.price, ask=t?.asks[0]?.price;
     const bidQty=t?.bids.reduce((s,x)=>s+x.quantity,0)||0, askQty=t?.asks.reduce((s,x)=>s+x.quantity,0)||0;
+    // Quantify how much of each observed candle can be assigned to price and side.
+    // These figures are sampled from broker snapshots, never exchange trade prints.
+    const bars=[...this.bars.values()].slice(-60).map(b=>{
+      const levels=[...b.levels.values()].sort((a,c)=>c.price-a.price);
+      const priceAssigned=b.buy+b.sell+b.unknown;
+      const observedVolume=priceAssigned+b.unallocated;
+      const unknownVolume=b.unknown+b.unallocated;
+      const poc=levels.reduce((best,row)=>{
+        const volume=row.buy+row.sell+row.unknown;
+        return !best || volume>best.volume ? {price:row.price,volume} : best;
+      },null);
+      return {...b,delta:b.buy-b.sell,observedVolume,
+        classifiedCoveragePct:observedVolume>0?Math.round(10000*(b.buy+b.sell)/observedVolume)/100:null,
+        priceCoveragePct:observedVolume>0?Math.round(10000*priceAssigned/observedVolume)/100:null,
+        pocPrice:poc?.price??null,pocObservedVolume:poc?.volume??0,
+        deltaLowerBound:(b.buy-b.sell)-unknownVolume,
+        deltaUpperBound:(b.buy-b.sell)+unknownVolume,
+        levels:levels.slice(0,150)};
+    });
     return { status: !t ? 'WAITING_FOR_FEED' : now-t.receivedAt>5000 || now-t.time>5000 ? 'STALE' : 'LIVE',
       startedAt:this.startedAt,lastTickAt:t ? new Date(t.time).toISOString() : null,price:t?.price??null,
       spread:bid>0&&ask>=bid ? ask-bid : null,
       depthImbalance:bidQty+askQty>0 ? (bidQty-askQty)/(bidQty+askQty) : null,
       bids:t?.bids||[],asks:t?.asks||[],oi:t?.oi??null,estimatedCvd:this.cvd,note,
-      bars:[...this.bars.values()].slice(-30).map(b=>({...b,delta:b.buy-b.sell,
-        levels:[...b.levels.values()].sort((a,b)=>b.price-a.price).slice(0,150)})) };
+      source:'ANGEL_SNAP_QUOTE_ESTIMATE',historicalComplete:false,
+      bars };
   }
 }
 
