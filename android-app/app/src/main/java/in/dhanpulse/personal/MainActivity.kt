@@ -540,6 +540,7 @@ private fun MarketSection(vm: DhanPulseViewModel) {
         vm.refreshWarning?.let { item { InfoStrip(when (a?.tradeDecision?.status) {
             "MARKET_CLOSED" -> "Market closed"
             "HISTORY_UNAVAILABLE" -> "Broker candles unavailable"
+            "HISTORY_DELAYED" -> "Broker candles delayed"
             else -> "Live refresh delayed"
         }, it) } }
         if (a == null && vm.loading && vm.refreshWarning == null) item { LoadingMarketCard() }
@@ -597,6 +598,7 @@ private fun McxSection(vm: DhanPulseViewModel, onTrade: () -> Unit) {
         vm.refreshWarning?.let { item { InfoStrip(when (a?.tradeDecision?.status) {
             "MARKET_CLOSED" -> "Market closed"
             "HISTORY_UNAVAILABLE" -> "Broker candles unavailable"
+            "HISTORY_DELAYED" -> "Broker candles delayed"
             else -> "Live refresh delayed"
         }, it) } }
         if (vm.loading && a == null) item { LoadingMarketCard() }
@@ -634,6 +636,7 @@ private fun TradeSection(vm: DhanPulseViewModel) {
         vm.refreshWarning?.let { item { InfoStrip(when (a?.tradeDecision?.status) {
             "MARKET_CLOSED" -> "Market closed"
             "HISTORY_UNAVAILABLE" -> "Broker candles unavailable"
+            "HISTORY_DELAYED" -> "Broker candles delayed"
             else -> "Live refresh delayed"
         }, it) } }
         if (vm.selectedMarket == "MCX") item {
@@ -2261,8 +2264,35 @@ fun SignalCard(a: AnalysisResponse, vm: DhanPulseViewModel) {
             Text(if (streamPrice != null) "Broker price stream active. Analysis follows the selected ${timeframeShort(vm.selectedTimeframe)} timeframe."
                 else "Price stream ${vm.liveStreamStatus.lowercase().replace('_', ' ')}. Analysis uses broker quotes and the selected timeframe.",
                 color = if (streamPrice != null) Green else Muted, fontSize = 10.sp)
+            a.market.quoteDirection?.let { direction ->
+                val observationalColor = when (direction.status) {
+                    "UP" -> Green
+                    "DOWN" -> Red
+                    else -> Amber
+                }
+                Surface(
+                    color = observationalColor.copy(alpha = 0.07f),
+                    border = BorderStroke(1.dp, observationalColor.copy(alpha = 0.25f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("CURRENT QUOTE MOVEMENT • NOT A TRADE CALL",
+                            color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        Text(direction.label, color = observationalColor, fontWeight = FontWeight.ExtraBold)
+                        Text(direction.detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        if (direction.status in setOf("UP", "DOWN", "MIXED")) {
+                            Text("Vs open: ${direction.vsOpenPct ?: "N/A"}%   Vs previous close: ${direction.vsPreviousClosePct ?: "N/A"}%",
+                                color = Muted, fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+            if (a.dataFresh != true && a.market.lastCandleTime != null) {
+                Text("Last broker candle: ${a.market.lastCandleTime}. Current strategy confirmation is unavailable.",
+                    color = Amber, fontSize = 10.sp)
+            }
             Text(if (qualified) "Directional setup passes current data and strategy checks. Review entry and risk before trading."
-                else if (a.dataFresh != true) "Market data incomplete or delayed. No confirmed call."
+                else if (a.dataFresh != true) "Broker candles or quotes are delayed. Price direction is observational only; no CE or PE entry is confirmed."
                 else if (a.signal == "WAIT") "No directional setup confirmed."
                 else "${if (a.signal == "CE") "Bullish" else "Bearish"} bias only. Strategy checks have not confirmed an entry.",
                 color = if (qualified) Green else Amber)
