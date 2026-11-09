@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -71,7 +71,7 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Build selected-market and keep-screen-on APK
+      - name: Build sampled footprint preview APK
         working-directory: android-app
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
@@ -79,23 +79,23 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 77'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 78'"
 
       - name: Rename APK
         id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build77-Screen-On-Market-Refresh.apk"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build78-Footprint-Preview.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build77-Installable-APK
+          name: DhanPulse-Monitor-Build78-Test-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build77-Screen-On-Market-Refresh.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build78-Footprint-Preview.apk
           if-no-files-found: error
           retention-days: 30
 
