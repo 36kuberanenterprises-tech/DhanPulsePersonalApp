@@ -119,6 +119,24 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var selectedSymbol by mutableStateOf("NIFTY")
     var selectedMarket by mutableStateOf("EQUITY")
         private set
+    var activeScreen by mutableStateOf("MARKET")
+        private set
+
+    fun setActiveScreen(screen: String) {
+        if (activeScreen == screen) return
+        activeScreen = screen
+        if (screen in setOf("MARKET", "MCX", "TRADE")) {
+            // Restore the current visible instrument when returning from other screens.
+            if (sessionId != null) {
+                startLivePriceStream()
+                fetchAnalysis()
+            }
+        } else {
+            // Do not consume price feeds while reading Account or Research.
+            stopLivePriceStream()
+        }
+    }
+
     var stocksVisible by mutableStateOf(false)
         private set
     var stockOptionsVisible by mutableStateOf(false)
@@ -1700,11 +1718,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 val time = indiaTime.toLocalTime()
                 val marketOpen = day in 1..5 && !time.isBefore(if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)) &&
                     time.isBefore(if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30))
-                if (!stocksVisible && !stockOptionsVisible && marketOpen && liveStreamJob == null) startLivePriceStream()
+                if (activeScreen in setOf("MARKET", "MCX", "TRADE") &&
+                    !stocksVisible && !stockOptionsVisible && marketOpen &&
+                    liveStreamJob == null) startLivePriceStream()
                 if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
                 val anyMarketOpen = day in 1..5 && !time.isBefore(LocalTime.of(9, 0)) && time.isBefore(LocalTime.of(23, 30))
                 delay(if (anyMarketOpen) 3_000 else 60_000)
-                if (stocksVisible && tick % 10 == 0) {
+                if (activeScreen == "STOCKS" && stocksVisible && tick % 10 == 0) {
                     // The stock scanner owns its history requests. Never run unrelated
                     // index and MCX candle scans behind this screen.
                     fetchStockScanner()
@@ -1712,11 +1732,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     if (moversVisible && (liveMovers?.status == "RUNNING" ||
                         (tick % 40 == 0 && marketOpen))) fetchMovers()
                 }
-                if (stockOptionsVisible && tick % 5 == 0) {
+                if (activeScreen == "STOCK_OPTIONS" && stockOptionsVisible && tick % 5 == 0) {
                     fetchStockOptions()
                     fetchStockOpportunity()
                 }
-                if (!stocksVisible && !stockOptionsVisible && tick % 2 == 0 &&
+                if (activeScreen in setOf("MARKET", "MCX", "TRADE") &&
+                    !stocksVisible && !stockOptionsVisible && tick % 2 == 0 &&
                     !analysisRefreshInFlight) {
                     // Only refresh the selected market. Scanning every inactive
                     // index, MCX symbol and stock alongside the visible market
@@ -1734,7 +1755,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private fun startLivePriceStream() {
         val session = sessionId ?: return
         stopLivePriceStream()
-        if (stocksVisible) return
+        if (stocksVisible || stockOptionsVisible ||
+            activeScreen !in setOf("MARKET", "MCX", "TRADE")) return
         val indiaTime = Instant.now().atZone(indiaZone)
         val start = if (selectedMarket == "MCX") LocalTime.of(9, 0) else LocalTime.of(9, 15)
         val end = if (selectedMarket == "MCX") LocalTime.of(23, 30) else LocalTime.of(15, 30)
