@@ -47,6 +47,22 @@ test('feed interruptions leave quantity unallocated and new day resets cumulativ
 });
 
 
+test('observed candle uses sampled OHLC and distinguishes a closed interval from complete trade history',()=>{
+  const book=new FlowBook(5);
+  book.ingest(tick(1,1000,10,101),start+1000);
+  book.ingest(tick(2,1010,10,101),start+2000);
+  book.ingest(tick(3,1015,5,99),start+3000);
+  book.ingest(tick(4,1045,10,103),start+4000);
+  book.ingest(tick(5,1049,4,100),start+5000);
+  const first=book.snapshot(start+5000).bars[0];
+  assert.deepEqual([first.open,first.high,first.low,first.close,first.priceSamples],
+    [101,103,99,100,4]);
+  assert.equal(first.intervalClosed,false);
+  assert.equal(book.snapshot(start+6*60_000).bars[0].intervalClosed,true);
+  assert.equal(book.snapshot(start+6*60_000).historicalComplete,false);
+  assert.equal(book.snapshot(start+6*60_000).bars[0].unallocated,30);
+});
+
 test('per candle snapshot reports sampled price coverage, observed POC and uncertainty instead of false exact volume',()=>{
   const book=new FlowBook(5);
   book.ingest(tick(1,1000,10),start+1000);
