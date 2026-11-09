@@ -39,8 +39,21 @@ export class FlowBook {
     if (delta<=0) return;
     const duration=this.minutes*60_000;
     const bucket=Math.floor((tick.time+330*60_000)/duration)*duration-330*60_000;
-    if (!this.bars.has(bucket)) this.bars.set(bucket,{ time:new Date(bucket).toISOString(), buy:0,sell:0,unknown:0,unallocated:0,levels:new Map() });
+    if (!this.bars.has(bucket)) this.bars.set(bucket,{ time:new Date(bucket).toISOString(), buy:0,sell:0,unknown:0,unallocated:0,
+      open:null,high:null,low:null,close:null,priceSamples:0,levels:new Map() });
     const bar=this.bars.get(bucket);
+    // Sampled OHLC describes only last traded prices observed in snapshots.
+    // It must not be represented as the exchange's complete OHLC candle.
+    if (bar.priceSamples===0) {
+      bar.open=tick.price;
+      bar.high=tick.price;
+      bar.low=tick.price;
+    } else {
+      bar.high=Math.max(bar.high,tick.price);
+      bar.low=Math.min(bar.low,tick.price);
+    }
+    bar.close=tick.price;
+    bar.priceSamples++;
     // A snapshot may skip many executions. Never put that cumulative change
     // at the last price or invent a buy/sell split for the missing executions.
     if (delta!==tick.quantity || tick.time-old.time>3000 || receivedAt-old.receivedAt>3000) {
@@ -54,14 +67,16 @@ export class FlowBook {
       bar.levels.get(price)[side]+=delta; bar[side]+=delta;
       this.cvd+=side==='buy' ? delta : side==='sell' ? -delta : 0;
     }
-    while(this.bars.size>60) this.bars.delete(this.bars.keys().next().value);
+    // Retain up to 720 sampled candle buckets in memory. This is not
+    // persistent backfill; reconnects or app restarts can still lose history.
+    while(this.bars.size>720) this.bars.delete(this.bars.keys().next().value);
   }
   snapshot(now=Date.now()) {
     const t=this.previous, bid=t?.bids[0]?.price, ask=t?.asks[0]?.price;
     const bidQty=t?.bids.reduce((s,x)=>s+x.quantity,0)||0, askQty=t?.asks.reduce((s,x)=>s+x.quantity,0)||0;
     // Quantify how much of each observed candle can be assigned to price and side.
     // These figures are sampled from broker snapshots, never exchange trade prints.
-    const bars=[...this.bars.values()].slice(-60).map(b=>{
+    const bars=[...this.bars.values()].slice(-120).map(b=>{
       const levels=[...b.levels.values()].sort((a,c)=>c.price-a.price);
       const priceAssigned=b.buy+b.sell+b.unknown;
       const observedVolume=priceAssigned+b.unallocated;
@@ -71,6 +86,7 @@ export class FlowBook {
         return !best || volume>best.volume ? {price:row.price,volume} : best;
       },null);
       return {...b,delta:b.buy-b.sell,observedVolume,
+        intervalClosed:Date.parse(b.time)+this.minutes*60_000<=now,
         classifiedCoveragePct:observedVolume>0?Math.round(10000*(b.buy+b.sell)/observedVolume)/100:null,
         priceCoveragePct:observedVolume>0?Math.round(10000*priceAssigned/observedVolume)/100:null,
         pocPrice:poc?.price??null,pocObservedVolume:poc?.volume??0,
