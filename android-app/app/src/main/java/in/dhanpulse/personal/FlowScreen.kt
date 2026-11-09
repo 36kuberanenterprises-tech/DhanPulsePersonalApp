@@ -34,10 +34,14 @@ data class FlowCatalog(val items:List<FlowInstrument> = emptyList(),val roots:Li
 data class FlowLevel(val price:Double=0.0,val buy:Double=0.0,val sell:Double=0.0,val unknown:Double=0.0)
 data class FlowDepth(val price:Double=0.0,val quantity:Double=0.0)
 data class FlowBar(val time:String="",val buy:Double=0.0,val sell:Double=0.0,val unknown:Double=0.0,
-    val unallocated:Double=0.0,val delta:Double=0.0,val levels:List<FlowLevel> = emptyList())
+    val unallocated:Double=0.0,val delta:Double=0.0,val levels:List<FlowLevel> = emptyList(),
+    val observedVolume:Double=0.0,val classifiedCoveragePct:Double?=null,val priceCoveragePct:Double?=null,
+    val pocPrice:Double?=null,val pocObservedVolume:Double=0.0,
+    val deltaLowerBound:Double=0.0,val deltaUpperBound:Double=0.0)
 data class FlowSnapshot(val status:String="WAITING_FOR_FEED",val symbol:String="",val startedAt:String="",
     val lastTickAt:String?=null,val price:Double?=null,val spread:Double?=null,val depthImbalance:Double?=null,
     val oi:Double?=null,val estimatedCvd:Double=0.0,val note:String="",val error:String?=null,
+    val source:String="",val historicalComplete:Boolean=false,
     val bids:List<FlowDepth> = emptyList(),val asks:List<FlowDepth> = emptyList(),val bars:List<FlowBar> = emptyList())
 
 private fun flowNumber(value:Double?)=value?.let { String.format(Locale.US,"%,.2f",it) } ?: "Unavailable"
@@ -318,19 +322,33 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                         Text(if(ask==null) "Unavailable" else "${flowNumber(ask.price)} / ${flowNumber(ask.quantity)}",Modifier.weight(1f))
                     }
                 }
-                item { Text("Observed footprint • estimated sides",style=MaterialTheme.typography.titleMedium) }
+                item { Text("Per candle footprint • sampled volume only",style=MaterialTheme.typography.titleMedium) }
+                item { Text("Not a complete exchange trade tape. No missing past candle or buy/sell side is reconstructed. The monitor starts collecting only after the feed connects.",style=MaterialTheme.typography.bodySmall) }
                 item { Text(data.note) }
                 if(data.bars.isEmpty()) item { Text("Waiting for fresh volume changes. Market closure, missing feed or no trades can leave this view empty.") }
                 items(data.bars.reversed(),key={it.time}) { bar ->
+                    var shownLevels by remember(bar.time) { mutableIntStateOf(30) }
+                    val peak=bar.levels.maxOfOrNull { it.buy+it.sell+it.unknown }?.coerceAtLeast(1.0) ?: 1.0
                     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                        Text("${flowTime(bar.time)} IST • Observed portion only • Estimated delta ${flowNumber(bar.delta)}",style=MaterialTheme.typography.titleSmall)
-                        Text("Buy ${flowNumber(bar.buy)} • Sell ${flowNumber(bar.sell)} • Unknown side ${flowNumber(bar.unknown)}")
-                        Text("Unallocated volume ${flowNumber(bar.unallocated)}. This volume has no reliable execution price or side.")
-                        Row(Modifier.fillMaxWidth()) { listOf("Price","Sell est.","Buy est.","Unknown").forEach { Text(it,Modifier.weight(1f)) } }
-                        bar.levels.take(30).forEach { row -> Row(Modifier.fillMaxWidth()) {
-                            listOf(row.price,row.sell,row.buy,row.unknown).forEach { Text(flowNumber(it),Modifier.weight(1f),style=MaterialTheme.typography.bodySmall) }
-                        } }
-                        if(bar.levels.size>30)Text("Showing highest 30 price levels.")
+                        Text("${flowTime(bar.time)} IST • Estimated delta ${flowNumber(bar.delta)}",style=MaterialTheme.typography.titleSmall)
+                        Text("Observed volume ${flowNumber(bar.observedVolume)} • Buy ${flowNumber(bar.buy)} • Sell ${flowNumber(bar.sell)}")
+                        Text("Volume assigned to price ${bar.priceCoveragePct?.let { flowNumber(it)+"%" } ?: "Unavailable"} • Side classified ${bar.classifiedCoveragePct?.let { flowNumber(it)+"%" } ?: "Unavailable"}")
+                        Text("Observed POC ${flowNumber(bar.pocPrice)} • Sampled volume at POC ${flowNumber(bar.pocObservedVolume)}")
+                        Text("Estimated delta range if unknown volume changes side: ${flowNumber(bar.deltaLowerBound)} to ${flowNumber(bar.deltaUpperBound)}",style=MaterialTheme.typography.bodySmall)
+                        Text("Unknown side ${flowNumber(bar.unknown)} • Unallocated ${flowNumber(bar.unallocated)}. Missing executions are never assigned to an invented price.",style=MaterialTheme.typography.bodySmall)
+                        Row(Modifier.fillMaxWidth()) { listOf("Price","Sell est.","Buy est.","Unknown").forEach { Text(it,Modifier.weight(1f),style=MaterialTheme.typography.labelSmall) } }
+                        bar.levels.take(shownLevels).forEach { row ->
+                            Column(verticalArrangement=Arrangement.spacedBy(2.dp)) {
+                                Row(Modifier.fillMaxWidth()) {
+                                    Text((if(row.price==bar.pocPrice) "● " else "")+flowNumber(row.price),Modifier.weight(1f),style=MaterialTheme.typography.bodySmall)
+                                    listOf(row.sell,row.buy,row.unknown).forEach { Text(flowNumber(it),Modifier.weight(1f),style=MaterialTheme.typography.bodySmall) }
+                                }
+                                LinearProgressIndicator(progress={((row.buy+row.sell+row.unknown)/peak).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().height(3.dp))
+                            }
+                        }
+                        if(bar.levels.size>shownLevels) TextButton(onClick={shownLevels=(shownLevels+30).coerceAtMost(bar.levels.size)}) {
+                            Text("Show more observed price levels (${bar.levels.size-shownLevels} remaining)")
+                        }
                     } }
                 }
             }
