@@ -126,7 +126,9 @@ internal fun validFlowEntry(a:AnalysisResponse?, plan:PremiumTradePlan, root:Str
 
 @Composable
 fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onOpenScanner:()->Unit) {
-    val api=remember { ApiFactory.create("https://dhanpulse-personal-api.onrender.com") }
+    // Build 80's login already selected Azure. All Flow calls must use the same
+    // authenticated private HTTPS server, never the old Render hostname.
+    val api=remember(vm.backendUrl) { ApiFactory.create(vm.backendUrl) }
     val owner=LocalLifecycleOwner.current
     var group by remember { mutableStateOf("INDEX") }
     val keyboard=LocalSoftwareKeyboardController.current
@@ -186,14 +188,22 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
     }
     val listState=rememberLazyListState()
     LaunchedEffect(underlying,page,showContracts) { listState.scrollToItem(0) }
-    LaunchedEffect(group,query,underlying,kind,expiry,page,retryCatalogue,sessionId) {
+    LaunchedEffect(group,query,underlying,kind,expiry,page,retryCatalogue,sessionId,vm.backendUrl) {
         searching=true;catalogError=null;choices=emptyList();delay(300)
         try { catalogue=api.flowCatalog(sessionId,group,query,underlying=underlying,kind=kind,expiry=expiry,offset=page*40);choices=catalogue.items }
         catch(e:CancellationException){throw e}
-        catch(e:Exception){catalogError="Contract list unavailable. Check connection and search again."}
+        catch(e:Exception){
+            catalogError=if(e is retrofit2.HttpException) {
+                when(e.code()) {
+                    401 -> "Flow catalogue HTTP 401: Angel One session expired. Log in again."
+                    503 -> "Flow catalogue HTTP 503: Broker instrument list temporarily unavailable on Azure. Retry when the catalogue loads."
+                    else -> "Flow catalogue HTTP ${e.code()}. Retry or check the Azure backend."
+                }
+            } else "Flow catalogue request failed: ${e.message?.take(160) ?: e.javaClass.simpleName}. Check the Azure connection."
+        }
         finally { searching=false }
     }
-    LaunchedEffect(selected,minutes,restart,sessionId,owner) {
+    LaunchedEffect(selected,minutes,restart,sessionId,owner,vm.backendUrl) {
         snapshot=null;error=null
         val instrument=selected ?: return@LaunchedEffect
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -203,7 +213,9 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
                     snapshot=api.flowMonitor(sessionId,instrument.exchange,instrument.token,minutes,first)
                     first=false;error=null
                 }catch(e:CancellationException){throw e}
-                catch(e:Exception){error="Monitor unavailable. Check login or connection, then tap Restart feed."}
+                catch(e:Exception){error=if(e is retrofit2.HttpException)
+                    "Flow monitor HTTP ${e.code()}. Verify the contract and Azure session, then tap Restart feed."
+                else "Flow monitor: ${e.message?.take(160) ?: e.javaClass.simpleName}. Tap Restart feed."}
                 delay(if(error==null) 1000 else 5000)
             }
         }
