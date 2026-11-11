@@ -42,6 +42,7 @@ const historyBudget = new HistoryBudget();
 const historyInFlight = new Map();
 const recentCandleStarts = [];
 let candleStartsSinceLaunch = 0;
+const historyOutcomes = new Map();
 
 async function reserveBrokerRead() {
   const permit = brokerReadQueue.then(async () => {
@@ -142,8 +143,20 @@ export function historyAccessStatus(session) {
   const client = session?.clientCode || session?.apiKey;
   if (!client) return { blocked: false, retryAt: null };
   const state = historyBudget.state(client);
-  return { blocked: state.blockedUntil > Date.now(),
-    retryAt: state.blockedUntil > Date.now() ? new Date(state.blockedUntil).toISOString() : null };
+  const outcome = historyOutcomes.get(client) || {};
+  const now = Date.now();
+  return { blocked: state.blockedUntil > now,
+    retryAt: state.blockedUntil > now ? new Date(state.blockedUntil).toISOString() : null,
+    retryAfterSeconds: state.blockedUntil > now ? Math.ceil((state.blockedUntil-now)/1000) : 0,
+    consecutiveRejections: state.failures,
+    requestsLastMinute: state.starts.filter(t => t > now-60_000).length,
+    requestsLastHour: state.starts.filter(t => t > now-3_600_000).length,
+    lastRequestAt: outcome.lastRequestAt || null,
+    lastSuccessAt: outcome.lastSuccessAt || null,
+    lastRejectAt: outcome.lastRejectAt || null,
+    lastHttpStatus: outcome.lastHttpStatus || null,
+    lastBrokerCode: outcome.lastBrokerCode || null,
+    note: 'Local process counters only. Other SmartAPI apps and broker account limits are not observable.' };
 }
 
 export async function candleData(session, payload) {
@@ -156,10 +169,16 @@ export async function candleData(session, payload) {
     while (recentCandleStarts.length && recentCandleStarts[0] < startedAt - 60_000) recentCandleStarts.shift();
     recentCandleStarts.push(startedAt);
     candleStartsSinceLaunch++;
+    const outcome = historyOutcomes.get(client) || {};
+    outcome.lastRequestAt = new Date(startedAt).toISOString();
+    historyOutcomes.set(client, outcome);
     try {
       const result = await jsonFetch(`${ROOT}/rest/secure/angelbroking/historical/v1/getCandleData`, {
         method: 'POST', headers: baseHeaders(session.apiKey, session.jwt), body: JSON.stringify(payload)
       }, 'Candle data');
+      outcome.lastSuccessAt = new Date().toISOString();
+      outcome.lastHttpStatus = 200;
+      outcome.lastBrokerCode = null;
       console.info('CANDLE_RECEIVED', JSON.stringify({
         exchange: payload.exchange, symboltoken: payload.symboltoken, interval: payload.interval,
         bars: Array.isArray(result?.data) ? result.data.length : 0,
@@ -168,6 +187,9 @@ export async function candleData(session, payload) {
       }));
       return result;
     } catch (error) {
+      outcome.lastRejectAt = new Date().toISOString();
+      outcome.lastHttpStatus = error.status || null;
+      outcome.lastBrokerCode = error.brokerCode || null;
       console.warn('CANDLE_REJECTED', JSON.stringify({
         exchange: payload.exchange, symboltoken: payload.symboltoken, interval: payload.interval,
         fromdate: payload.fromdate, todate: payload.todate,
