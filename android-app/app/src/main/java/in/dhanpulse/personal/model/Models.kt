@@ -183,7 +183,7 @@ data class PaperStockTrade(
     val target1: Double, val target2: Double, val quantity: Int,
     val estimatedCosts: Double, val estimatedLoss: Double,
     val closedAt: Long? = null, val exit: Double? = null, val netPnl: Double? = null,
-    val exitReason: String? = null
+    val exitReason: String? = null, val source: String? = "MANUAL"
 )
 
 data class PremiumTradePlan(
