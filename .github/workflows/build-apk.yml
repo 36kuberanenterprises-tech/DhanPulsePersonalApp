@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111 ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111, feature/build82-private-mpin-totp-only-20261111 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -78,7 +78,26 @@ jobs:
             exit 1
           fi
 
-      - name: Build Azure Flow and Paper preview APK
+      - name: Set up private server configuration
+        env:
+          PRIVATE_URL: ${{ secrets.DHANPULSE_PRIVATE_BACKEND_URL }}
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+        shell: bash
+        run: |
+          if [[ "$REPO_PRIVATE" == "true" ]]; then
+            if [[ ! "$PRIVATE_URL" =~ ^https://[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+\.ts\.net/?$ ]]; then
+              echo "::error::The private Tailscale URL is not configured. Set DHANPULSE_PRIVATE_BACKEND_URL as a repository Actions secret."
+              exit 1
+            fi
+            echo "DHANPULSE_PRIVATE_BACKEND_URL=$PRIVATE_URL" >> "$GITHUB_ENV"
+          else
+            # Public repo: validate compilation only, never upload a personally
+            # provisioned APK or store a real private host in public artifacts.
+            echo "DHANPULSE_PRIVATE_BACKEND_URL=https://unconfigured.invalid" >> "$GITHUB_ENV"
+            echo "Validating a placeholder build. A private repository and an Actions secret are required before distributing a personalised APK."
+          fi
+
+      - name: Build private login Android APK
         working-directory: android-app
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
@@ -86,29 +105,30 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 81'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 82'"
 
       - name: Rename APK
         id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build81-Flow-Auto-Paper.apk"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build82-Private-Login.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
+        if: github.event.repository.private == true
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build81-Test-APK
+          name: DhanPulse-Monitor-Build82-Private-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build81-Flow-Auto-Paper.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build82-Private-Login.apk
           if-no-files-found: error
           retention-days: 30
 
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/build81-flow-auto-paper-20261111'
+    if: github.event.repository.private == true && github.ref == 'refs/heads/feature/build82-private-mpin-totp-only-20261111'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -117,15 +137,15 @@ jobs:
       - name: Download tested APK
         uses: actions/download-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build81-Test-APK
+          name: DhanPulse-Monitor-Build82-Private-APK
 
-      - name: Publish direct Build 79 APK link
+      - name: Publish private Build 82 APK release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="DhanPulse-v2.9.7-Build81-Flow-Auto-Paper.apk"
+          apk="DhanPulse-v2.9.7-Build82-Private-Login.apk"
           test -s "$apk"
-          gh release create "build81-azure-flow-auto-paper-20261111" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DhanPulse Build 81 Flow and Auto Paper Preview" \
-            --notes "Build 81 fixes Flow contract list to use the selected private Azure HTTPS backend. It also enables opt in automatic STOCK paper journal recording from fresh READY scanner setups and sampled quote exits. Flow keeps analysis tracking current while open. This is not a broker fill or a live trade. Requires physical device testing." \
+          gh release create "build82-private-mpin-totp-20261111" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "DhanPulse Build 82 Private Login Preview" \
+            --notes "Build 82 hides the configured private Tailscale host and all account identifiers from the login screen. Only MPIN and fresh TOTP are requested. The internal endpoint comes from a private GitHub Actions secret. It preserves Build 81 Flow and opt in stock paper tracking. PIN and TOTP are never stored. The source code does not contain the private host. This APK is distributed only from a private repository and must be tested on an Android device." \
             --prerelease
