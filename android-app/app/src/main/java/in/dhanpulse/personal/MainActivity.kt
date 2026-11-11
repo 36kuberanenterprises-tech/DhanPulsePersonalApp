@@ -1414,7 +1414,7 @@ private fun DailyStocksSection(vm: DhanPulseViewModel) {
                             color = if (vm.autoPaperEnabled) Green else Muted,
                             style = MaterialTheme.typography.bodySmall)
                     }
-                    Switch(checked = vm.autoPaperEnabled, onCheckedChange = vm::setAutoPaperEnabled)
+                    Switch(checked = vm.autoPaperEnabled, onCheckedChange = vm::updateAutoPaperEnabled)
                 }
             }
         }
