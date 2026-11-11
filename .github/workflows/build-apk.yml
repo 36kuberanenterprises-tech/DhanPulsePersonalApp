@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111 ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -71,7 +71,14 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Build Azure Android preview APK
+      - name: Ensure Android app does not hardcode the old Render backend
+        run: |
+          if grep -R -F "https://dhanpulse-personal-api.onrender.com" android-app/app/src/main/java; then
+            echo "Found obsolete Render backend URL in Android app"
+            exit 1
+          fi
+
+      - name: Build Azure Flow and Paper preview APK
         working-directory: android-app
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
@@ -79,29 +86,29 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 80'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 81'"
 
       - name: Rename APK
         id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build80-Azure-Private-Live.apk"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build81-Flow-Auto-Paper.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build80-Test-APK
+          name: DhanPulse-Monitor-Build81-Test-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build80-Azure-Private-Live.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build81-Flow-Auto-Paper.apk
           if-no-files-found: error
           retention-days: 30
 
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/build80-azure-tailnet-live-20261111'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/build81-flow-auto-paper-20261111'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -110,15 +117,15 @@ jobs:
       - name: Download tested APK
         uses: actions/download-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build80-Test-APK
+          name: DhanPulse-Monitor-Build81-Test-APK
 
       - name: Publish direct Build 79 APK link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="DhanPulse-v2.9.7-Build80-Azure-Private-Live.apk"
+          apk="DhanPulse-v2.9.7-Build81-Flow-Auto-Paper.apk"
           test -s "$apk"
-          gh release create "build80-azure-private-live-20261111" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DhanPulse Build 80 Azure Private HTTPS Preview" \
-            --notes "Build 80 connects to a user configured Azure HTTPS backend via a private Tailscale tailnet. The address is saved encrypted and used by login, foreground SSE and background monitor. It preserves Build 79 sampled footprints. No real device or VM tunnel test has been performed. Production app and Azure VM are unchanged." \
+          gh release create "build81-azure-flow-auto-paper-20261111" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "DhanPulse Build 81 Flow and Auto Paper Preview" \
+            --notes "Build 81 fixes Flow contract list to use the selected private Azure HTTPS backend. It also enables opt in automatic STOCK paper journal recording from fresh READY scanner setups and sampled quote exits. Flow keeps analysis tracking current while open. This is not a broker fill or a live trade. Requires physical device testing." \
             --prerelease
