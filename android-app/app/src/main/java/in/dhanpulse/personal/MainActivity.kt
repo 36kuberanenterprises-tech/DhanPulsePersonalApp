@@ -165,10 +165,8 @@ fun DhanPulseApp(vm: DhanPulseViewModel = viewModel()) {
 
 @Composable
 fun LoginScreen(vm: DhanPulseViewModel) {
-    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     var pin by remember { mutableStateOf("") }
     var totp by remember { mutableStateOf("") }
-    var azureAddress by remember { mutableStateOf(vm.backendUrl) }
     LaunchedEffect(vm) {
         if (vm.backendUrl.isNotBlank()) vm.checkBackendConnection()
     }
@@ -211,28 +209,8 @@ fun LoginScreen(vm: DhanPulseViewModel) {
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("Secure sign in", color = Ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Connect directly to your private Azure backend over HTTPS. Enter the secure address shown by Tailscale Serve, then use a fresh Angel One TOTP when READY.",
+                    Text("Your private DhanPulse connection and Angel One account settings are configured internally. Keep Tailscale connected and enter your MPIN and current TOTP to sign in.",
                         color = Muted, style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(
-                        azureAddress, { azureAddress = it },
-                        label = { Text("Azure HTTPS server address") },
-                        placeholder = { Text("https://vm.tailnet.ts.net") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = !vm.loginBusy && !vm.backendCheckLoading,
-                        shape = RoundedCornerShape(16.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-                    )
-                    Button(
-                        onClick = { vm.configureBackendUrl(azureAddress) },
-                        enabled = !vm.loginBusy && !vm.backendCheckLoading && azureAddress.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Save Azure address and check connection")
-                    }
-                    Text("Tailscale must be connected on your VM and phone. The address is stored securely. Do not enter your API key here.",
-                        color = Muted, style = MaterialTheme.typography.labelSmall)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Backend: " + vm.backendCheckState.replace('_', ' '),
@@ -247,18 +225,10 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                     }
                     Text(vm.backendCheckMessage, color = if (vm.backendCheckState == "READY") Green else Muted,
                         style = MaterialTheme.typography.bodySmall)
-                    if (vm.backendCheckState in setOf("UNAVAILABLE", "CONFIGURATION")) {
-                        TextButton(onClick = {
-                            vm.backendStatusUrl()?.let { uriHandler.openUri(it) }
-                        }) {
-                            Text("Open server status in browser", color = Purple,
-                                style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
 
                     OutlinedTextField(
                         pin, { pin = it },
-                        label = { Text("Angel One PIN") },
+                        label = { Text("Angel One MPIN") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = RoundedCornerShape(16.dp),
@@ -296,7 +266,7 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                         else Text("Connect securely", fontWeight = FontWeight.Bold)
                     }
 
-                    Text("The app checks backend readiness automatically. It never retries Angel One login without you. PIN and TOTP are not saved.",
+                    Text("Only your MPIN and fresh TOTP are needed. Neither is saved. Connection details and API credentials are not displayed.",
                         color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
