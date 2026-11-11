@@ -3,6 +3,7 @@ import { combineSensexSystems } from './sensex-systems.js';
 import { mcxHistory } from './mcx-history.js';
 import { quoteDirection } from './quote-direction.js';
 import { isRateError } from './history-control.js';
+import { readSavedCandles, saveBrokerCandles } from './candle-store.js';
 import { ema, rsi, macd, supertrend, atr } from './indicators.js';
 import { instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, resolveUnderlying, resolveNearestFuture, resolveOptionWindow, marketData, candleData, parseCandles, parseFetched, quoteLtp, quoteOi, quoteFeedAgeMs, historyAccessStatus } from './angel.js';
 import { evaluateSensexFamilies, buildSensexDecision, sensexHigherCandles } from './sensex-strategies.js';
@@ -54,6 +55,8 @@ const INTERVAL_MINUTES = {
 
 const liveCandleCache = new Map();
 const candleLoadLocks = new Map();
+const candleRestoreLocks = new Map();
+const candleRestoreAttempted = new Set();
 const candleRetryAfter = new Map();
 const candleRetryReason = new Map();
 const optionWindowCache = new Map();
@@ -77,6 +80,56 @@ function sampledPremiumMove(contract, now) {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Load broker-confirmed candles saved by earlier processes. Never treat a
+// restored candle as live merely because the file was recently read.
+async function restoreHistoricalState(key) {
+  if (liveCandleCache.has(key)) return liveCandleCache.get(key);
+  if (candleRestoreLocks.has(key)) return candleRestoreLocks.get(key);
+  if (candleRestoreAttempted.has(key)) return null;
+  const pending = (async () => {
+    try {
+      const saved = await readSavedCandles(key);
+      if (!saved) return null;
+      const state = { candles:saved.candles, loadedAt:0, lastLiveAt:0,
+        lastAttemptAt:0, restored:true, savedAt:saved.savedAt };
+      liveCandleCache.set(key, state);
+      return state;
+    } catch (e) {
+      // Disk is optional. A permission or malformed file must not affect
+      // Angel One login, live quotes, or the broker request guard.
+      console.warn('CANDLE_CACHE_READ_FAILED', e?.code || 'READ_ERROR');
+      return null;
+    }
+  })().finally(() => candleRestoreLocks.delete(key));
+  candleRestoreLocks.set(key, pending);
+  candleRestoreAttempted.add(key);
+  return pending;
+}
+
+// Read-only, authenticated inspection. Never emits account codes, API keys,
+// session material, or the data itself. It never calls the broker.
+export function historyCacheStatus(session) {
+  const account = String(session?.clientCode || session?.apiKey || '');
+  if (!account) return { entries:[], total:0 };
+  const prefix = account + '|';
+  const entries = [];
+  for (const [key, state] of liveCandleCache) {
+    if (!key.startsWith(prefix) || !Array.isArray(state.candles)) continue;
+    const parts = key.slice(prefix.length).split('|');
+    const last = state.candles.at(-1);
+    const time = Date.parse(last?.timestamp);
+    entries.push({
+      exchange: parts[0], token:parts[1], interval:parts[2],
+      bars: state.candles.length,
+      lastCandleTime: Number.isFinite(time) ? new Date(time).toISOString() : null,
+      restoredFromDisk: !!state.restored,
+      ageMinutes: Number.isFinite(time) ? Math.max(0,Math.floor((Date.now()-time)/60000)) : null,
+      lastBrokerLoadAt: state.loadedAt ? new Date(state.loadedAt).toISOString() : null
+    });
+  }
+  return { total:entries.length, entries:entries.slice(0,100) };
+}
 
 function historyStartFor(now, interval, segment = 'EQUITY') {
   const p = istParts(now);
@@ -123,7 +176,12 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key, 
     const rows = [...merged.entries()].filter(([time]) => time <= now.getTime())
       .sort(([a], [b]) => a - b).map(([, row]) => row);
     if (rows.length < 35) throw new Error('Market history is still preparing. Waiting for enough broker candles.');
-    liveCandleCache.set(key, { candles: rows.slice(-1200), loadedAt: Date.now(), lastLiveAt: Date.now() });
+    liveCandleCache.set(key, { candles: rows.slice(-1200), loadedAt: Date.now(), lastLiveAt: Date.now(), restored:false });
+    try {
+      await saveBrokerCandles(key, rows);
+    } catch (e) {
+      console.warn('CANDLE_CACHE_SAVE_FAILED', e?.code || 'WRITE_ERROR');
+    }
     candleRetryAfter.delete(key);
     candleRetryReason.delete(key);
     return liveCandleCache.get(key);
@@ -141,7 +199,7 @@ export async function confirmedBrokerCandles(session, exchange, token, interval,
   const key = [session.clientCode || session.apiKey, exchange, token, interval, 'confirmed'].join('|');
   const duration = (INTERVAL_MINUTES[interval] || 5) * 60_000;
   const expected = bucketStartFor(new Date(now.getTime() - 20_000), interval, segment).getTime() - duration;
-  let state = liveCandleCache.get(key);
+  let state = liveCandleCache.get(key) || await restoreHistoricalState(key);
   const latestCompleted = state?.candles.filter(c => Date.parse(c.timestamp) + duration + 20_000 <= now.getTime()).at(-1);
   // Refresh at the next candle boundary, not a full interval after the last
   // network response. A load at 09:34 must not postpone the 09:35 bar to 09:39.
