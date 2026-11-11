@@ -6,6 +6,12 @@ plugins {
 
 val appVersion = "2.9.7"
 
+// Only the GitHub Actions secret supplies the private host. It must never
+// appear in committed source, public workflow logs, or a public APK release.
+val provisionedUrl = providers.environmentVariable("DHANPULSE_PRIVATE_BACKEND_URL").orNull
+    ?.trim()?.trimEnd('/') ?: ""
+val escapedUrl = provisionedUrl.replace("\\", "\\\\").replace("\"", "\\\"")
+
 android {
     namespace = "in.dhanpulse.personal"
     compileSdk = 35
@@ -14,16 +20,17 @@ android {
         applicationId = "in.dhanpulse.personal.stable"
         minSdk = 26
         targetSdk = 35
-        versionCode = 81
+        versionCode = 82
         versionName = appVersion
+        buildConfigField("String", "PRIVATE_API_BASE_URL", "\"$escapedUrl\"")
     }
 
     buildTypes {
         getByName("debug") {
             // Distinct installable preview until the original Stable signing key is available.
             // It cannot replace an existing Stable installation or read its private data.
-            applicationIdSuffix = ".monitor81"
-            manifestPlaceholders["appLabel"] = "DhanPulse Monitor 81"
+            applicationIdSuffix = ".monitor82"
+            manifestPlaceholders["appLabel"] = "DhanPulse Monitor 82"
         }
         getByName("release") {
             manifestPlaceholders["appLabel"] = "DhanPulse Stable"
