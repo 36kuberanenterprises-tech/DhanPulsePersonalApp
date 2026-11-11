@@ -128,10 +128,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun updateVisibleScreen(screen: String) {
         if (activeScreen == screen) return
         activeScreen = screen
-        if (screen in setOf("MARKET", "MCX", "TRADE")) {
-            // Restore the current visible instrument when returning from other screens.
+        if (screen in setOf("MARKET", "MCX", "TRADE", "FLOW")) {
+            // Keep the existing tracked option's premium and Call Book updated
+            // while Flow is visible. The Flow screen owns its own footprint
+            // stream; it does not need a second underlying SSE connection.
             if (sessionId != null) {
-                startLivePriceStream()
+                if (screen != "FLOW") startLivePriceStream() else stopLivePriceStream()
                 fetchAnalysis()
             }
         } else {
@@ -1839,7 +1841,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     fetchStockOptions()
                     fetchStockOpportunity()
                 }
-                if (activeScreen in setOf("MARKET", "MCX", "TRADE") &&
+                if (activeScreen in setOf("MARKET", "MCX", "TRADE", "FLOW") &&
                     !stocksVisible && !stockOptionsVisible && tick % 2 == 0 &&
                     !analysisRefreshInFlight) {
                     // Only refresh the selected market. Scanning every inactive
