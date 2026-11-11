@@ -242,7 +242,8 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                         singleLine = true,
                         enabled = vm.backendCheckState == "READY" && !vm.loginBusy,
                         shape = RoundedCornerShape(16.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
                     )
 
                     vm.error?.let { ErrorStrip(it) }
