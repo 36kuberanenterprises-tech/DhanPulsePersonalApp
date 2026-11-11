@@ -100,7 +100,7 @@ interface DhanPulseApi {
 object ApiFactory {
     fun create(baseUrl: String): DhanPulseApi {
         val normalized = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
+        // Do not print private endpoint, broker requests or login URLs to Logcat.\n        val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.NONE }
         val client = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
