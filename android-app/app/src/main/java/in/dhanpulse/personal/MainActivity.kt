@@ -1402,6 +1402,23 @@ private fun DailyStocksSection(vm: DhanPulseViewModel) {
         item {
             InfoStrip("Research only", "Uses Rs. 20,000 model capital for paper risk sizing, independent of broker cash. No live stock orders. Paper entry and exit prices are quote samples, not exchange fills. Keep the app open to refresh; missed moves are marked unresolved.")
         }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Panel),
+                shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+                Row(Modifier.fillMaxWidth().padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Automatic stock paper simulation", color = Ink, fontWeight = FontWeight.Bold)
+                        Text(if (vm.autoPaperEnabled) "ON • Simulated entries and exits from fresh scanner quotes" else "OFF • Tap to enable automatic paper recording",
+                            color = if (vm.autoPaperEnabled) Green else Muted,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = vm.autoPaperEnabled, onCheckedChange = vm::setAutoPaperEnabled)
+                }
+            }
+        }
+        item { InfoStrip("Auto paper conditions", "Only during NSE market hours while the Stocks scanner is active. Requires READY status, fresh quotes, entry price reached and remaining daily risk allowance. At most one open simulated position and three per day. Stops and target 2 are checked on sampled quotes, not exchange fills. No actual orders are sent.") }
         if (vm.stockScanLoading && scan == null) item { LoadingMarketCard() }
         vm.stockScanError?.let { message -> item { InfoStrip("Scanner unavailable", message) } }
         if (scan != null) {
@@ -1440,11 +1457,20 @@ private fun DailyStocksSection(vm: DhanPulseViewModel) {
             items(scan.candidates, key = { it.symbol }) { candidate -> StockCandidateCard(vm, candidate) }
         }
         if (vm.paperStockTrades.isNotEmpty()) {
-            item { SectionTitle("Paper journal", "Estimated results from manually recorded quote samples") }
+            item {
+                val resolved = vm.paperStockTrades.filter { it.netPnl != null }
+                val wins = resolved.count { (it.netPnl ?: 0.0) > 0 }
+                val losses = resolved.count { (it.netPnl ?: 0.0) < 0 }
+                val net = resolved.sumOf { it.netPnl ?: 0.0 }
+                val unresolved = vm.paperStockTrades.count { it.closedAt != null && it.netPnl == null }
+                InfoStrip("Estimated paper performance",
+                    "${vm.paperStockTrades.size} recorded • ${resolved.size} priced exits • ${wins} wins • ${losses} losses • ${unresolved} unresolved • Net ${stockRs(net)}. No broker fills are implied.")
+            }
+            item { SectionTitle("Paper journal", "Simulated entries and exits from observed quote samples; manual entries are kept separate") }
             items(vm.paperStockTrades.take(20), key = { it.id }) { trade ->
                 Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Line)) {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("${trade.symbol} ${trade.side} • ${trade.quantity} shares", color = Ink, fontWeight = FontWeight.Bold)
+                        Text("${trade.symbol} ${trade.side} • ${trade.quantity} shares • ${if(trade.source == "AUTO") "AUTO PAPER" else "MANUAL PAPER"}", color = Ink, fontWeight = FontWeight.Bold)
                         Text("${stockRs(trade.entry)} entry • ${if (trade.closedAt == null) "OPEN" else trade.exitReason ?: "CLOSED"}", color = Muted, style = MaterialTheme.typography.bodySmall)
                         Text("${stockTime(java.time.Instant.ofEpochMilli(trade.openedAt).toString())} • Net ${stockRs(trade.netPnl)}", color = if ((trade.netPnl ?: 0.0) < 0) Red else Green, style = MaterialTheme.typography.bodySmall)
                     }
