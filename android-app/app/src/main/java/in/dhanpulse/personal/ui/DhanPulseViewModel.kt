@@ -303,7 +303,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     // Independent of live Auto Trade. OFF until explicitly enabled by the user.
     var autoPaperEnabled by mutableStateOf(stockPrefs.getBoolean("auto_paper_enabled", false))
         private set
-    fun setAutoPaperEnabled(enabled: Boolean) {
+    fun updateAutoPaperEnabled(enabled: Boolean) {
         autoPaperEnabled = enabled
         stockPrefs.edit().putBoolean("auto_paper_enabled", enabled).apply()
         stockPaperMessage = if (enabled)
