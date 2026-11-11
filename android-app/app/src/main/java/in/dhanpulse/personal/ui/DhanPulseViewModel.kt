@@ -36,8 +36,11 @@ import kotlin.math.floor
 import kotlin.math.round
 
 class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
-    private val backendUrl = "https://dhanpulse-personal-api.onrender.com"
     private val sessionStore = SecurePrefs(app)
+    // One encrypted, user configured HTTPS endpoint for login, polling,
+    // live prices and the background monitor. Do not silently use Render.
+    var backendUrl by mutableStateOf(sessionStore.backendUrl.trim().trimEnd('/'))
+        private set
     private val nativeMonitor = MarketMonitorStore(app)
     private val displayPrefs = app.getSharedPreferences("dhanpulse_display_settings", 0)
     private val indiaZone = ZoneId.of("Asia/Kolkata")
@@ -200,7 +203,6 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var liveStreamStatus by mutableStateOf("CONNECTING")
         private set
     private var livePriceArrivedAt = 0L
-    private val livePriceStream = LivePriceStream(backendUrl)
     private var liveStreamJob: Job? = null
     fun liveDisplayPrice(report: AnalysisResponse): Double? =
         livePriceEvent?.takeIf {
@@ -379,7 +381,46 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         stopLivePriceStream()
     }
 
+    fun backendStatusUrl(): String? =
+        backendUrl.takeIf { it.startsWith("https://") }?.let { "$it/api/auth/readiness" }
+
+    // Switching a broker endpoint must never forward an existing session
+    // token to the newly supplied address.
+    fun configureBackendUrl(input: String): Boolean {
+        if (sessionId != null || loginBusy) {
+            error = "Log out before changing the Azure backend address."
+            return false
+        }
+        val candidate = input.trim().trimEnd('/')
+        val parsed = runCatching { java.net.URI(candidate) }.getOrNull()
+        val valid = parsed?.scheme?.equals("https", ignoreCase = true) == true &&
+            !parsed.host.isNullOrBlank() && parsed.rawUserInfo == null &&
+            parsed.rawQuery == null && parsed.rawFragment == null &&
+            (parsed.rawPath.isNullOrEmpty() || parsed.rawPath == "/")
+        if (!valid) {
+            error = "Enter a complete HTTPS address, for example https://your-vm.your-tailnet.ts.net. Do not enter an IP address or password."
+            return false
+        }
+        backendCheckJob?.cancel()
+        backendCheckJob = null
+        backendCheckLoading = false
+        stopLivePriceStream()
+        api = null
+        sessionStore.clearSession()
+        nativeMonitor.stop("Backend changed", true)
+        getApplication<Application>().stopService(Intent(getApplication(), MarketMonitoringService::class.java))
+        sessionStore.backendUrl = candidate
+        backendUrl = candidate
+        error = null
+        backendCheckState = "UNCHECKED"
+        backendCheckedAt = 0
+        backendCheckMessage = "Azure address saved. Checking HTTPS connection."
+        checkBackendConnection()
+        return true
+    }
+
     private fun client(): DhanPulseApi {
+        if (backendUrl.isBlank()) throw IllegalStateException("Set the Azure HTTPS address before connecting.")
         val existing = api
         if (existing != null) return existing
         return ApiFactory.create(backendUrl).also { api = it }
@@ -390,6 +431,12 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     // Only GET requests are retried. Never automatically repeat a login POST.
     fun checkBackendConnection() {
         if (backendCheckLoading || loginBusy) return
+        if (backendUrl.isBlank()) {
+            backendCheckState = "CONFIGURATION"
+            backendCheckedAt = 0L
+            backendCheckMessage = "Enter and save your Azure HTTPS address first."
+            return
+        }
         backendCheckLoading = true
         backendCheckState = "STARTING"
         backendCheckMessage = "Connecting to DhanPulse backend. Login will open after the server is ready."
@@ -409,7 +456,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         if (readiness.loginReady != true) {
                             backendCheckState = "CONFIGURATION"
                             backendCheckedAt = 0L
-                            backendCheckMessage = "Backend is online, but required Angel One login settings are missing or invalid on the server. Check Render environment settings. Do not share PIN or TOTP."
+                            backendCheckMessage = "Backend is online, but required Angel One login settings are missing or invalid on the server. Check the Azure backend configuration. Do not share PIN or TOTP."
                             break
                         }
                         backendCheckState = "READY"
@@ -432,7 +479,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                             e is HttpException && e.code() == 404 -> {
                                 backendCheckState = "UNAVAILABLE"
                                 backendCheckedAt = 0L
-                                backendCheckMessage = "Backend is reachable but login readiness is missing. Update the Render server before trying a TOTP."
+                                backendCheckMessage = "Backend is reachable but login readiness is missing. Update the Azure backend before trying a TOTP."
                                 break
                             }
                             e is java.net.SocketTimeoutException ||
@@ -1771,7 +1818,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             var retryMs = 1500L
             while (isActive && sessionId == session && selectedSymbol == symbol && !stocksVisible) {
                 try {
-                    livePriceStream.collect(session, symbol) { event ->
+                    LivePriceStream(backendUrl).collect(session, symbol) { event ->
                         withContext(Dispatchers.Main) {
                             if (sessionId == session && selectedSymbol == symbol && !stocksVisible) {
                                 liveStreamStatus = event.status
