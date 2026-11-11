@@ -41,8 +41,7 @@ class MarketMonitoringService : Service() {
         private const val STATUS_ID = 7301
         private const val SIGNAL_ID = 7302
         private const val MAX_RUNTIME = 5L * 60L * 60_000L + 40L * 60_000L
-        private const val SERVER = "https://dhanpulse-personal-api.onrender.com"
-        private val IST = ZoneId.of("Asia/Kolkata")
+         private val IST = ZoneId.of("Asia/Kolkata")
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -176,7 +175,11 @@ class MarketMonitoringService : Service() {
     }
 
     private suspend fun pollingLoop(secure: SecurePrefs) {
-        val api = ApiFactory.create(SERVER)
+        val server = secure.backendUrl.takeIf { it.startsWith("https://") } ?: run {
+            stopMonitor("Azure HTTPS address not configured", false)
+            return
+        }
+        val api = ApiFactory.create(server)
         var tick = 0
         var failures = 0
         while (scope.isActive && monitorState.requested) {
@@ -296,7 +299,11 @@ class MarketMonitoringService : Service() {
     }
 
     private suspend fun liveFeedLoop(secure: SecurePrefs) {
-        val feed = LivePriceStream(SERVER)
+        val backend = secure.backendUrl.takeIf { it.startsWith("https://") } ?: run {
+            stopMonitor("Azure HTTPS address not configured", false)
+            return
+        }
+        val feed = LivePriceStream(backend)
         while (scope.isActive && monitorState.requested) {
             if (monitorState.hasVisibleApp() || validSession(secure) == null) {
                 delay(3_000L)
