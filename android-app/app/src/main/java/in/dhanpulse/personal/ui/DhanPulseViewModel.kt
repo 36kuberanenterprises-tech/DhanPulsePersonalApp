@@ -298,6 +298,16 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     private val signalPrefs = app.getSharedPreferences("dhanpulse_signal_tracker", 0)
     private val stockPrefs = app.getSharedPreferences("dhanpulse_stock_paper", 0)
+    // Independent of live Auto Trade. OFF until explicitly enabled by the user.
+    var autoPaperEnabled by mutableStateOf(stockPrefs.getBoolean("auto_paper_enabled", false))
+        private set
+    fun setAutoPaperEnabled(enabled: Boolean) {
+        autoPaperEnabled = enabled
+        stockPrefs.edit().putBoolean("auto_paper_enabled", enabled).apply()
+        stockPaperMessage = if (enabled)
+            "Automatic STOCK paper simulation enabled. It records only fresh READY scanner setups while this screen refreshes. No broker orders."
+        else "Automatic stock paper simulation disabled. Existing paper journal is preserved."
+    }
     private var callPendingKey: String? = null
     private var callPendingCount = 0
     private var appInForeground = false
@@ -1592,8 +1602,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 if (s != sessionId) return@launch
                 stockScan = response
                 stockScanError = null
-                fetchStockOpportunity()
                 resolvePastPaperStock()
+                if (autoPaperEnabled) processAutoPaperScan(response)
+                fetchStockOpportunity()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (s != sessionId) return@launch
@@ -1683,6 +1694,51 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         persistPaperStocks()
     }
 
+    private fun processAutoPaperScan(scan: StockScanResponse) {
+        val now = System.currentTimeMillis()
+        val current = openPaperStock
+        if (current != null && current.source == "AUTO") {
+            val outcome = PaperSimulationRules.autoExitAtObservedQuote(current, scan.trackedQuote, scan, now)
+            if (outcome != null) {
+                val (price, reason) = outcome
+                val sign = if (current.side == "BUY") 1 else -1
+                val net = (price - current.entry) * current.quantity * sign - current.estimatedCosts
+                paperStockTrades = paperStockTrades.map { trade ->
+                    if (trade.id == current.id) trade.copy(
+                        closedAt = now, exit = price, netPnl = net,
+                        exitReason = reason + " (estimated, not exchange fill)"
+                    ) else trade
+                }
+                persistPaperStocks()
+                stockPaperMessage = "Auto paper closed ${current.symbol} at observed price ${String.format(java.util.Locale.US, "%.2f", price)}. Estimated result only."
+            }
+            return
+        }
+        if (openPaperStock != null) return
+        val today = indiaDate(now)
+        val completedToday = paperStockTrades.filter { indiaDate(it.openedAt) == today }
+        if (completedToday.size >= 3 || completedToday.count { (it.netPnl ?: 0.0) < 0 } >= 2) return
+        val netToday = completedToday.sumOf { it.netPnl ?: 0.0 }
+        if (netToday <= -200.0) return
+        val already = completedToday.map { "${it.symbol}|${it.side}" }.toSet()
+        val candidate = PaperSimulationRules.selectAutoEntry(scan, now, already) ?: return
+        val plan = candidate.plan ?: return
+        val quote = candidate.price ?: return
+        // Use the actual observed quote, not an idealised earlier trigger.
+        val conservativeLoss = plan.estimatedLoss +
+            kotlin.math.abs(quote - plan.entry) * plan.quantity
+        if (netToday - conservativeLoss < -200.0) return
+        paperStockTrades = (listOf(PaperStockTrade(
+            id = now, symbol = candidate.symbol, token = candidate.token, side = candidate.side,
+            setup = candidate.setup ?: "SCANNER", openedAt = now,
+            entry = quote, stop = plan.stop, target1 = plan.target1, target2 = plan.target2,
+            quantity = plan.quantity, estimatedCosts = plan.estimatedCosts,
+            estimatedLoss = conservativeLoss, source = "AUTO"
+        )) + paperStockTrades).take(500)
+        persistPaperStocks()
+        stockPaperMessage = "Auto paper entry ${candidate.symbol} ${candidate.side} at the observed quote ${String.format(java.util.Locale.US, "%.2f", quote)}. Simulated only; no broker order or proven fill."
+    }
+
     fun startPaperStock(candidate: StockCandidate) {
         stockPaperMessage = null
         val scan = stockScan
@@ -1709,7 +1765,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         paperStockTrades = listOf(PaperStockTrade(now, candidate.symbol, candidate.token,
             candidate.side, candidate.setup ?: "SCANNER", now, plan.entry, plan.stop,
             plan.target1, plan.target2, plan.quantity, plan.estimatedCosts,
-            plan.estimatedLoss)) + paperStockTrades
+            plan.estimatedLoss, source = "MANUAL")) + paperStockTrades
         persistPaperStocks()
         stockPaperMessage = "Paper entry recorded from a quote sample. This is not an order or fill."
         fetchStockScanner()
