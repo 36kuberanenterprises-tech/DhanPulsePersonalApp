@@ -178,7 +178,13 @@ async function loadHistoricalBase(session, exchange, token, interval, now, key, 
     if (rows.length < 35) throw new Error('Market history is still preparing. Waiting for enough broker candles.');
     liveCandleCache.set(key, { candles: rows.slice(-1200), loadedAt: Date.now(), lastLiveAt: Date.now(), restored:false });
     try {
-      await saveBrokerCandles(key, rows);
+      // A broker reply may include the *forming* candle. Persist only bars
+      // whose full interval and settlement buffer had elapsed at fetch time,
+      // otherwise a restarted app could mistake a partial bar for a complete
+      // candle and produce an unsafe apparently fresh trading signal.
+      const completed = rows.filter(row =>
+        Date.parse(row.timestamp) + duration + 20_000 <= now.getTime());
+      await saveBrokerCandles(key, completed);
     } catch (e) {
       console.warn('CANDLE_CACHE_SAVE_FAILED', e?.code || 'WRITE_ERROR');
     }
