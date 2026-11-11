@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import `in`.dhanpulse.personal.data.ApiFactory
 import `in`.dhanpulse.personal.data.DhanPulseApi
+import `in`.dhanpulse.personal.BuildConfig
 import `in`.dhanpulse.personal.data.SecurePrefs
 import `in`.dhanpulse.personal.data.LivePriceStream
 import `in`.dhanpulse.personal.data.LivePriceEvent
@@ -37,9 +38,13 @@ import kotlin.math.round
 
 class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val sessionStore = SecurePrefs(app)
-    // One encrypted, user configured HTTPS endpoint for login, polling,
-    // live prices and the background monitor. Do not silently use Render.
-    var backendUrl by mutableStateOf(sessionStore.backendUrl.trim().trimEnd('/'))
+    // The private endpoint is injected when building the personalised APK.
+    // It is not published in the public repository or shown on the login screen.
+    // Older installations can continue using an already encrypted endpoint.
+    private val provisionedBackendUrl = BuildConfig.PRIVATE_API_BASE_URL.trim().trimEnd('/')
+    var backendUrl by mutableStateOf(
+        provisionedBackendUrl.ifBlank { sessionStore.backendUrl.trim().trimEnd('/') }
+    )
         private set
     private val nativeMonitor = MarketMonitorStore(app)
     private val displayPrefs = app.getSharedPreferences("dhanpulse_display_settings", 0)
@@ -317,6 +322,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val pendingCancelCounts = mutableMapOf<String, Int>()
 
     init {
+        // Persist the build supplied endpoint with the Android Keystore so all
+        // services (login, Flow, SSE, native monitor) use precisely the same URL.
+        // Never forward a previously saved broker session to a different host.
+        if (provisionedBackendUrl.isNotBlank() && sessionStore.backendUrl != provisionedBackendUrl) {
+            sessionStore.clearSession()
+            sessionStore.backendUrl = provisionedBackendUrl
+        }
         loadSignalHistory()
         loadPaperStocks()
         restoreSession()
@@ -393,46 +405,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         stopLivePriceStream()
     }
 
-    fun backendStatusUrl(): String? =
-        backendUrl.takeIf { it.startsWith("https://") }?.let { "$it/api/auth/readiness" }
-
-    // Switching a broker endpoint must never forward an existing session
-    // token to the newly supplied address.
-    fun configureBackendUrl(input: String): Boolean {
-        if (sessionId != null || loginBusy) {
-            error = "Log out before changing the Azure backend address."
-            return false
-        }
-        val candidate = input.trim().trimEnd('/')
-        val parsed = runCatching { java.net.URI(candidate) }.getOrNull()
-        val valid = parsed?.scheme?.equals("https", ignoreCase = true) == true &&
-            !parsed.host.isNullOrBlank() && parsed.rawUserInfo == null &&
-            parsed.rawQuery == null && parsed.rawFragment == null &&
-            (parsed.rawPath.isNullOrEmpty() || parsed.rawPath == "/")
-        if (!valid) {
-            error = "Enter a complete HTTPS address, for example https://your-vm.your-tailnet.ts.net. Do not enter an IP address or password."
-            return false
-        }
-        backendCheckJob?.cancel()
-        backendCheckJob = null
-        backendCheckLoading = false
-        stopLivePriceStream()
-        api = null
-        sessionStore.clearSession()
-        nativeMonitor.stop("Backend changed", true)
-        getApplication<Application>().stopService(Intent(getApplication(), MarketMonitoringService::class.java))
-        sessionStore.backendUrl = candidate
-        backendUrl = candidate
-        error = null
-        backendCheckState = "UNCHECKED"
-        backendCheckedAt = 0
-        backendCheckMessage = "Azure address saved. Checking HTTPS connection."
-        checkBackendConnection()
-        return true
-    }
-
     private fun client(): DhanPulseApi {
-        if (backendUrl.isBlank()) throw IllegalStateException("Set the Azure HTTPS address before connecting.")
+        if (backendUrl.isBlank()) throw IllegalStateException("Private backend has not been provisioned in this APK.")
         val existing = api
         if (existing != null) return existing
         return ApiFactory.create(backendUrl).also { api = it }
@@ -446,7 +420,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         if (backendUrl.isBlank()) {
             backendCheckState = "CONFIGURATION"
             backendCheckedAt = 0L
-            backendCheckMessage = "Enter and save your Azure HTTPS address first."
+            backendCheckMessage = "Private server configuration is not included in this build. Install your personalised APK."
             return
         }
         backendCheckLoading = true
@@ -455,7 +429,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         backendCheckJob = viewModelScope.launch {
             val deadline = SystemClock.elapsedRealtime() + 120_000L
             var attempts = 0
-            var lastProblem = "Server has not responded."
+            var lastProblem = "Private server has not responded."
             try {
                 while (isActive && SystemClock.elapsedRealtime() < deadline) {
                     attempts++
@@ -485,7 +459,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                             e is java.net.UnknownHostException -> {
                                 backendCheckState = "UNAVAILABLE"
                                 backendCheckedAt = 0L
-                                backendCheckMessage = "DNS cannot find the backend. Check mobile data, WiFi, VPN or Private DNS. You can open Server status in your browser."
+                                backendCheckMessage = "Private backend is unreachable. Check that Tailscale is connected on the phone and Azure VM."
                                 break
                             }
                             e is HttpException && e.code() == 404 -> {
@@ -514,7 +488,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 if (backendCheckState == "STARTING") {
                     backendCheckState = "UNAVAILABLE"
                     backendCheckedAt = 0L
-                    backendCheckMessage = "Backend did not become ready after $attempts checks. $lastProblem Use Retry connection or open Server status in your browser."
+                    backendCheckMessage = "Private backend did not become ready after $attempts checks. $lastProblem Check that Tailscale is connected, then tap Retry connection."
                 }
             } finally {
                 backendCheckLoading = false
