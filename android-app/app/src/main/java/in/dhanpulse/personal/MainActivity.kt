@@ -610,7 +610,7 @@ private fun BrokerHistoryDiagnosticCard(vm: DhanPulseViewModel) {
                     color = Muted, fontSize = 10.sp)
                 Text("Last rejection: ${h.lastRejectAt ?: "Not recorded"}",
                     color = Muted, fontSize = 10.sp)
-                Text("History attempts in last hour: ${h.requestsLastHour} • Cache entries: ${d.cache.total}",
+                Text("History attempts in last hour: ${h.requestsLastHour} • Cache entries: ${d?.cache?.total ?: 0}",
                     color = Muted, fontSize = 10.sp)
             }
             Text("Quote prices can update while historical candles remain unavailable. No confirmed trade calls without fresh candles.",
