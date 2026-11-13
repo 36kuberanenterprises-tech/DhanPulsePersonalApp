@@ -125,7 +125,8 @@ jobs:
         run: |
           apk="DhanPulse-v2.9.7-Build83-Video-Diagnostics.apk"
           test -s "$apk"
-          gh release create "build83-video-diagnostics-20261113" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          tag="build83-video-diagnostics-${GITHUB_SHA:0:7}"
+          gh release create "$tag" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "DhanPulse Build 83 Video Diagnostics Preview" \
             --notes "Build 83 displays read only Azure candle diagnostics, avoids historical backtests during an active cooldown, and shows Flow reconnect status. It preserves Build 81 market tabs and trading restrictions. Azure backend update required to expose diagnostics and reconnect functionality. Physical device testing is still required." \
             --prerelease
