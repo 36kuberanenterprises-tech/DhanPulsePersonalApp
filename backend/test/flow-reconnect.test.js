@@ -12,3 +12,13 @@ test('Flow reconnect waits fifteen seconds after actual disconnection', () => {
   assert.equal(flowReconnectDue(state,24999),false);
   assert.equal(flowReconnectDue(state,25000),true);
 });
+
+test('Stale but open websocket recovers only during nominal exchange hours', () => {
+  const now=Date.parse('2026-11-13T09:00:00Z'); // 14:30 IST
+  const state={closed:false,exchange:'NFO',openedAt:now-120000,
+    book:{previous:{receivedAt:now-45000}}};
+  assert.equal(flowReconnectDue(state,now),true);
+  assert.equal(flowReconnectDue({...state,openedAt:now-10000},now),false);
+  assert.equal(flowReconnectDue({...state,book:{previous:{receivedAt:now-4000}}},now),false);
+  assert.equal(flowReconnectDue(state,Date.parse('2026-11-13T12:00:00Z')),false);
+});
