@@ -227,6 +227,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private var backendCheckedAt = 0L
     private var backendCheckJob: Job? = null
     var refreshWarning by mutableStateOf<String?>(null)
+    var historyDiagnostics by mutableStateOf<HistoryDiagnostics?>(null)
+        private set
+    var historyDiagnosticsError by mutableStateOf<String?>(null)
+        private set
+    var historyDiagnosticsBusy by mutableStateOf(false)
+        private set
+    private var historyDiagnosticsAt = 0L
     var orderBusy by mutableStateOf(false)
     var orderMessage by mutableStateOf<String?>(null)
     var orderGateway by mutableStateOf<OrderGatewayDiagnostics?>(null)
@@ -613,6 +620,36 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
 
     fun fetchAnalysis() = refreshMarket(selectedSymbol)
 
+    // Uses only the authenticated local server diagnostics; never contacts Angel One.
+    // Avoid repeated GET requests on each 3-second market refresh.
+    fun fetchHistoryDiagnostics(force: Boolean = false) {
+        val signedIn = sessionId ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (historyDiagnosticsBusy || (!force && historyDiagnosticsAt > 0 &&
+                    now - historyDiagnosticsAt < 30_000L)) return
+        historyDiagnosticsAt = now
+        historyDiagnosticsBusy = true
+        viewModelScope.launch {
+            try {
+                val value = withTimeout(12_000L) { client().historyDiagnostics(signedIn) }
+                if (sessionId != signedIn) return@launch
+                if (!value.ok) throw IllegalStateException("Server did not return valid broker diagnostics.")
+                historyDiagnostics = value
+                historyDiagnosticsError = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (sessionId == signedIn) {
+                    historyDiagnosticsError = if (e is HttpException && e.code() == 404)
+                        "The selected Azure backend has not installed the historical diagnostics update. An APK alone cannot activate it."
+                    else "Broker diagnostics unavailable: " + friendlyError(e, "Check the Azure connection")
+                }
+            } finally {
+                historyDiagnosticsBusy = false
+            }
+        }
+    }
+
     private fun refreshMarket(symbol: String) {
         val s = sessionId ?: return
         if (analysisRefreshInFlight) return
@@ -639,6 +676,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     result.dataFresh == false -> "Market feed is delayed or its time is unavailable. Showing the last available prices; new calls and Auto Trade are paused."
                     else -> null
                 }
+                if (result.dataFresh == false) fetchHistoryDiagnostics()
                 if (result.dataFresh != false) {
                     updateSignalTracker(result)
                     updatePremiumDecision(result)
@@ -651,6 +689,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 if (e is CancellationException) throw e
                 if (s != sessionId || requestedTimeframe != selectedTimeframe) return@launch
                 marketRefreshErrors = marketRefreshErrors + (requestedSymbol to friendlyError(e, "Refresh unavailable"))
+                fetchHistoryDiagnostics()
                 if (requestedSymbol != selectedSymbol) return@launch
                 if (e is HttpException && e.code() == 401) {
                     logout("Broker session expired. Please login again.")
