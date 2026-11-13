@@ -1,0 +1,36 @@
+name: Azure Candle Cache and History Diagnostics
+
+on:
+  push:
+    branches: [ fix/azure-durable-candles-diagnostics-20261111 ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/azure-candle-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Check JavaScript syntax
+        run: |
+          node --check backend/src/candle-store.js
+          node --check backend/src/analysis.js
+          node --check backend/src/angel.js
+          node --check backend/src/server.js
+      - name: Install production and test dependencies
+        working-directory: backend
+        run: npm ci --no-audit --no-fund
+      - name: Run existing and new backend tests
+        working-directory: backend
+        run: npm test

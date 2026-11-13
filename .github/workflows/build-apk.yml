@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ main, add-mcx-index-options-v26, add-mcx-energy-options-v261, fix/keep-eye-broker-403-session-20261105 ]
+    branches: [ main, add-mcx-index-options-v26, add-mcx-energy-options-v261, fix/keep-eye-broker-403-session-20261105, fix/azure-durable-candles-diagnostics-20261111 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -41,6 +41,7 @@ jobs:
 
       - name: Check backend JavaScript syntax
         run: |
+          node --check backend/src/candle-store.js
           node --check backend/src/angel.js
           node --check backend/src/history-control.js
           node --check order-relay/src/server.js

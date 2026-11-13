@@ -4,8 +4,8 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import { sealSession, openSession } from './session-token.js';
-import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, normalizeStrike, getEgressIp } from './angel.js';
-import { analyse, marketDataState } from './analysis.js';
+import { login, profile, rmsLimit, positions, placeOrder, orderBook, instrumentMaster, mcxIndexCatalog, mcxEnergyCatalog, futureForEnergyOption, mcxOptionEntryWindow, marketData, parseFetched, quoteLtp, quoteFeedAgeMs, normalizeStrike, getEgressIp, historyAccessStatus } from './angel.js';
+import { analyse, marketDataState, historyCacheStatus } from './analysis.js';
 import { openAngelPriceStream, streamInstrument } from './live-stream.js';
 import { attachFlowRoutes } from './flow-monitor.js';
 import { runBacktest } from './backtest.js';
@@ -232,6 +232,19 @@ function requireSession(req, res, next) {
   sessions.set(id, s);
   req.smartSession = s; next();
 }
+
+// Read-only diagnostics: never contacts Angel One and never reveals credentials.
+app.get('/api/diagnostics/history', requireSession, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    history: historyAccessStatus(req.smartSession),
+    cache: historyCacheStatus(req.smartSession),
+    quoteDataIndependent: true,
+    note: 'Historical broker limits apply across instruments and timeframes. A cached candle is not automatically current.'
+  });
+});
 
 app.get('/api/markets/mcx', requireSession, async (_req, res) => {
   try {
