@@ -6,6 +6,30 @@ data class BackendHealth(
     val status: String? = null,
     val version: String? = null
 )
+// Read-only server status. These diagnostics never request a new broker candle.
+data class BrokerHistoryStatus(
+    val blocked: Boolean = false,
+    val retryAt: String? = null,
+    val retryAfterSeconds: Int = 0,
+    val consecutiveRejections: Int = 0,
+    val requestsLastMinute: Int = 0,
+    val requestsLastHour: Int = 0,
+    val lastRequestAt: String? = null,
+    val lastSuccessAt: String? = null,
+    val lastRejectAt: String? = null,
+    val lastHttpStatus: Int? = null,
+    val lastBrokerCode: String? = null
+)
+data class HistoryCacheEntry(val exchange: String = "", val token: String = "",
+    val interval: String = "", val bars: Int = 0, val lastCandleTime: String? = null,
+    val restoredFromDisk: Boolean = false, val ageMinutes: Int? = null)
+data class BrokerHistoryCache(val total: Int = 0, val entries: List<HistoryCacheEntry> = emptyList())
+data class HistoryDiagnostics(val ok: Boolean = false, val checkedAt: String? = null,
+    val history: BrokerHistoryStatus = BrokerHistoryStatus(),
+    val cache: BrokerHistoryCache = BrokerHistoryCache(),
+    val quoteDataIndependent: Boolean = true,
+    val note: String = "")
+
 data class LoginRequest(val apiKey: String, val clientCode: String, val pin: String, val totp: String)
 data class UserProfile(val clientcode: String? = null, val name: String? = null)
 data class LoginResponse(val sessionId: String, val expiresAt: String? = null, val profile: UserProfile? = null)

@@ -46,7 +46,7 @@ data class FlowBar(val time:String="",val buy:Double=0.0,val sell:Double=0.0,val
 data class FlowSnapshot(val status:String="WAITING_FOR_FEED",val symbol:String="",val startedAt:String="",
     val lastTickAt:String?=null,val price:Double?=null,val spread:Double?=null,val depthImbalance:Double?=null,
     val oi:Double?=null,val estimatedCvd:Double=0.0,val note:String="",val error:String?=null,
-    val source:String="",val historicalComplete:Boolean=false,
+    val source:String="",val historicalComplete:Boolean=false, val retryAfterSeconds:Int=0,
     val bids:List<FlowDepth> = emptyList(),val asks:List<FlowDepth> = emptyList(),val bars:List<FlowBar> = emptyList())
 
 private fun flowNumber(value:Double?)=value?.let { String.format(Locale.US,"%,.2f",it) } ?: "Unavailable"
@@ -340,6 +340,10 @@ fun FlowScreen(sessionId:String, vm:DhanPulseViewModel, onOpenPlan:()->Unit, onO
             val data=snapshot
             val feedDelayed=error!=null || data?.error!=null || (data?.status=="LIVE" && !analysisRecent(data.lastTickAt,now))
             item { Text("${if(feedDelayed) "Updates delayed • showing last received snapshot" else when(data?.status){"LIVE"->"Live activity";"WAITING_FOR_FEED"->"Waiting for market updates";"STALE"->"Updates delayed";null->"Connecting";else->data.status.replace('_',' ')}} • Last update ${flowTime(data?.lastTickAt)} IST") }
+            if(data?.status == "DISCONNECTED") item {
+                Text("Broker Flow connection interrupted. Automatic reconnect will be attempted in ${data.retryAfterSeconds} seconds. You can tap Restart feed if needed.",
+                    color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+            }
             data?.error?.let { message -> item { Text(message,color=MaterialTheme.colorScheme.error) } }
             if(data!=null) {
                 item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {

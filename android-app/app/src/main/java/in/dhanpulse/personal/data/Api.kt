@@ -27,6 +27,9 @@ interface DhanPulseApi {
         @Query("token") token:String, @Query("minutes") minutes:Int,
         @Query("restart") restart:Boolean=false): `in`.dhanpulse.personal.FlowSnapshot
 
+    @GET("api/diagnostics/history")
+    suspend fun historyDiagnostics(@Header("X-Session-Id") sessionId: String): HistoryDiagnostics
+
     @GET("api/markets/mcx")
     suspend fun mcxMarkets(@Header("X-Session-Id") sessionId: String): McxCatalog
 

@@ -571,6 +571,55 @@ private fun TradingContextBar(vm: DhanPulseViewModel) {
 }
 
 @Composable
+private fun BrokerHistoryDiagnosticCard(vm: DhanPulseViewModel) {
+    LaunchedEffect(vm.sessionId) { if (vm.sessionId != null) vm.fetchHistoryDiagnostics() }
+    val d = vm.historyDiagnostics
+    val h = d?.history
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        border = BorderStroke(1.dp, if (h?.blocked == true) Amber else Line),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("Broker history diagnostics", color = Ink, fontWeight = FontWeight.Bold)
+                TextButton(
+                    onClick = { vm.fetchHistoryDiagnostics(force = true) },
+                    enabled = !vm.historyDiagnosticsBusy
+                ) { Text(if (vm.historyDiagnosticsBusy) "Checking" else "Check", color = Purple) }
+            }
+            when {
+                h?.blocked == true -> {
+                    Text("HISTORICAL REQUESTS PAUSED", color = Amber, fontWeight = FontWeight.Bold)
+                    Text("Local broker cooldown: ${h.retryAfterSeconds} seconds remaining.",
+                        color = Ink, style = MaterialTheme.typography.bodySmall)
+                    Text("Latest rejected HTTP status: ${h.lastHttpStatus ?: "Unknown"}" +
+                        (h.lastBrokerCode?.let { " • Broker code: $it" } ?: ""),
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                h != null -> Text("No active cooldown recorded by this Azure process. Broker access is not guaranteed.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall)
+                vm.historyDiagnosticsError != null -> Text(vm.historyDiagnosticsError.orEmpty(),
+                    color = Amber, style = MaterialTheme.typography.bodySmall)
+                else -> Text("Checking backend history access without sending any broker requests.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            if (h != null) {
+                Text("Last accepted history: ${h.lastSuccessAt ?: "Not recorded"}",
+                    color = Muted, fontSize = 10.sp)
+                Text("Last rejection: ${h.lastRejectAt ?: "Not recorded"}",
+                    color = Muted, fontSize = 10.sp)
+                Text("History attempts in last hour: ${h.requestsLastHour} • Cache entries: ${d?.cache?.total ?: 0}",
+                    color = Muted, fontSize = 10.sp)
+            }
+            Text("Quote prices can update while historical candles remain unavailable. No confirmed trade calls without fresh candles.",
+                color = Muted, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
 private fun MarketSection(vm: DhanPulseViewModel) {
     val a = vm.analysis
     LazyColumn(
@@ -586,6 +635,8 @@ private fun MarketSection(vm: DhanPulseViewModel) {
             "HISTORY_DELAYED" -> "Broker candles delayed"
             else -> "Live refresh delayed"
         }, it) } }
+        if (a?.dataFresh == false || vm.historyDiagnostics?.history?.blocked == true)
+            item { BrokerHistoryDiagnosticCard(vm) }
         if (a == null && vm.loading && vm.refreshWarning == null) item { LoadingMarketCard() }
         if (a != null) {
             item { SignalCard(a, vm) }
@@ -644,6 +695,8 @@ private fun McxSection(vm: DhanPulseViewModel, onTrade: () -> Unit) {
             "HISTORY_DELAYED" -> "Broker candles delayed"
             else -> "Live refresh delayed"
         }, it) } }
+        if (a?.dataFresh == false || vm.historyDiagnostics?.history?.blocked == true)
+            item { BrokerHistoryDiagnosticCard(vm) }
         if (vm.loading && a == null) item { LoadingMarketCard() }
         if (index?.hasOptions == false || energy?.hasOptions == false || a?.tradeDecision?.status == "NO_OPTIONS") item {
             InfoStrip(if (energy != null) "No safe option expiry" else "Index only", if (energy != null)
@@ -687,6 +740,8 @@ private fun TradeSection(vm: DhanPulseViewModel) {
                 "Crude oil and natural gas options use the matching futures quote. Entry needs fresh futures and option quotes, sufficient cash and a ready order route. Exit open options before expiry to avoid futures devolvement. MCX Auto Trade is off."
                 else "Only index options shown in Angel One can be bought. Entry needs fresh index and option quotes. MCX Auto Trade remains off while this strategy is untested with live orders.")
         }
+        if (a?.dataFresh == false || vm.historyDiagnostics?.history?.blocked == true)
+            item { BrokerHistoryDiagnosticCard(vm) }
         if (a != null) {
             item { TradeDeskHero(a, vm) }
             item { DecisionPipelineCard(a, vm) }
@@ -1445,6 +1500,10 @@ private fun DailyStocksSection(vm: DhanPulseViewModel) {
                 }
             }
         }
+        if (scan?.candidates?.any { it.reason.contains("403") || it.reason.contains("cooldown", ignoreCase = true) } == true ||
+            vm.historyDiagnostics?.history?.blocked == true) {
+            item { BrokerHistoryDiagnosticCard(vm) }
+        }
         item { InfoStrip("Scanner selection", "Up to eight candidates, with at most three per sector. Open a candidate for its checks and trade levels. A shortlist score is not a trade signal.") }
         vm.stockPaperMessage?.let { message -> item { InfoStrip("Paper journal", message) } }
         if (vm.openPaperStock != null && !java.time.LocalTime.now(java.time.ZoneId.of("Asia/Kolkata")).isBefore(java.time.LocalTime.of(15, 0))) {
@@ -1533,6 +1592,7 @@ private fun KeepEyeFinderSection(vm: DhanPulseViewModel) {
                 }
             }
             if (scan.status == "BROKER_HISTORY_BLOCKED") {
+                item { BrokerHistoryDiagnosticCard(vm) }
                 item {
                     InfoStrip("Broker historical data blocked",
                         "The broker did not provide the candles needed for seven conditions. Quote watchlist entries are visible below, but they are NOT confirmed matches.")
@@ -1847,7 +1907,12 @@ private fun PositionsSection(vm: DhanPulseViewModel) {
 @Composable
 private fun ResearchSection(vm: DhanPulseViewModel) {
     var researchTab by remember { mutableStateOf("CALLS") }
-    LaunchedEffect(researchTab) { if (researchTab == "BACKTEST") vm.fetchBacktestCatalog() }
+    LaunchedEffect(researchTab) {
+        if (researchTab == "BACKTEST") {
+            vm.fetchBacktestCatalog()
+            vm.fetchHistoryDiagnostics()
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -1898,6 +1963,7 @@ private fun ResearchSection(vm: DhanPulseViewModel) {
             ) {
                 item { SectionTitle("Backtest Lab", "Historical strategy validation and robustness") }
                 item { BacktestContextBar(vm) }
+                item { BrokerHistoryDiagnosticCard(vm) }
                 item { BacktestLabCard(vm) }
             }
         }
@@ -2783,7 +2849,8 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
 
             Button(
                 onClick = vm::runBacktest,
-                enabled = !vm.backtestBusy && !vm.autoTradeEnabled && vm.backtestChoice != null,
+                enabled = !vm.backtestBusy && !vm.autoTradeEnabled && vm.backtestChoice != null &&
+                    vm.historyDiagnostics?.history?.blocked != true,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Blue)
@@ -2796,6 +2863,8 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
             }
 
             if (vm.autoTradeEnabled) InfoStrip("Backtest locked", "Switch Auto Trade OFF before historical testing.")
+            if (vm.historyDiagnostics?.history?.blocked == true) InfoStrip("Broker history cooldown",
+                "Backtests are paused to avoid repeated rejected candle requests. Retry after ${vm.historyDiagnostics?.history?.retryAfterSeconds ?: 0} seconds.")
             vm.backtestError?.let { ErrorStrip(it) }
 
             if (report != null) {
