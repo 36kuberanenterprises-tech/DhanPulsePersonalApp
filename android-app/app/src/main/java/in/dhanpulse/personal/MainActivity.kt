@@ -1958,6 +1958,7 @@ private fun ResearchSection(vm: DhanPulseViewModel) {
             ) {
                 item { SectionTitle("Backtest Lab", "Historical strategy validation and robustness") }
                 item { BacktestContextBar(vm) }
+                item { BrokerHistoryDiagnosticCard(vm) }
                 item { BacktestLabCard(vm) }
             }
         }
@@ -2843,7 +2844,8 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
 
             Button(
                 onClick = vm::runBacktest,
-                enabled = !vm.backtestBusy && !vm.autoTradeEnabled && vm.backtestChoice != null,
+                enabled = !vm.backtestBusy && !vm.autoTradeEnabled && vm.backtestChoice != null &&
+                    vm.historyDiagnostics?.history?.blocked != true,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Blue)
@@ -2856,6 +2858,8 @@ fun BacktestLabCard(vm: DhanPulseViewModel) {
             }
 
             if (vm.autoTradeEnabled) InfoStrip("Backtest locked", "Switch Auto Trade OFF before historical testing.")
+            if (vm.historyDiagnostics?.history?.blocked == true) InfoStrip("Broker history cooldown",
+                "Backtests are paused to avoid repeated rejected candle requests. Retry after ${vm.historyDiagnostics?.history?.retryAfterSeconds ?: 0} seconds.")
             vm.backtestError?.let { ErrorStrip(it) }
 
             if (report != null) {
