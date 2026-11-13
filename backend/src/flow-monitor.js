@@ -110,15 +110,34 @@ export function flowCatalogue(rows, options={}) {
 }
 // A disconnected stream is recovered only after a short wait; the browser
 // should never have to restart the Azure service to recover it.
+function flowMarketSession(exchange, now = Date.now()) {
+  const d = new Date(now + 330 * 60_000);
+  const weekday = d.getUTCDay();
+  const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
+  if (weekday < 1 || weekday > 5) return false;
+  return exchange === 'MCX' ? mins >= 540 && mins < 1435
+    : mins >= 555 && mins < 930;
+}
+
 export function flowReconnectDue(state, now = Date.now()) {
-  return !!state?.closed && Number.isFinite(state.closedAt) &&
+  if (!state) return false;
+  if (state.closed) return Number.isFinite(state.closedAt) &&
     now - state.closedAt >= 15_000;
+  // A socket can be OPEN but stop delivering packets. Only reset an already
+  // aged stream while the exchange session is nominally active. This cannot
+  // fabricate missing trades and never triggers an order.
+  const openedAt = state.openedAt;
+  if (!Number.isFinite(openedAt) || !flowMarketSession(state.exchange, now) ||
+      now - openedAt < 75_000) return false;
+  const lastObserved = state.book?.previous?.receivedAt || openedAt;
+  return now - lastObserved > 30_000;
 }
 
 function openMonitor(session,row,minutes) {
   if (![session.jwt,session.apiKey,session.clientCode,session.feedToken].every(Boolean)) throw new Error('Login again to obtain the broker streaming token');
   const state={key:`${row.exch_seg}:${row.token}:${minutes}`,book:new FlowBook(minutes),symbol:row.symbol,
-    expiresAt:session.expiresAt,touched:Date.now(),error:null,closed:false,closedAt:null};
+    expiresAt:session.expiresAt,touched:Date.now(),error:null,closed:false,closedAt:null,
+    exchange:row.exch_seg,openedAt:Date.now()};
   const ws=new WebSocket('wss://smartapisocket.angelone.in/smart-stream',{headers:{
     Authorization:session.jwt.replace(/^Bearer\s+/i,''),'x-api-key':session.apiKey,
     'x-client-code':session.clientCode,'x-feed-token':session.feedToken }});
