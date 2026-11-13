@@ -1500,6 +1500,10 @@ private fun DailyStocksSection(vm: DhanPulseViewModel) {
                 }
             }
         }
+        if (scan?.candidates?.any { it.reason.contains("403") || it.reason.contains("cooldown", ignoreCase = true) } == true ||
+            vm.historyDiagnostics?.history?.blocked == true) {
+            item { BrokerHistoryDiagnosticCard(vm) }
+        }
         item { InfoStrip("Scanner selection", "Up to eight candidates, with at most three per sector. Open a candidate for its checks and trade levels. A shortlist score is not a trade signal.") }
         vm.stockPaperMessage?.let { message -> item { InfoStrip("Paper journal", message) } }
         if (vm.openPaperStock != null && !java.time.LocalTime.now(java.time.ZoneId.of("Asia/Kolkata")).isBefore(java.time.LocalTime.of(15, 0))) {
@@ -1588,6 +1592,7 @@ private fun KeepEyeFinderSection(vm: DhanPulseViewModel) {
                 }
             }
             if (scan.status == "BROKER_HISTORY_BLOCKED") {
+                item { BrokerHistoryDiagnosticCard(vm) }
                 item {
                     InfoStrip("Broker historical data blocked",
                         "The broker did not provide the candles needed for seven conditions. Quote watchlist entries are visible below, but they are NOT confirmed matches.")
