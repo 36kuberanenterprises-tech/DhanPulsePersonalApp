@@ -108,15 +108,22 @@ export function flowCatalogue(rows, options={}) {
       symbol:row.symbol,kind:row.instrumenttype||'CASH',underlying:root(row),expiry:row.expiry||'',
       strike:Number(row.strike)>0?Number(row.strike)/100:null})) : []};
 }
+// A disconnected stream is recovered only after a short wait; the browser
+// should never have to restart the Azure service to recover it.
+export function flowReconnectDue(state, now = Date.now()) {
+  return !!state?.closed && Number.isFinite(state.closedAt) &&
+    now - state.closedAt >= 15_000;
+}
+
 function openMonitor(session,row,minutes) {
   if (![session.jwt,session.apiKey,session.clientCode,session.feedToken].every(Boolean)) throw new Error('Login again to obtain the broker streaming token');
   const state={key:`${row.exch_seg}:${row.token}:${minutes}`,book:new FlowBook(minutes),symbol:row.symbol,
-    expiresAt:session.expiresAt,touched:Date.now(),error:null,closed:false};
+    expiresAt:session.expiresAt,touched:Date.now(),error:null,closed:false,closedAt:null};
   const ws=new WebSocket('wss://smartapisocket.angelone.in/smart-stream',{headers:{
     Authorization:session.jwt.replace(/^Bearer\s+/i,''),'x-api-key':session.apiKey,
     'x-client-code':session.clientCode,'x-feed-token':session.feedToken }});
   ws.binaryType='arraybuffer';
-  state.close=()=>{if(state.closed)return;state.closed=true;clearInterval(timer);ws.close();};
+  state.close=()=>{if(state.closed)return;state.closed=true;state.closedAt=Date.now();clearInterval(timer);ws.close();};
   const timer=setInterval(()=>{
     if(Date.now()-state.touched>20_000 || Date.now()>=state.expiresAt) {state.close();if(sessions.get(session.clientCode)===state)sessions.delete(session.clientCode);}
     else if(ws.readyState===WebSocket.OPEN)ws.send('ping');
@@ -133,8 +140,8 @@ function openMonitor(session,row,minutes) {
       if(tick && tick.token===String(row.token) && tick.exchangeType===exchanges[row.exch_seg]) {state.book.ingest(tick);state.error=null;}
     }catch{state.error='Malformed broker snapshot ignored';}
   });
-  ws.addEventListener('error',()=>{state.error='Broker stream failed. Tap Restart feed.';state.close();});
-  ws.addEventListener('close',()=>{if(!state.closed){state.error='Broker stream disconnected. Tap Restart feed.';state.close();}});
+  ws.addEventListener('error',()=>{state.error='Broker stream failed. Automatic reconnect will be attempted.';state.close();});
+  ws.addEventListener('close',()=>{if(!state.closed){state.error='Broker stream disconnected. Automatic reconnect will be attempted.';state.close();}});
   return state;
 }
 
@@ -152,14 +159,14 @@ export function attachFlowRoutes(app,requireSession) {
       if(!row)return res.status(400).json({error:'Select a listed cash share, futures or option contract. Spot indices have no traded footprint.'});
       let state=sessions.get(req.smartSession.clientCode);
       const key=`${row.exch_seg}:${row.token}:${minutes}`;
-      if(!state || state.key!==key || req.query.restart==='true') {
+      if(!state || state.key!==key || req.query.restart==='true' || flowReconnectDue(state)) {
         state?.close();
         if(sessions.size>=100 && !state)return res.status(503).json({error:'Monitor capacity reached; try later'});
         state=openMonitor(req.smartSession,row,minutes);sessions.set(req.smartSession.clientCode,state);
       }
       state.touched=Date.now();
       res.json({...state.book.snapshot(),symbol:state.symbol,error:state.error,
-        ...(state.closed ? {status:'DISCONNECTED'} : {})});
+        ...(state.closed ? {status:'DISCONNECTED', retryAfterSeconds: Math.max(0,Math.ceil((15_000-(Date.now()-state.closedAt))/1000))} : {})});
     }catch(e){res.status(503).json({error:e.message||'Order flow monitor unavailable'});}
   });
 }
