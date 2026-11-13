@@ -571,6 +571,55 @@ private fun TradingContextBar(vm: DhanPulseViewModel) {
 }
 
 @Composable
+private fun BrokerHistoryDiagnosticCard(vm: DhanPulseViewModel) {
+    LaunchedEffect(vm.sessionId) { if (vm.sessionId != null) vm.fetchHistoryDiagnostics() }
+    val d = vm.historyDiagnostics
+    val h = d?.history
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        border = BorderStroke(1.dp, if (h?.blocked == true) Amber else Line),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("Broker history diagnostics", color = Ink, fontWeight = FontWeight.Bold)
+                TextButton(
+                    onClick = { vm.fetchHistoryDiagnostics(force = true) },
+                    enabled = !vm.historyDiagnosticsBusy
+                ) { Text(if (vm.historyDiagnosticsBusy) "Checking" else "Check", color = Purple) }
+            }
+            when {
+                h?.blocked == true -> {
+                    Text("HISTORICAL REQUESTS PAUSED", color = Amber, fontWeight = FontWeight.Bold)
+                    Text("Local broker cooldown: ${h.retryAfterSeconds} seconds remaining.",
+                        color = Ink, style = MaterialTheme.typography.bodySmall)
+                    Text("Latest rejected HTTP status: ${h.lastHttpStatus ?: "Unknown"}" +
+                        (h.lastBrokerCode?.let { " • Broker code: $it" } ?: ""),
+                        color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                h != null -> Text("No active cooldown recorded by this Azure process. Broker access is not guaranteed.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall)
+                vm.historyDiagnosticsError != null -> Text(vm.historyDiagnosticsError.orEmpty(),
+                    color = Amber, style = MaterialTheme.typography.bodySmall)
+                else -> Text("Checking backend history access without sending any broker requests.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            if (h != null) {
+                Text("Last accepted history: ${h.lastSuccessAt ?: "Not recorded"}",
+                    color = Muted, fontSize = 10.sp)
+                Text("Last rejection: ${h.lastRejectAt ?: "Not recorded"}",
+                    color = Muted, fontSize = 10.sp)
+                Text("History attempts in last hour: ${h.requestsLastHour} • Cache entries: ${d.cache.total}",
+                    color = Muted, fontSize = 10.sp)
+            }
+            Text("Quote prices can update while historical candles remain unavailable. No confirmed trade calls without fresh candles.",
+                color = Muted, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
 private fun MarketSection(vm: DhanPulseViewModel) {
     val a = vm.analysis
     LazyColumn(
@@ -586,6 +635,8 @@ private fun MarketSection(vm: DhanPulseViewModel) {
             "HISTORY_DELAYED" -> "Broker candles delayed"
             else -> "Live refresh delayed"
         }, it) } }
+        if (a?.dataFresh == false || vm.historyDiagnostics?.history?.blocked == true)
+            item { BrokerHistoryDiagnosticCard(vm) }
         if (a == null && vm.loading && vm.refreshWarning == null) item { LoadingMarketCard() }
         if (a != null) {
             item { SignalCard(a, vm) }
@@ -644,6 +695,8 @@ private fun McxSection(vm: DhanPulseViewModel, onTrade: () -> Unit) {
             "HISTORY_DELAYED" -> "Broker candles delayed"
             else -> "Live refresh delayed"
         }, it) } }
+        if (a?.dataFresh == false || vm.historyDiagnostics?.history?.blocked == true)
+            item { BrokerHistoryDiagnosticCard(vm) }
         if (vm.loading && a == null) item { LoadingMarketCard() }
         if (index?.hasOptions == false || energy?.hasOptions == false || a?.tradeDecision?.status == "NO_OPTIONS") item {
             InfoStrip(if (energy != null) "No safe option expiry" else "Index only", if (energy != null)
@@ -687,6 +740,8 @@ private fun TradeSection(vm: DhanPulseViewModel) {
                 "Crude oil and natural gas options use the matching futures quote. Entry needs fresh futures and option quotes, sufficient cash and a ready order route. Exit open options before expiry to avoid futures devolvement. MCX Auto Trade is off."
                 else "Only index options shown in Angel One can be bought. Entry needs fresh index and option quotes. MCX Auto Trade remains off while this strategy is untested with live orders.")
         }
+        if (a?.dataFresh == false || vm.historyDiagnostics?.history?.blocked == true)
+            item { BrokerHistoryDiagnosticCard(vm) }
         if (a != null) {
             item { TradeDeskHero(a, vm) }
             item { DecisionPipelineCard(a, vm) }
@@ -1847,7 +1902,12 @@ private fun PositionsSection(vm: DhanPulseViewModel) {
 @Composable
 private fun ResearchSection(vm: DhanPulseViewModel) {
     var researchTab by remember { mutableStateOf("CALLS") }
-    LaunchedEffect(researchTab) { if (researchTab == "BACKTEST") vm.fetchBacktestCatalog() }
+    LaunchedEffect(researchTab) {
+        if (researchTab == "BACKTEST") {
+            vm.fetchBacktestCatalog()
+            vm.fetchHistoryDiagnostics()
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(
