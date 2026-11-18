@@ -1,0 +1,51 @@
+name: Check SmartAPI history diagnostics
+
+on:
+  push:
+    branches:
+      - fix/angel403-history-diagnostics-20261118
+    paths:
+      - 'backend/**'
+      - '.github/workflows/history-diagnostics-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --no-audit --no-fund
+      - name: Check syntax
+        working-directory: backend
+        run: node --check src/angel.js
+      - name: Parse Windows installer without executing it
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$env:GITHUB_WORKSPACE/backend/scripts/Install-DhanPulse-Azure-History.ps1",
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | Format-List
+            exit 1
+          }
+      - name: Run backend tests
+        working-directory: backend
+        run: npm test

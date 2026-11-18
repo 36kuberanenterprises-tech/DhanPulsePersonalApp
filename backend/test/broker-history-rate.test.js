@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { candleData, getEgressIp, marketData, positions, rmsLimit } from '../src/angel.js';
+import { candleData, getEgressIp, historyAccessStatus, marketData, positions, rmsLimit } from '../src/angel.js';
 
 const session = { apiKey: 'test', jwt: 'test' };
 const payload = { exchange: 'BSE', symboltoken: '1', interval: 'FIVE_MINUTE', fromdate: '2026-10-01 09:15', todate: '2026-10-01 09:50' };
@@ -29,6 +29,14 @@ test('parallel broker history requests are paced and a rate rejection pauses the
     const requestsAtRejection = starts.length;
     await assert.rejects(candleData(session, payload), /cooldown.*exceeding access rate/i);
     assert.equal(starts.length, requestsAtRejection, 'cooldown must not send another broker request');
+    const status = historyAccessStatus(session);
+    assert.equal(status.blocked, true);
+    assert.equal(status.lastHttpStatus, 403);
+    assert.equal(status.lastRejectionKind, 'BROKER_RATE_REJECTION');
+    assert.equal(status.lastRejectedExchange, 'BSE');
+    assert.equal(status.lastRejectedInterval, 'FIVE_MINUTE');
+    assert.equal(status.publicIpHeaderSource, process.env.CLIENT_PUBLIC_IP ? 'CONFIGURED' : 'LEGACY_DEFAULT');
+    assert.ok(['MATCH','MISMATCH','NOT_CHECKED'].includes(status.publicIpComparison));
   } finally {
     globalThis.fetch = previousFetch;
   }

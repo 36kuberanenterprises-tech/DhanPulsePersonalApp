@@ -8,23 +8,29 @@ export function isRateError(error) {
   return error?.status === 403 || error?.status === 429 || error?.rateLimited === true ||
     /exceeding access rate|rate limit|too many requests|AB1021|\b403\b|\b429\b/i.test(error?.message || '');
 }
-export function cooldownError(until, now = Date.now()) {
+export function cooldownError(until, now = Date.now(), denialKind = 'UNKNOWN') {
   const seconds = Math.max(1, Math.ceil((until - now) / 1000));
-  return Object.assign(new Error(`Candle data: historical request cooldown after exceeding access rate. Retry in ${seconds} seconds.`),
-    { rateLimited: true, retryAt: until, retryAfterMs: seconds * 1000 });
+  const reason = denialKind === 'BROKER_RATE_REJECTION'
+    ? 'after exceeding access rate'
+    : denialKind === 'HTTP_403_OTHER'
+      ? 'after broker HTTP 403 access denial'
+      : 'while waiting for a broker history request permit';
+  return Object.assign(new Error(`Candle data: historical request cooldown ${reason}. Retry in ${seconds} seconds.`),
+    { rateLimited: denialKind === 'BROKER_RATE_REJECTION', rejectionKind: denialKind,
+      retryAt: until, retryAfterMs: seconds * 1000 });
 }
 export class HistoryBudget {
   constructor({ now = () => Date.now(), sleep = ms => new Promise(r => setTimeout(r, ms)), limits = HISTORY_LIMITS } = {}) {
     this.now = now; this.sleep = sleep; this.limits = limits; this.clients = new Map();
   }
   state(key) {
-    if (!this.clients.has(key)) this.clients.set(key, { starts: [], blockedUntil: 0, failures: 0, queue: Promise.resolve() });
+    if (!this.clients.has(key)) this.clients.set(key, { starts: [], blockedUntil: 0, failures: 0, denialKind: 'UNKNOWN', queue: Promise.resolve() });
     return this.clients.get(key);
   }
   async run(key, prepare, request) {
     const state = this.state(key);
     const pending = state.queue.then(async () => {
-      if (state.blockedUntil > this.now()) throw cooldownError(state.blockedUntil, this.now());
+      if (state.blockedUntil > this.now()) throw cooldownError(state.blockedUntil, this.now(), state.denialKind);
       // Reserve the general broker-read slot first so it cannot bunch the
       // actual history starts after the history permit has been granted.
       await prepare();
@@ -35,11 +41,12 @@ export class HistoryBudget {
         state.starts.length >= this.limits.hour ? state.starts[state.starts.length - this.limits.hour] + 3_600_000 : 0);
       if (due - this.now() > 5000) throw cooldownError(due, this.now());
       if (due > this.now()) await this.sleep(due - this.now());
-      if (state.blockedUntil > this.now()) throw cooldownError(state.blockedUntil, this.now());
+      if (state.blockedUntil > this.now()) throw cooldownError(state.blockedUntil, this.now(), state.denialKind);
       state.starts.push(this.now());
       try {
         const result = await request();
         state.failures = 0;
+        state.denialKind = 'UNKNOWN';
         return result;
       } catch (error) {
         if (isRateError(error)) {
@@ -50,6 +57,9 @@ export class HistoryBudget {
           const backoff = isDenied
             ? Math.min(2_700_000, 900_000 * 2 ** Math.min(state.failures++, 2))
             : Math.min(900_000, 60_000 * 2 ** Math.min(state.failures++, 4));
+          state.denialKind = /exceeding access rate|rate limit|too many requests|AB1021/i.test(error.message || '') ||
+            error.status === 429 ? 'BROKER_RATE_REJECTION'
+            : isDenied ? 'HTTP_403_OTHER' : 'UNKNOWN';
           state.blockedUntil = this.now() + Math.max(backoff, error.retryAfterMs || 0);
           error.retryAt = state.blockedUntil;
           error.retryAfterMs = state.blockedUntil - this.now();
