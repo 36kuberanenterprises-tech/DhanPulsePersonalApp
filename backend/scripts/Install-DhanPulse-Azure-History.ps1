@@ -44,10 +44,19 @@ if ($LASTEXITCODE -ne 0) { throw "Unable to identify rollback commit." }
 
 Run-Checked 'git' @('-C', $RepoRoot, 'fetch', 'origin', $Branch)
 $stage = Join-Path $env:TEMP 'DhanPulseHistoryDiagnosticsStage'
+$targetCommit = (git -C $RepoRoot rev-parse ("origin/" + $Branch)).Trim()
+if ($LASTEXITCODE -ne 0) { throw "Unable to resolve the desired remote revision." }
 if (Test-Path $stage) {
-    throw "Staging path already exists: $stage. Inspect it before retrying. Production was not changed."
+    if (-not (Test-Path (Join-Path $stage '.git'))) {
+        throw "Staging path exists but is not a Git worktree: $stage"
+    }
+    $stagedCommit = (git -C $stage rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $stagedCommit -ne $targetCommit) {
+        throw "Existing stage is out of date. Review it before retrying; production was not changed."
+    }
+} else {
+    Run-Checked 'git' @('-C', $RepoRoot, 'worktree', 'add', '--detach', $stage, ("origin/" + $Branch))
 }
-Run-Checked 'git' @('-C', $RepoRoot, 'worktree', 'add', '--detach', $stage, ("origin/" + $Branch))
 try {
     Push-Location (Join-Path $stage 'backend')
     try {
