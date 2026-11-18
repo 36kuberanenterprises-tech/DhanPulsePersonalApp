@@ -5,7 +5,7 @@ import { HistoryChunks } from './history-chunks.js';
 const IST_MS = 330 * 60 * 1000;
 const MAX_DAYS = { ONE_MINUTE:30, THREE_MINUTE:60, FIVE_MINUTE:100, TEN_MINUTE:100, FIFTEEN_MINUTE:200 };
 const MINUTES = { ONE_MINUTE:1, THREE_MINUTE:3, FIVE_MINUTE:5, TEN_MINUTE:10, FIFTEEN_MINUTE:15 };
-const chunks = new HistoryChunks();
+const chunks = new HistoryChunks({ persistent: true });
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const round = (v,d=2) => Number.isFinite(v) ? Number(v.toFixed(d)) : null;
@@ -67,7 +67,7 @@ export async function historicalCandles(session,symbol,interval,years,choice=nul
       });
     } catch (error) {
       const seconds=error.retryAt ? Math.max(1, Math.ceil((error.retryAt-Date.now())/1000)) : null;
-      throw Object.assign(new Error(`${symbol} ${interval} history: ${error.message}. ${completedChunks} chunks completed; successful chunks are temporarily cached. ${seconds ? `Retry after ${seconds} seconds.` : 'Retry when broker history is available.'}`),
+      throw Object.assign(new Error(`${symbol} ${interval} history: ${error.message}. ${completedChunks} chunks completed; successful past-session chunks are reused from private disk where available. ${seconds ? `Retry after ${seconds} seconds.` : 'Retry when broker history is available.'}`),
         { status:error.status, retryAt:error.retryAt, retryAfterMs:error.retryAfterMs, rateLimited:error.rateLimited });
     }
     rows.push(...fetched);
