@@ -124,7 +124,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var backgroundMonitorDetail by mutableStateOf(nativeMonitor.statusDetail)
         private set
-    var backgroundMonitorUpdatedAt by mutableLongStateOf(nativeMonitor.statusUpdatedAt)
+    var backgroundMonitorUpdatedAt by mutableStateOf(nativeMonitor.statusUpdatedAt)
         private set
     var backgroundMonitorMessage by mutableStateOf<String?>(null)
         private set
@@ -300,7 +300,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var account by mutableStateOf<AccountSummary?>(null)
     var accountError by mutableStateOf<String?>(null)
         private set
-    var accountUpdatedAt by mutableLongStateOf(0L)
+    var accountUpdatedAt by mutableStateOf(0L)
         private set
     var loading by mutableStateOf(false)
     // Login has its own state: market refreshes also use loading.
