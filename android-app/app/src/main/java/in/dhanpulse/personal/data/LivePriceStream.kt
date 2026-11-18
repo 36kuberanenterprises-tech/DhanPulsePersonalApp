@@ -9,6 +9,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+
+class LiveStreamHttpException(val httpStatus: Int, details: String) : IOException("Live stream HTTP $httpStatus: $details")
 import java.util.concurrent.TimeUnit
 
 data class LivePriceEvent(
@@ -38,7 +40,14 @@ class LivePriceStream(private val backendUrl: String) {
             val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
             try {
                 call.execute().use { response ->
-                    if (!response.isSuccessful) throw IOException("Price stream HTTP " + response.code)
+                    if (!response.isSuccessful) {
+                        // The backend can report a missing MCX token, expired session, or unavailable feed.
+                        // Limit error-body reads: no private headers or session IDs are logged or displayed.
+                        val message = response.body?.string()?.take(240) ?: "No server details"
+                        val summary = runCatching { gson.fromJson(message, Map::class.java)["error"]?.toString() }
+                            .getOrNull()?.take(160) ?: "Backend rejected the stream request"
+                        throw LiveStreamHttpException(response.code, summary)
+                    }
                     val source = response.body?.source() ?: throw IOException("Price stream has no data")
                     // Heartbeat/comment traffic can keep HTTP open even when prices have stopped.
                     // Restart only the read-only stream after a bounded interval without a LIVE quote.
