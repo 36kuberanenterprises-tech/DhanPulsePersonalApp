@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111, fix/build83-video-error-diagnostics-20261113, fix/build83-mobile-stream-stall-recovery-20261118, fix/build85-connectivity-status-audit-20261118, fix/build86-monitor-notifications-history-20261118 ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111, fix/build83-video-error-diagnostics-20261113, fix/build83-mobile-stream-stall-recovery-20261118, fix/build85-connectivity-status-audit-20261118, fix/build86-monitor-notifications-history-20261118, fix/build87-integrated-stream-monitor-20261118 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -86,29 +86,29 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 86'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 87'"
 
       - name: Rename APK
         id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build86-Market-Notifications.apk"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build87-Integrated-Monitor.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build86-Test-APK
+          name: DhanPulse-Monitor-Build87-Test-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build86-Market-Notifications.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build87-Integrated-Monitor.apk
           if-no-files-found: error
           retention-days: 30
 
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build86-monitor-notifications-history-20261118'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build87-integrated-stream-monitor-20261118'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -117,16 +117,16 @@ jobs:
       - name: Download tested APK
         uses: actions/download-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build86-Test-APK
+          name: DhanPulse-Monitor-Build87-Test-APK
 
       - name: Publish direct Build 83 APK link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="DhanPulse-v2.9.7-Build86-Market-Notifications.apk"
+          apk="DhanPulse-v2.9.7-Build87-Integrated-Monitor.apk"
           test -s "$apk"
-          tag="build86-market-notifications-${GITHUB_SHA:0:7}"
+          tag="build87-integrated-monitor-${GITHUB_SHA:0:7}"
           gh release create "$tag" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DhanPulse Build 86 Market Notifications Preview" \
-            --notes "Build 86 updates monitored selected index notification with verified quote freshness, and improves broker history diagnosis after backtest errors. Broker 403 remains an Azure-side restriction until verified. Azure backend deployment and physical device tests remain pending; broker HTTP 403 is not bypassed." \
+            --title "DhanPulse Build 87 Integrated Monitor Preview" \
+            --notes "Build 87 integrates selected symbol notifications with precise live Market/MCX stream error diagnosis and recovery. Historical backend changes require separate verified Azure deployment. Broker 403 remains an Azure-side restriction until verified. Azure backend deployment and physical device tests remain pending; broker HTTP 403 is not bypassed." \
             --prerelease
