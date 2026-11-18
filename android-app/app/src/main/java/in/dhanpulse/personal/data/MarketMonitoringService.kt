@@ -169,6 +169,8 @@ class MarketMonitoringService : Service() {
 
     private fun status(label: String, detail: String) {
         monitorState.status = label
+        monitorState.statusDetail = detail
+        monitorState.statusUpdatedAt = System.currentTimeMillis()
         if (monitorState.hasVisibleApp()) {
             publishSelectedNotification()
             return
