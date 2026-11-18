@@ -452,6 +452,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    override fun onCleared() {
+        unregisterConnectivityRecovery()
+        super.onCleared()
+    }
+
     fun onAppBackground() {
         unregisterConnectivityRecovery()
         nativeMonitor.uiVisible = false
