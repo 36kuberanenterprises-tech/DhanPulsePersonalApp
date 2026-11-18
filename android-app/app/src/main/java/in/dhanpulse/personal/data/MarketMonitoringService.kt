@@ -346,7 +346,7 @@ class MarketMonitoringService : Service() {
         }
         val feed = LivePriceStream(backend)
         while (scope.isActive && monitorState.requested) {
-            if (monitorState.hasVisibleApp() || validSession(secure) == null) {
+            if ((monitorState.hasVisibleApp() && monitorState.uiPriceStreamActive) || validSession(secure) == null) {
                 delay(3_000L)
                 continue
             }
@@ -359,7 +359,7 @@ class MarketMonitoringService : Service() {
             }
             try {
                 feed.collect(validSession(secure) ?: break, symbol) { price ->
-                    if (monitorState.hasVisibleApp() || !monitorState.requested ||
+                    if ((monitorState.hasVisibleApp() && monitorState.uiPriceStreamActive) || !monitorState.requested ||
                         monitorState.selectedSymbol != symbol)
                         throw CancellationException("Visible app or symbol change")
                     monitorState.recordSelectedQuote(symbol, price.status, price.price)
