@@ -16,6 +16,7 @@ import com.google.gson.Gson
 import `in`.dhanpulse.personal.data.ApiFactory
 import `in`.dhanpulse.personal.data.DhanPulseApi
 import `in`.dhanpulse.personal.data.SecurePrefs
+import `in`.dhanpulse.personal.data.LiveStreamHttpException
 import `in`.dhanpulse.personal.data.LivePriceStream
 import `in`.dhanpulse.personal.data.LivePriceEvent
 import `in`.dhanpulse.personal.data.MarketMonitorStore
@@ -279,6 +280,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     var livePriceEvent by mutableStateOf<LivePriceEvent?>(null)
         private set
     var liveStreamStatus by mutableStateOf("CONNECTING")
+        private set
+    var liveStreamMessage by mutableStateOf<String?>(null)
         private set
     private var livePriceArrivedAt = 0L
     private var liveStreamJob: Job? = null
@@ -2005,6 +2008,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val symbol = selectedSymbol
+        liveStreamMessage = null
         liveStreamStatus = "CONNECTING"
         nativeMonitor.uiPriceStreamActive = true
         nativeMonitor.recordSelectedQuote(symbol, "CONNECTING", null)
@@ -2016,11 +2020,13 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         withContext(Dispatchers.Main) {
                             if (sessionId == session && selectedSymbol == symbol && !stocksVisible) {
                                 liveStreamStatus = event.status
+                                if (event.message != null) liveStreamMessage = event.message.take(160)
                                 nativeMonitor.recordSelectedQuote(symbol, event.status, event.price)
                                 refreshSelectedNotification()
                                 if (event.status == "LIVE" && event.price != null && event.price > 0) {
                                     livePriceArrivedAt = SystemClock.elapsedRealtime()
                                     livePriceEvent = event
+                                    liveStreamMessage = null
                                     retryMs = 1500L
                                 } else {
                                     livePriceEvent = null
@@ -2032,18 +2038,23 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     throw e
                 } catch (e: Exception) {
                     livePriceEvent = null
+                    liveStreamMessage = (e.message ?: e.javaClass.simpleName).take(160)
                     liveStreamStatus = when {
                         connectionCallbackRegistered && lastNetworkReady == false -> "NETWORK_OFFLINE"
-                        e.message?.contains("HTTP 401") == true -> "SESSION_EXPIRED"
+                        e is LiveStreamHttpException && e.httpStatus == 401 -> "SESSION_EXPIRED"
+                        e is LiveStreamHttpException && e.httpStatus == 400 -> "INVALID_INSTRUMENT"
+                        e is LiveStreamHttpException && e.httpStatus == 403 -> "BROKER_RESTRICTED"
+                        e is LiveStreamHttpException && e.httpStatus == 503 -> "BROKER_UNAVAILABLE"
                         e is java.net.UnknownHostException || e is java.net.ConnectException -> "SERVER_UNREACHABLE"
                         else -> "DELAYED"
                     }
                     nativeMonitor.recordSelectedQuote(symbol, liveStreamStatus, null)
                     refreshSelectedNotification(force = true)
                 }
+                if (liveStreamStatus in setOf("SESSION_EXPIRED", "INVALID_INSTRUMENT", "BROKER_RESTRICTED")) break
                 if (isActive) {
                     livePriceEvent = null
-                    if (liveStreamStatus !in setOf("NETWORK_OFFLINE", "SESSION_EXPIRED", "SERVER_UNREACHABLE")) {
+                    if (liveStreamStatus !in setOf("NETWORK_OFFLINE", "SERVER_UNREACHABLE", "BROKER_UNAVAILABLE")) {
                         liveStreamStatus = "RECONNECTING"
                     }
                     delay(retryMs)
@@ -2059,6 +2070,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         nativeMonitor.uiPriceStreamActive = false
         livePriceEvent = null
         liveStreamStatus = "STOPPED"
+        liveStreamMessage = null
     }
 
     fun stopAutoRefresh() {
