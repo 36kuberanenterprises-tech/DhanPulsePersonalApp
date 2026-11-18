@@ -2161,8 +2161,16 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                     Text("Like Crypto DhanPulse: a native Android service continues checking NSE, stocks and MCX after you minimise the app or lock the screen.",
                         color = Muted, style = MaterialTheme.typography.bodySmall)
                     Text("Status: " + vm.backgroundMonitorStatus,
-                        color = if (vm.backgroundMonitorRequested) Green else Amber,
+                        color = if (vm.backgroundMonitorStatus in setOf("LIVE", "SETUP READY", "STOCK SETUP", "LIVE MOVERS")) Green else Amber,
                         fontWeight = FontWeight.Bold)
+                    if (vm.backgroundMonitorDetail.isNotBlank()) {
+                        Text("Last check: " + vm.backgroundMonitorDetail,
+                            color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (vm.backgroundMonitorStatus == "DATA NEEDED") {
+                        Text("This means the selected instrument lacks verified fresh candle or quote evidence. Monitoring remains on, but no trade call is confirmed.",
+                            color = Amber, style = MaterialTheme.typography.bodySmall)
+                    }
                     Text("Persistent notification with Stop action. Alerts are read only. No automatic trading.",
                         color = Muted, style = MaterialTheme.typography.bodySmall)
                     Text("Android 15 and newer limits continuous data sync service time. After the limit, reopen the app. Force Stop and expired broker login stop monitoring.",
@@ -2195,7 +2203,14 @@ private fun AccountSection(vm: DhanPulseViewModel) {
                 }
             }
         }
+        if (vm.accountError != null) item {
+            InfoStrip("Account refresh not verified", vm.accountError.orEmpty() +
+                if (vm.accountUpdatedAt > 0L) " • Previous values remain displayed and may be outdated." else " • No verified account balance has been loaded.")
+        }
         vm.account?.let { item { AccountCard(it, vm::fetchAccount) } }
+        if (vm.account == null && vm.accountError == null) item {
+            InfoStrip("Account loading", "Checking available cash and P&L with Angel One.")
+        }
         item { OrderGatewayCard(vm) }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
