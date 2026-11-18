@@ -9,9 +9,9 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class LiveStreamHttpException(val httpStatus: Int, details: String) : IOException("Live stream HTTP $httpStatus: $details")
-import java.util.concurrent.TimeUnit
 
 data class LivePriceEvent(
     val symbol: String = "",
