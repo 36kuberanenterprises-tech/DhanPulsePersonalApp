@@ -40,11 +40,22 @@ class LivePriceStream(private val backendUrl: String) {
                 call.execute().use { response ->
                     if (!response.isSuccessful) throw IOException("Price stream HTTP " + response.code)
                     val source = response.body?.source() ?: throw IOException("Price stream has no data")
+                    // Heartbeat/comment traffic can keep HTTP open even when prices have stopped.
+                    // Restart only the read-only stream after a bounded interval without a LIVE quote.
+                    var lastLiveAt = android.os.SystemClock.elapsedRealtime()
                     while (currentCoroutineContext().isActive) {
                         val line = source.readUtf8Line() ?: break
                         if (line.startsWith("data: ")) {
                             val event = runCatching { gson.fromJson(line.substring(6), LivePriceEvent::class.java) }.getOrNull()
-                            if (event != null) onEvent(event)
+                            if (event != null) {
+                                if (event.status == "LIVE" && event.price != null && event.price > 0) {
+                                    lastLiveAt = android.os.SystemClock.elapsedRealtime()
+                                }
+                                onEvent(event)
+                            }
+                        }
+                        if (android.os.SystemClock.elapsedRealtime() - lastLiveAt >= 90_000L) {
+                            throw IOException("Live price stream stalled: no LIVE quotes for 90 seconds")
                         }
                     }
                 }
