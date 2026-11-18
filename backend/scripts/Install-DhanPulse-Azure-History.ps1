@@ -42,10 +42,17 @@ if ($dirty.Count -gt 0) {
 $previous = (git -C $RepoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw "Unable to identify rollback commit." }
 
-Run-Checked 'git' @('-C', $RepoRoot, 'fetch', 'origin', $Branch)
+# A narrow or single-ref Git checkout can fetch only into FETCH_HEAD.
+# Explicitly create/update this one remote-tracking ref before resolving it.
+$remoteRef = "refs/remotes/origin/" + $Branch
+$sourceRef = "refs/heads/" + $Branch
+Run-Checked 'git' @('-C', $RepoRoot, 'fetch', '--no-tags', 'origin', ($sourceRef + ':' + $remoteRef))
+$resolved = @(git -C $RepoRoot rev-parse --verify ($remoteRef + '^{commit}'))
+if ($LASTEXITCODE -ne 0 -or $resolved.Count -ne 1) {
+    throw "Cannot resolve the fetched DhanPulse history branch. Production has not been changed."
+}
+$targetCommit = $resolved[0].Trim()
 $stage = Join-Path $env:TEMP 'DhanPulseHistoryDiagnosticsStage'
-$targetCommit = (git -C $RepoRoot rev-parse ("origin/" + $Branch)).Trim()
-if ($LASTEXITCODE -ne 0) { throw "Unable to resolve the desired remote revision." }
 if (Test-Path $stage) {
     if (-not (Test-Path (Join-Path $stage '.git'))) {
         throw "Staging path exists but is not a Git worktree: $stage"
@@ -55,7 +62,7 @@ if (Test-Path $stage) {
         throw "Existing stage is out of date. Review it before retrying; production was not changed."
     }
 } else {
-    Run-Checked 'git' @('-C', $RepoRoot, 'worktree', 'add', '--detach', $stage, ("origin/" + $Branch))
+    Run-Checked 'git' @('-C', $RepoRoot, 'worktree', 'add', '--detach', $stage, $targetCommit)
 }
 try {
     Push-Location (Join-Path $stage 'backend')
@@ -73,16 +80,23 @@ if (-not $Apply) {
     exit 0
 }
 
-$tcp = Get-NetTCPConnection -State Listen -LocalPort 3100 -ErrorAction SilentlyContinue
-if ($tcp) {
-    throw "Port 3100 is still listening. Stop ONLY the existing DhanPulse backend before applying; no production changes made."
+$tcp = @(Get-NetTCPConnection -State Listen -LocalPort 3100 -ErrorAction SilentlyContinue)
+if ($tcp.Count -gt 0) {
+    $owners = @($tcp | Select-Object -ExpandProperty OwningProcess -Unique)
+    foreach ($ownerPid in $owners) {
+        $proc = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+        if ($proc) {
+            Write-Warning ("Port 3100 listener PID {0}, process {1}; this script will NOT terminate it." -f $ownerPid, $proc.ProcessName)
+        }
+    }
+    throw "Port 3100 is in use. Inspect its owner and stop ONLY DhanPulse through the existing service/launcher controls. No deployment occurred."
 }
 
 $rollbackFile = Join-Path $env:TEMP 'DhanPulseAzurePreviousCommit.txt'
 Set-Content -Path $rollbackFile -Value $previous -Encoding UTF8
 Write-Host "Previous backend revision recorded in $rollbackFile"
 try {
-    Run-Checked 'git' @('-C', $RepoRoot, 'switch', '--detach', ("origin/" + $Branch))
+    Run-Checked 'git' @('-C', $RepoRoot, 'switch', '--detach', $targetCommit)
     Push-Location (Join-Path $RepoRoot 'backend')
     try {
         Run-Checked 'npm.cmd' @('ci', '--no-audit', '--no-fund')
