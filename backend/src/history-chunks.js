@@ -1,8 +1,10 @@
 // Retain successful research chunks when a later broker request fails. Errors
 // are never cached here: the shared broker limiter still owns the cooldown.
+import { readHistoryChunk, saveHistoryChunk } from './history-chunk-store.js';
 export class HistoryChunks {
-  constructor({ now = () => Date.now(), maxRows = 200_000 } = {}) {
+  constructor({ now = () => Date.now(), maxRows = 200_000, persistent = false, directory } = {}) {
     this.now = now; this.maxRows = maxRows; this.rows = 0;
+    this.persistent = persistent; this.directory = directory;
     this.cache = new Map(); this.pending = new Map();
   }
   async get(client, payload, load) {
@@ -12,7 +14,20 @@ export class HistoryChunks {
     if (hit && hit.until > this.now()) return hit.value;
     if (hit) { this.rows -= hit.value.length; this.cache.delete(key); }
     if (this.pending.has(key)) return this.pending.get(key);
-    const pending = Promise.resolve().then(load).then(value => {
+    const pending = (async () => {
+      if (this.persistent) {
+        try {
+          const restored = await readHistoryChunk(key, { directory: this.directory, now: this.now() });
+          if (restored) return restored;
+        } catch (e) { console.warn('RESEARCH_CHUNK_READ_FAILED', e?.code || 'READ_ERROR'); }
+      }
+      const value = await load();
+      if (this.persistent && Array.isArray(value) && value.length) {
+        try { await saveHistoryChunk(key, payload, value, { directory: this.directory, now: this.now() }); }
+        catch (e) { console.warn('RESEARCH_CHUNK_WRITE_FAILED', e?.code || 'WRITE_ERROR'); }
+      }
+      return value;
+    })().then(value => {
       if (!Array.isArray(value) || !value.length) return value;
       const end = Date.parse(payload.todate.replace(' ', 'T') + ':00+05:30');
       // A current-day chunk can contain an unfinished candle. Refresh it soon.
