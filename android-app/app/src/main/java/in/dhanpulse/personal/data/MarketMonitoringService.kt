@@ -141,9 +141,11 @@ class MarketMonitoringService : Service() {
         val same = monitorState.selectedPriceSymbol == symbol
         val time = monitorState.selectedPriceAt
         val age = now - time
-        val fresh = same && time > 0 && age in 0L..15_000L &&
+        val (nseOpen, mcxOpen) = marketHours()
+        val marketOpen = if (symbol in setOf("NIFTY", "BANKNIFTY", "SENSEX")) nseOpen else mcxOpen
+        val fresh = marketOpen && same && time > 0 && age in 0L..15_000L &&
             monitorState.selectedFeedStatus == "LIVE"
-        val status = if (fresh) "LIVE" else when {
+        val status = if (!marketOpen) "MARKET CLOSED" else if (fresh) "LIVE" else when {
             monitorState.selectedFeedStatus == "NETWORK_OFFLINE" -> "OFFLINE"
             monitorState.selectedFeedStatus == "SERVER_UNREACHABLE" -> "SERVER UNREACHABLE"
             monitorState.selectedFeedStatus == "SESSION_EXPIRED" -> "LOGIN REQUIRED"
