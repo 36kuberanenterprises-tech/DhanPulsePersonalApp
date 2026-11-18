@@ -1936,6 +1936,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 if (!marketOpen && liveStreamJob != null) stopLivePriceStream()
                 val anyMarketOpen = day in 1..5 && !time.isBefore(LocalTime.of(9, 0)) && time.isBefore(LocalTime.of(23, 30))
                 delay(if (anyMarketOpen) 3_000 else 60_000)
+                if (connectionCallbackRegistered && lastNetworkReady == false) {
+                    tick++
+                    continue
+                }
                 if (activeScreen == "STOCKS" && stocksVisible && tick % 10 == 0) {
                     // The stock scanner owns its history requests. Never run unrelated
                     // index and MCX candle scans behind this screen.
@@ -2003,13 +2007,20 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     livePriceEvent = null
-                    liveStreamStatus = if (connectionCallbackRegistered && lastNetworkReady == false) "NETWORK_OFFLINE" else "DELAYED"
+                    liveStreamStatus = when {
+                        connectionCallbackRegistered && lastNetworkReady == false -> "NETWORK_OFFLINE"
+                        e.message?.contains("HTTP 401") == true -> "SESSION_EXPIRED"
+                        e is java.net.UnknownHostException || e is java.net.ConnectException -> "SERVER_UNREACHABLE"
+                        else -> "DELAYED"
+                    }
                 }
                 if (isActive) {
                     livePriceEvent = null
-                    liveStreamStatus = if (connectionCallbackRegistered && lastNetworkReady == false) "NETWORK_OFFLINE" else "RECONNECTING"
+                    if (liveStreamStatus !in setOf("NETWORK_OFFLINE", "SESSION_EXPIRED", "SERVER_UNREACHABLE")) {
+                        liveStreamStatus = "RECONNECTING"
+                    }
                     delay(retryMs)
                     retryMs = (retryMs * 2).coerceAtMost(10_000L)
                 }
