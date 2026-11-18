@@ -2074,11 +2074,20 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     feed.collect(session, symbol) { event ->
                         withContext(Dispatchers.Main) {
                             if (sessionId == session && selectedSymbol == symbol && !stocksVisible) {
-                                liveStreamStatus = event.status
+                                val tickAt = runCatching {
+                                    Instant.parse(event.exchangeTime ?: "").toEpochMilli()
+                                }.getOrNull()
+                                val verifiedFresh = tickAt != null &&
+                                    System.currentTimeMillis() - tickAt in 0L..15_000L
+                                val validLive = event.status == "LIVE" && verifiedFresh &&
+                                    event.price != null && event.price > 0.0
+                                liveStreamStatus = if (event.status == "LIVE" && !verifiedFresh)
+                                    "DELAYED" else event.status
                                 if (event.message != null) liveStreamMessage = event.message.take(160)
-                                nativeMonitor.recordSelectedQuote(symbol, event.status, event.price)
+                                nativeMonitor.recordSelectedQuote(symbol, liveStreamStatus,
+                                    if (validLive) event.price else null)
                                 refreshSelectedNotification()
-                                if (event.status == "LIVE" && event.price != null && event.price > 0) {
+                                if (validLive) {
                                     livePriceArrivedAt = SystemClock.elapsedRealtime()
                                     livePriceEvent = event
                                     observeEarlyMove(event)
