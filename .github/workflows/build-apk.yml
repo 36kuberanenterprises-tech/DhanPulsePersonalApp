@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111, fix/build83-video-error-diagnostics-20261113 ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111, fix/build83-video-error-diagnostics-20261113, fix/build83-mobile-stream-stall-recovery-20261118 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -78,7 +78,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build verified video diagnostics APK
+      - name: Build Android diagnostics and mobile recovery APK
         working-directory: android-app
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 
@@ -86,29 +86,29 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 83'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 84'"
 
       - name: Rename APK
         id: apk_version
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build83-Video-Diagnostics.apk"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build84-Mobile-Recovery.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build83-Test-APK
+          name: DhanPulse-Monitor-Build84-Test-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build83-Video-Diagnostics.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build84-Mobile-Recovery.apk
           if-no-files-found: error
           retention-days: 30
 
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build83-video-error-diagnostics-20261113'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build83-mobile-stream-stall-recovery-20261118'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -117,16 +117,16 @@ jobs:
       - name: Download tested APK
         uses: actions/download-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build83-Test-APK
+          name: DhanPulse-Monitor-Build84-Test-APK
 
       - name: Publish direct Build 83 APK link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="DhanPulse-v2.9.7-Build83-Video-Diagnostics.apk"
+          apk="DhanPulse-v2.9.7-Build84-Mobile-Recovery.apk"
           test -s "$apk"
-          tag="build83-video-diagnostics-${GITHUB_SHA:0:7}"
+          tag="build84-mobile-recovery-${GITHUB_SHA:0:7}"
           gh release create "$tag" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DhanPulse Build 83 Video Diagnostics Preview" \
-            --notes "Build 83 displays read only Azure candle diagnostics, avoids historical backtests during an active cooldown, and shows Flow reconnect status. It preserves Build 81 market tabs and trading restrictions. Azure backend update required to expose diagnostics and reconnect functionality. Physical device testing is still required." \
+            --title "DhanPulse Build 84 Mobile Stream Recovery Preview" \
+            --notes "Build 84 adds Android network handoff recovery and stale stream restart, retaining Build 83 diagnostics. Azure backend deployment and physical device tests remain pending; broker HTTP 403 is not bypassed." \
             --prerelease
