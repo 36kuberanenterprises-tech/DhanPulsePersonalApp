@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/angel403-history-diagnostics-20261118
+      - fix/azure-persistent-backtest-chunks-20261118
     paths:
       - 'backend/**'
       - '.github/workflows/history-diagnostics-check.yml'
