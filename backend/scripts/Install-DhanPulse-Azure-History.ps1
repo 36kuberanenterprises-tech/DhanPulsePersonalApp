@@ -58,8 +58,14 @@ if (Test-Path $stage) {
         throw "Staging path exists but is not a Git worktree: $stage"
     }
     $stagedCommit = (git -C $stage rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or $stagedCommit -ne $targetCommit) {
-        throw "Existing stage is out of date. Review it before retrying; production was not changed."
+    if ($LASTEXITCODE -ne 0) { throw "Could not read staged commit; production unchanged." }
+    if ($stagedCommit -ne $targetCommit) {
+        $stageChanges = @(git -C $stage status --porcelain --untracked-files=normal)
+        if ($LASTEXITCODE -ne 0 -or $stageChanges.Count -gt 0) {
+            throw "Staged worktree has changes. Review them manually. Production was not modified."
+        }
+        Run-Checked 'git' @('-C', $stage, 'switch', '--detach', $targetCommit)
+        Write-Host "Updated clean staging worktree to tested Git revision $targetCommit"
     }
 } else {
     Run-Checked 'git' @('-C', $RepoRoot, 'worktree', 'add', '--detach', $stage, $targetCommit)
