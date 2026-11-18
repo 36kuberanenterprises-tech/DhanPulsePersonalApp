@@ -36,6 +36,22 @@ test('plain historical HTTP 403 pauses further history even without a rate-limit
   assert.equal(await budget.run('same-client', async () => {}, async () => 'Recovered'), 'Recovered');
 });
 
+test('plain HTTP 403 cooldown does not falsely claim a broker rate limit', async () => {
+  let now = 1000;
+  const budget = new HistoryBudget({ now: () => now, sleep: async ms => { now += ms; } });
+  await assert.rejects(
+    budget.run('not-rate', async () => {}, async () => {
+      throw Object.assign(new Error('Candle data: HTTP 403: Broker access denied'), { status: 403 });
+    }),
+    /403/
+  );
+  const e = await budget.run('not-rate', async () => {}, async () => 'should never send')
+    .catch(error => error);
+  assert.match(e.message, /HTTP 403 access denial/);
+  assert.doesNotMatch(e.message, /exceeding access rate/i);
+  assert.equal(e.rejectionKind, 'HTTP_403_OTHER');
+});
+
 test('minute and hour budgets reject excess calls before sending, even with small configured spacing', async () => {
   for (const [minute, hour, wait] of [[2, 10, 60_000], [10, 2, 3_600_000]]) {
     let now = 0, sent = 0;
