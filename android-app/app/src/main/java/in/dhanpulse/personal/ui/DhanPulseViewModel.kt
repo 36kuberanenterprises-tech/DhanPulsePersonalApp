@@ -1,7 +1,11 @@
 package `in`.dhanpulse.personal.ui
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +50,63 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val indiaZone = ZoneId.of("Asia/Kolkata")
     private val inactivityLimitMs = 60 * 60 * 1000L
     private var lastActivityWrite = 0L
+    private val connectivityManager = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private var connectionCallbackRegistered = false
+    private var connectionRecheckJob: Job? = null
+    private var lastNetworkReady: Boolean? = null
+    private val connectionCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = scheduleConnectionRecheck()
+        override fun onLost(network: Network) = scheduleConnectionRecheck()
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
+            scheduleConnectionRecheck()
+    }
+
+    private fun scheduleConnectionRecheck() {
+        viewModelScope.launch(Dispatchers.Main) {
+            connectionRecheckJob?.cancel()
+            connectionRecheckJob = launch {
+                delay(1_500L)
+                val network = connectivityManager.activeNetwork
+                val capabilities = network?.let { connectivityManager.getNetworkCapabilities(it) }
+                val ready = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true &&
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                if (lastNetworkReady == ready) return@launch
+                lastNetworkReady = ready
+                if (!appInForeground || sessionId == null) return@launch
+                if (!ready) {
+                    stopLivePriceStream()
+                    liveStreamStatus = "NETWORK_OFFLINE"
+                    livePriceEvent = null
+                } else {
+                    liveStreamStatus = "RECONNECTING"
+                    startLivePriceStream()
+                    if (activeScreen in setOf("MARKET", "MCX", "TRADE", "FLOW")) fetchAnalysis()
+                }
+            }
+        }
+    }
+
+    private fun registerConnectivityRecovery() {
+        if (connectionCallbackRegistered) return
+        try {
+            connectivityManager.registerDefaultNetworkCallback(connectionCallback)
+            connectionCallbackRegistered = true
+            lastNetworkReady = null
+            scheduleConnectionRecheck()
+        } catch (_: SecurityException) {
+            // Existing HTTP and live stream retries remain available.
+        }
+    }
+
+    private fun unregisterConnectivityRecovery() {
+        connectionRecheckJob?.cancel()
+        connectionRecheckJob = null
+        if (connectionCallbackRegistered) {
+            runCatching { connectivityManager.unregisterNetworkCallback(connectionCallback) }
+            connectionCallbackRegistered = false
+        }
+        lastNetworkReady = null
+    }
 
     var themeMode by mutableStateOf(
         displayPrefs.getString("theme_mode", "SYSTEM")?.takeIf { it in setOf("SYSTEM", "LIGHT", "DARK") } ?: "SYSTEM"
@@ -376,6 +437,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onAppForeground() {
+        registerConnectivityRecovery()
         nativeMonitor.uiVisible = true
         nativeMonitor.uiHeartbeatAt = System.currentTimeMillis()
         refreshBackgroundMonitorStatus()
@@ -391,6 +453,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onAppBackground() {
+        unregisterConnectivityRecovery()
         nativeMonitor.uiVisible = false
         if (appInForeground && sessionId != null) {
             sessionStore.lastUserActivity = System.currentTimeMillis()
@@ -1899,6 +1962,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private fun startLivePriceStream() {
         val session = sessionId ?: return
         stopLivePriceStream()
+        if (connectionCallbackRegistered && lastNetworkReady == false) {
+            liveStreamStatus = "NETWORK_OFFLINE"
+            return
+        }
         if (stocksVisible || stockOptionsVisible ||
             activeScreen !in setOf("MARKET", "MCX", "TRADE")) return
         val indiaTime = Instant.now().atZone(indiaZone)
@@ -1933,11 +2000,11 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                     throw e
                 } catch (_: Exception) {
                     livePriceEvent = null
-                    liveStreamStatus = "DELAYED"
+                    liveStreamStatus = if (connectionCallbackRegistered && lastNetworkReady == false) "NETWORK_OFFLINE" else "DELAYED"
                 }
                 if (isActive) {
                     livePriceEvent = null
-                    liveStreamStatus = "DELAYED"
+                    liveStreamStatus = if (connectionCallbackRegistered && lastNetworkReady == false) "NETWORK_OFFLINE" else "RECONNECTING"
                     delay(retryMs)
                     retryMs = (retryMs * 2).coerceAtMost(10_000L)
                 }
