@@ -149,6 +149,7 @@ export function historyAccessStatus(session) {
     retryAt: state.blockedUntil > now ? new Date(state.blockedUntil).toISOString() : null,
     retryAfterSeconds: state.blockedUntil > now ? Math.ceil((state.blockedUntil-now)/1000) : 0,
     consecutiveRejections: state.failures,
+    activeDenialKind: state.blockedUntil > now ? state.denialKind : null,
     requestsLastMinute: state.starts.filter(t => t > now-60_000).length,
     requestsLastHour: state.starts.filter(t => t > now-3_600_000).length,
     lastRequestAt: outcome.lastRequestAt || null,
