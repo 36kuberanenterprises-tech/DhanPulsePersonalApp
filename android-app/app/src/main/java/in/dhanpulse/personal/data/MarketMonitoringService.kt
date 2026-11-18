@@ -404,8 +404,12 @@ class MarketMonitoringService : Service() {
                     if ((monitorState.hasVisibleApp() && monitorState.uiPriceStreamActive) || !monitorState.requested ||
                         monitorState.selectedSymbol != symbol)
                         throw CancellationException("Visible app or symbol change")
-                    monitorState.recordSelectedQuote(symbol, price.status, price.price)
-                    if (price.status == "LIVE" && (price.price ?: 0.0) > 0) {
+                    val tickAt = runCatching { Instant.parse(price.exchangeTime ?: "").toEpochMilli() }.getOrNull()
+                    val tickFresh = tickAt != null && System.currentTimeMillis() - tickAt in 0L..15_000L
+                    val validLive = price.status == "LIVE" && tickFresh && (price.price ?: 0.0) > 0.0
+                    monitorState.recordSelectedQuote(symbol, if (validLive) "LIVE" else "DELAYED",
+                        if (validLive) price.price else null)
+                    if (validLive) {
                         monitorState.lastMarketDataAt = System.currentTimeMillis()
                         watchEarlyPriceMove(price)
                     }
