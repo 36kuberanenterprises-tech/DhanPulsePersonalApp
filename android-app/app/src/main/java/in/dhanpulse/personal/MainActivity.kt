@@ -415,6 +415,9 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                             vm.liveStreamStatus == "NETWORK_OFFLINE" && section in setOf("MARKET","MCX","TRADE") -> "NETWORK OFFLINE"
                             vm.liveStreamStatus == "SESSION_EXPIRED" && section in setOf("MARKET","MCX","TRADE") -> "SESSION EXPIRED"
                             vm.liveStreamStatus == "SERVER_UNREACHABLE" && section in setOf("MARKET","MCX","TRADE") -> "SERVER UNREACHABLE"
+                            vm.liveStreamStatus == "INVALID_INSTRUMENT" && section in setOf("MARKET","MCX","TRADE") -> "INVALID CONTRACT"
+                            vm.liveStreamStatus == "BROKER_RESTRICTED" && section in setOf("MARKET","MCX","TRADE") -> "STREAM 403"
+                            vm.liveStreamStatus == "BROKER_UNAVAILABLE" && section in setOf("MARKET","MCX","TRADE") -> "BROKER UNAVAILABLE"
                             vm.liveStreamStatus == "RECONNECTING" && section in setOf("MARKET","MCX","TRADE") && vm.analysis?.dataFresh != true -> "RECONNECTING"
                             moverActive && status == "RUNNING" -> "SEARCHING MOVERS"
                             moverActive && status == "COMPLETE" -> "MOVERS READY"
@@ -447,6 +450,11 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                     }
                     Text((vm.profile?.name ?: "Angel One connected") + if (vm.stockOptionsVisible) " • Stock Options" else if (vm.stocksVisible) " • NSE Stocks" else if (section == "RESEARCH") " • Research" else if (section == "ACCOUNT" || section == "POSITIONS") " • Account" else if (vm.selectedMarket == "MCX") " • MCX" else "", color = Muted, fontSize = 10.sp)
                     Text("v${BuildConfig.VERSION_NAME} • Build ${BuildConfig.VERSION_CODE}", color = Muted, fontSize = 9.sp)
+                    if (section in setOf("MARKET", "MCX", "TRADE") && vm.liveStreamStatus != "LIVE") {
+                        vm.liveStreamMessage?.let { reason ->
+                            Text("Stream: " + reason.take(110), color = Amber, fontSize = 10.sp, maxLines = 2)
+                        }
+                    }
                 }
             }
             Surface(onClick = {
