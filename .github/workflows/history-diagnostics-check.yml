@@ -1,0 +1,33 @@
+name: Check SmartAPI history diagnostics
+
+on:
+  push:
+    branches:
+      - fix/angel403-history-diagnostics-20261118
+    paths:
+      - 'backend/**'
+      - '.github/workflows/history-diagnostics-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --no-audit --no-fund
+      - name: Check syntax
+        working-directory: backend
+        run: node --check src/angel.js
+      - name: Run backend tests
+        working-directory: backend
+        run: npm test
