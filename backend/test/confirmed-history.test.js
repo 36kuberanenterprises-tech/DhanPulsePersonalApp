@@ -1,6 +1,21 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { confirmedBrokerCandles, brokerHistoryFresh } from '../src/analysis.js';
+
+// Each test process uses an isolated broker candle cache. Reusing the Windows
+// LocalAppData cache can load candles saved by a previous test run and make the
+// same deterministic fixtures fail only on the Azure VM.
+const previousCacheDirectory = process.env.DHANPULSE_CANDLE_CACHE_DIR;
+const fixtureCacheDirectory = await mkdtemp(join(tmpdir(), 'dhanpulse-history-test-'));
+process.env.DHANPULSE_CANDLE_CACHE_DIR = fixtureCacheDirectory;
+after(async () => {
+  if (previousCacheDirectory == null) delete process.env.DHANPULSE_CANDLE_CACHE_DIR;
+  else process.env.DHANPULSE_CANDLE_CACHE_DIR = previousCacheDirectory;
+  await rm(fixtureCacheDirectory, { recursive: true, force: true });
+});
 
 test('every market requires a completed current broker candle, not merely a fresh quote', () => {
   const now = new Date('2026-10-15T04:05:25Z'); // 09:35:25 IST
