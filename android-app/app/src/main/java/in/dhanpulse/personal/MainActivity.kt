@@ -3254,7 +3254,16 @@ private fun StatusPill(text: String, color: Color) {
 private fun ErrorStrip(message: String) {
     Surface(color = Red.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Red.copy(alpha = 0.25f))) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text("Connection issue", color = Red, fontWeight = FontWeight.Bold)
+            val title = when {
+                message.contains("cooldown", ignoreCase = true) ||
+                    message.contains("exceeding access rate", ignoreCase = true) -> "Broker history cooldown"
+                message.contains("HTTP 403", ignoreCase = true) ||
+                    message.contains("access denied", ignoreCase = true) -> "Broker historical access denied"
+                message.contains("history", ignoreCase = true) ||
+                    message.contains("candles", ignoreCase = true) -> "Historical data unavailable"
+                else -> "Connection issue"
+            }
+            Text(title, color = Red, fontWeight = FontWeight.Bold)
             Text(message, color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
