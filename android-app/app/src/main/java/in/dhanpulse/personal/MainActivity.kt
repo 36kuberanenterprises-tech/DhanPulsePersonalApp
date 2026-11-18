@@ -455,6 +455,11 @@ private fun TraderHeader(vm: DhanPulseViewModel, section: String) {
                             Text("Stream: " + reason.take(110), color = Amber, fontSize = 10.sp, maxLines = 2)
                         }
                     }
+                    if (section in setOf("MARKET", "MCX", "TRADE")) {
+                        vm.earlyMoveWatch?.let { message ->
+                            Text(message, color = Amber, fontSize = 11.sp, maxLines = 3)
+                        }
+                    }
                 }
             }
             Surface(onClick = {
