@@ -156,7 +156,15 @@ export function historyAccessStatus(session) {
     lastRejectAt: outcome.lastRejectAt || null,
     lastHttpStatus: outcome.lastHttpStatus || null,
     lastBrokerCode: outcome.lastBrokerCode || null,
-    note: 'Local process counters only. Other SmartAPI apps and broker account limits are not observable.' };
+    lastRejectionKind: outcome.lastRejectionKind || null,
+    lastRejectedExchange: outcome.lastRejectedExchange || null,
+    lastRejectedInterval: outcome.lastRejectedInterval || null,
+    publicIpHeader: REGISTERED_PUBLIC_IP,
+    publicIpHeaderSource: process.env.CLIENT_PUBLIC_IP ? 'CONFIGURED' : 'LEGACY_DEFAULT',
+    observedEgressIp: egressIpCache.ip,
+    publicIpComparison: !egressIpCache.ip ? 'NOT_CHECKED'
+      : REGISTERED_PUBLIC_IP === egressIpCache.ip ? 'MATCH' : 'MISMATCH',
+    note: 'Local counters only. Other SmartAPI apps and broker account limits are not observable. An IP header mismatch needs investigation; the header does not change Azure egress.' };
 }
 
 export async function candleData(session, payload) {
@@ -190,6 +198,11 @@ export async function candleData(session, payload) {
       outcome.lastRejectAt = new Date().toISOString();
       outcome.lastHttpStatus = error.status || null;
       outcome.lastBrokerCode = error.brokerCode || null;
+      const reason = String(error.message || '');
+      outcome.lastRejectionKind = /exceeding access rate|rate limit|too many requests|AB1021/i.test(reason)
+        ? 'BROKER_RATE_REJECTION' : error.status === 403 ? 'HTTP_403_OTHER' : 'OTHER_ERROR';
+      outcome.lastRejectedExchange = payload.exchange;
+      outcome.lastRejectedInterval = payload.interval;
       console.warn('CANDLE_REJECTED', JSON.stringify({
         exchange: payload.exchange, symboltoken: payload.symboltoken, interval: payload.interval,
         fromdate: payload.fromdate, todate: payload.todate,
