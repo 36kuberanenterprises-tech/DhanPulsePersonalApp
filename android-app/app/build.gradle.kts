@@ -14,7 +14,7 @@ android {
         applicationId = "in.dhanpulse.personal.stable"
         minSdk = 26
         targetSdk = 35
-        versionCode = 85
+        versionCode = 86
         versionName = appVersion
     }
 
@@ -22,8 +22,8 @@ android {
         getByName("debug") {
             // Distinct installable preview until the original Stable signing key is available.
             // It cannot replace an existing Stable installation or read its private data.
-            applicationIdSuffix = ".monitor85"
-            manifestPlaceholders["appLabel"] = "DhanPulse Monitor 85"
+            applicationIdSuffix = ".monitor86"
+            manifestPlaceholders["appLabel"] = "DhanPulse Monitor 86"
         }
         getByName("release") {
             manifestPlaceholders["appLabel"] = "DhanPulse Stable"
