@@ -602,14 +602,31 @@ private fun BrokerHistoryDiagnosticCard(vm: DhanPulseViewModel) {
                         (h.lastBrokerCode?.let { " • Broker code: $it" } ?: ""),
                         color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                h != null -> Text("No active cooldown recorded by this Azure process. Broker access is not guaranteed.",
-                    color = Muted, style = MaterialTheme.typography.bodySmall)
+                h != null -> {
+                    val backtestCooldown = vm.backtestError?.contains("cooldown", ignoreCase = true) == true ||
+                        vm.backtestError?.contains("access rate", ignoreCase = true) == true
+                    Text(if (backtestCooldown)
+                        "Backtest reported a history cooldown, but this diagnostic snapshot does not show one. Check again to refresh the backend status. The two responses may be from different processes or times."
+                    else "No active cooldown in this diagnostic snapshot. This does not establish that broker historical access is available.",
+                        color = if (backtestCooldown) Amber else Muted,
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 vm.historyDiagnosticsError != null -> Text(vm.historyDiagnosticsError.orEmpty(),
                     color = Amber, style = MaterialTheme.typography.bodySmall)
                 else -> Text("Checking backend history access without sending any broker requests.",
                     color = Muted, style = MaterialTheme.typography.bodySmall)
             }
+            if (d?.checkedAt != null) Text("Diagnostics checked: ${d.checkedAt} UTC",
+                color = Muted, fontSize = 10.sp)
             if (h != null) {
+                if (h.lastRejectionKind != null) {
+                    Text("Rejection type: ${h.lastRejectionKind} • ${h.lastRejectedExchange ?: "Unknown exchange"} • ${h.lastRejectedInterval ?: "Unknown interval"}",
+                        color = Amber, fontSize = 10.sp)
+                }
+                if (h.publicIpHeaderSource != null) {
+                    Text("Azure IP header: ${h.publicIpHeaderSource} • Egress comparison: ${h.publicIpComparison ?: "NOT CHECKED"}",
+                        color = Muted, fontSize = 10.sp)
+                }
                 Text("Last accepted history: ${h.lastSuccessAt ?: "Not recorded"}",
                     color = Muted, fontSize = 10.sp)
                 Text("Last rejection: ${h.lastRejectAt ?: "Not recorded"}",
@@ -3237,7 +3254,16 @@ private fun StatusPill(text: String, color: Color) {
 private fun ErrorStrip(message: String) {
     Surface(color = Red.copy(alpha = 0.10f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Red.copy(alpha = 0.25f))) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text("Connection issue", color = Red, fontWeight = FontWeight.Bold)
+            val title = when {
+                message.contains("cooldown", ignoreCase = true) ||
+                    message.contains("exceeding access rate", ignoreCase = true) -> "Broker history cooldown"
+                message.contains("HTTP 403", ignoreCase = true) ||
+                    message.contains("access denied", ignoreCase = true) -> "Broker historical access denied"
+                message.contains("history", ignoreCase = true) ||
+                    message.contains("candles", ignoreCase = true) -> "Historical data unavailable"
+                else -> "Connection issue"
+            }
+            Text(title, color = Red, fontWeight = FontWeight.Bold)
             Text(message, color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }

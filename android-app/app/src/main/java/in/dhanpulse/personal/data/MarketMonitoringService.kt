@@ -36,6 +36,7 @@ class MarketMonitoringService : Service() {
     companion object {
         const val ACTION_START = "in.dhanpulse.personal.monitor.START"
         const val ACTION_STOP = "in.dhanpulse.personal.monitor.STOP"
+        const val ACTION_REFRESH = "in.dhanpulse.personal.monitor.REFRESH"
         private const val STATUS_CHANNEL = "dhanpulse_market_status"
         private const val ALERT_CHANNEL = "dhanpulse_market_alerts"
         private const val STATUS_ID = 7301
@@ -74,6 +75,10 @@ class MarketMonitoringService : Service() {
             stopMonitor("Monitoring stopped by user", true)
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_REFRESH && scanJob?.isActive == true) {
+            publishSelectedNotification(force = true)
+            return START_STICKY
+        }
         if (intent?.action != ACTION_START && !monitorState.requested) {
             stopSelf()
             return START_NOT_STICKY
@@ -91,7 +96,7 @@ class MarketMonitoringService : Service() {
         startedAt = System.currentTimeMillis()
         try {
             ServiceCompat.startForeground(this, STATUS_ID,
-                notification("DhanPulse • monitoring", "NSE and MCX background monitoring enabled"),
+                notification("DhanPulse • " + monitorState.selectedSymbol + " • CONNECTING", "Waiting for verified market data"),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } catch (e: Exception) {
             monitorState.stop("Android blocked background service", false)
@@ -128,12 +133,50 @@ class MarketMonitoringService : Service() {
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopIntent())
             .build()
 
+    private fun publishSelectedNotification(force: Boolean = false) {
+        if (!monitorState.running || !monitorState.requested) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastNoticeAt < 5_000L) return
+        val symbol = monitorState.selectedSymbol
+        val same = monitorState.selectedPriceSymbol == symbol
+        val time = monitorState.selectedPriceAt
+        val age = now - time
+        val (nseOpen, mcxOpen) = marketHours()
+        val marketOpen = if (symbol in setOf("NIFTY", "BANKNIFTY", "SENSEX")) nseOpen else mcxOpen
+        val fresh = marketOpen && same && time > 0 && age in 0L..15_000L &&
+            monitorState.selectedFeedStatus == "LIVE"
+        val status = if (!marketOpen) "MARKET CLOSED" else if (fresh) "LIVE" else when {
+            monitorState.selectedFeedStatus == "NETWORK_OFFLINE" -> "OFFLINE"
+            monitorState.selectedFeedStatus == "SERVER_UNREACHABLE" -> "SERVER UNREACHABLE"
+            monitorState.selectedFeedStatus == "SESSION_EXPIRED" -> "LOGIN REQUIRED"
+            monitorState.selectedFeedStatus == "RECONNECTING" -> "RECONNECTING"
+            !same || time <= 0 -> "WAITING"
+            else -> "DELAYED"
+        }
+        val lastTime = if (same && time > 0)
+            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+                .withZone(IST).format(Instant.ofEpochMilli(time)) else null
+        val price = if (same && monitorState.selectedPrice > 0)
+            "%.2f".format(java.util.Locale.US, monitorState.selectedPrice) else null
+        val detail = if (price != null && lastTime != null)
+            (if (fresh) "Price " else "Last price ") + price + " • Updated " + lastTime + " IST" +
+                (if (monitorState.hasVisibleApp()) " • App open" else "")
+        else if (monitorState.hasVisibleApp()) "App open • waiting for verified price"
+        else "Waiting for a verified broker quote"
+        lastNoticeAt = now
+        manager.notify(STATUS_ID, notification("DhanPulse • " + symbol + " • " + status, detail))
+    }
+
     private fun status(label: String, detail: String) {
         monitorState.status = label
+        if (monitorState.hasVisibleApp()) {
+            publishSelectedNotification()
+            return
+        }
         val now = System.currentTimeMillis()
         if (now - lastNoticeAt >= 15_000L) {
             lastNoticeAt = now
-            manager.notify(STATUS_ID, notification("DhanPulse • " + label, detail))
+            manager.notify(STATUS_ID, notification("DhanPulse • " + monitorState.selectedSymbol + " • " + label, detail))
         }
     }
 
@@ -203,8 +246,8 @@ class MarketMonitoringService : Service() {
                     continue
                 }
                 if (monitorState.hasVisibleApp()) {
-                    status("ACTIVE", "Monitoring is handed to the visible app.")
-                    delay(10_000L)
+                    publishSelectedNotification()
+                    delay(3_000L)
                     continue
                 }
                 val checks = mutableListOf<String>()
@@ -305,7 +348,7 @@ class MarketMonitoringService : Service() {
         }
         val feed = LivePriceStream(backend)
         while (scope.isActive && monitorState.requested) {
-            if (monitorState.hasVisibleApp() || validSession(secure) == null) {
+            if ((monitorState.hasVisibleApp() && monitorState.uiPriceStreamActive) || validSession(secure) == null) {
                 delay(3_000L)
                 continue
             }
@@ -318,14 +361,13 @@ class MarketMonitoringService : Service() {
             }
             try {
                 feed.collect(validSession(secure) ?: break, symbol) { price ->
-                    if (monitorState.hasVisibleApp() || !monitorState.requested ||
+                    if ((monitorState.hasVisibleApp() && monitorState.uiPriceStreamActive) || !monitorState.requested ||
                         monitorState.selectedSymbol != symbol)
                         throw CancellationException("Visible app or symbol change")
+                    monitorState.recordSelectedQuote(symbol, price.status, price.price)
                     if (price.status == "LIVE" && (price.price ?: 0.0) > 0) {
                         monitorState.lastMarketDataAt = System.currentTimeMillis()
-                        if (System.currentTimeMillis() - lastNoticeAt > 20_000L)
-                            status("STREAM LIVE", symbol + " • " +
-                                "%.2f".format(java.util.Locale.US, price.price) + " • read only")
+                        publishSelectedNotification()
                     }
                 }
             } catch (_: CancellationException) {
@@ -333,6 +375,7 @@ class MarketMonitoringService : Service() {
             } catch (e: Exception) {
                 if (!monitorState.hasVisibleApp())
                     status("RECONNECTING", symbol + " broker stream interrupted")
+                monitorState.recordSelectedQuote(symbol, "RECONNECTING", null)
             }
             delay(5_000L)
         }

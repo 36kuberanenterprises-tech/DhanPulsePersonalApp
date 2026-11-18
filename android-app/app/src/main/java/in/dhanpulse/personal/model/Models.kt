@@ -18,7 +18,12 @@ data class BrokerHistoryStatus(
     val lastSuccessAt: String? = null,
     val lastRejectAt: String? = null,
     val lastHttpStatus: Int? = null,
-    val lastBrokerCode: String? = null
+    val lastBrokerCode: String? = null,
+    val lastRejectionKind: String? = null,
+    val lastRejectedExchange: String? = null,
+    val lastRejectedInterval: String? = null,
+    val publicIpHeaderSource: String? = null,
+    val publicIpComparison: String? = null
 )
 data class HistoryCacheEntry(val exchange: String = "", val token: String = "",
     val interval: String = "", val bars: Int = 0, val lastCandleTime: String? = null,

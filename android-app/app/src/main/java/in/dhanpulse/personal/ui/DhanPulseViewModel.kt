@@ -50,6 +50,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private val indiaZone = ZoneId.of("Asia/Kolkata")
     private val inactivityLimitMs = 60 * 60 * 1000L
     private var lastActivityWrite = 0L
+    private var lastMonitorNoticeAt = 0L
     private val connectivityManager = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private var connectionCallbackRegistered = false
     private var connectionRecheckJob: Job? = null
@@ -138,6 +139,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             nativeMonitor.requested = true
             nativeMonitor.selectedSymbol = selectedSymbol
             nativeMonitor.uiVisible = true
+            nativeMonitor.uiPriceStreamActive = liveStreamJob?.isActive == true
             nativeMonitor.uiHeartbeatAt = System.currentTimeMillis()
             val intent = Intent(getApplication(), MarketMonitoringService::class.java)
                 .setAction(MarketMonitoringService.ACTION_START)
@@ -150,6 +152,19 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             nativeMonitor.stop("Service start blocked", true)
             refreshBackgroundMonitorStatus()
             backgroundMonitorMessage = "Android could not start monitoring: " + (e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    private fun refreshSelectedNotification(force: Boolean = false) {
+        if (!nativeMonitor.requested || !nativeMonitor.running) return
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastMonitorNoticeAt < 5_000L) return
+        lastMonitorNoticeAt = now
+        runCatching {
+            getApplication<Application>().startService(
+                Intent(getApplication(), MarketMonitoringService::class.java)
+                    .setAction(MarketMonitoringService.ACTION_REFRESH)
+            )
         }
     }
 
@@ -441,6 +456,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         nativeMonitor.uiVisible = true
         nativeMonitor.uiHeartbeatAt = System.currentTimeMillis()
         refreshBackgroundMonitorStatus()
+        refreshSelectedNotification(force = true)
         if (!checkSessionTimeout()) {
             appInForeground = true
             markUserActive()
@@ -460,6 +476,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     fun onAppBackground() {
         unregisterConnectivityRecovery()
         nativeMonitor.uiVisible = false
+        nativeMonitor.uiPriceStreamActive = false
         if (appInForeground && sessionId != null) {
             sessionStore.lastUserActivity = System.currentTimeMillis()
         }
@@ -1307,6 +1324,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 )
             } catch (e: Exception) {
                 backtestError = friendlyError(e, "Backtest failed")
+                fetchHistoryDiagnostics(force = true)
             }
             backtestBusy = false
             startAutoRefresh()
@@ -1536,7 +1554,6 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectSymbol(symbol: String) {
-        nativeMonitor.selectedSymbol = symbol
         if (selectedMarket == "MCX") {
             if (symbol != "MCXBULLDEX" && mcxIndices.none { it.symbol == symbol } && mcxEnergy.none { it.symbol == symbol }) return
             lastMcxSymbol = symbol
@@ -1545,7 +1562,9 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             lastEquitySymbol = symbol
         }
         if (symbol == selectedSymbol) return
+        nativeMonitor.clearSelectedQuote(symbol)
         selectedSymbol = symbol
+        refreshSelectedNotification(force = true)
         startLivePriceStream()
         if (autoTradeEnabled) {
             autoTradeEnabled = false
@@ -1987,6 +2006,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
         val symbol = selectedSymbol
         liveStreamStatus = "CONNECTING"
+        nativeMonitor.uiPriceStreamActive = true
+        nativeMonitor.recordSelectedQuote(symbol, "CONNECTING", null)
         liveStreamJob = viewModelScope.launch {
             var retryMs = 1500L
             while (isActive && sessionId == session && selectedSymbol == symbol && !stocksVisible) {
@@ -1995,6 +2016,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         withContext(Dispatchers.Main) {
                             if (sessionId == session && selectedSymbol == symbol && !stocksVisible) {
                                 liveStreamStatus = event.status
+                                nativeMonitor.recordSelectedQuote(symbol, event.status, event.price)
+                                refreshSelectedNotification()
                                 if (event.status == "LIVE" && event.price != null && event.price > 0) {
                                     livePriceArrivedAt = SystemClock.elapsedRealtime()
                                     livePriceEvent = event
@@ -2015,6 +2038,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         e is java.net.UnknownHostException || e is java.net.ConnectException -> "SERVER_UNREACHABLE"
                         else -> "DELAYED"
                     }
+                    nativeMonitor.recordSelectedQuote(symbol, liveStreamStatus, null)
+                    refreshSelectedNotification(force = true)
                 }
                 if (isActive) {
                     livePriceEvent = null
@@ -2031,6 +2056,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
     private fun stopLivePriceStream() {
         liveStreamJob?.cancel()
         liveStreamJob = null
+        nativeMonitor.uiPriceStreamActive = false
         livePriceEvent = null
         liveStreamStatus = "STOPPED"
     }
