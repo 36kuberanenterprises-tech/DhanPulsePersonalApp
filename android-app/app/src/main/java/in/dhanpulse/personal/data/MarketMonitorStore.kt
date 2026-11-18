@@ -37,6 +37,14 @@ class MarketMonitorStore(context: Context) {
         get() = prefs.getString("status", "OFF") ?: "OFF"
         set(value) = prefs.edit().putString("status", value.take(120)).apply()
 
+    var statusDetail: String
+        get() = prefs.getString("status_detail", "") ?: ""
+        set(value) = prefs.edit().putString("status_detail", value.take(200)).apply()
+
+    var statusUpdatedAt: Long
+        get() = prefs.getLong("status_updated_at", 0L)
+        set(value) = prefs.edit().putLong("status_updated_at", value).apply()
+
     var lastMarketDataAt: Long
         get() = prefs.getLong("market_data_at", 0L)
         set(value) = prefs.edit().putLong("market_data_at", value).apply()
