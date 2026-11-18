@@ -289,6 +289,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var liveStreamMessage by mutableStateOf<String?>(null)
         private set
+    var earlyMoveWatch by mutableStateOf<String?>(null)
+        private set
+    private val recentLiveQuotes = ArrayDeque<Pair<Long, Double>>()
+    private var observedMoveSymbol = ""
     private var livePriceArrivedAt = 0L
     private var liveStreamJob: Job? = null
     fun liveDisplayPrice(report: AnalysisResponse): Double? =
@@ -2011,6 +2015,32 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun observeEarlyMove(event: LivePriceEvent) {
+        if (event.status != "LIVE" || event.price == null || event.price <= 0.0) return
+        val exchangeAt = runCatching { Instant.parse(event.exchangeTime ?: "").toEpochMilli() }.getOrNull() ?: return
+        val now = System.currentTimeMillis()
+        if (now - exchangeAt !in 0L..5_000L || event.symbol != selectedSymbol) return
+        if (observedMoveSymbol != event.symbol) {
+            observedMoveSymbol = event.symbol
+            recentLiveQuotes.clear()
+            earlyMoveWatch = null
+        }
+        while (recentLiveQuotes.isNotEmpty() && now - recentLiveQuotes.first().first > 30_000L) {
+            recentLiveQuotes.removeFirst()
+        }
+        val baseline = recentLiveQuotes.firstOrNull()
+        recentLiveQuotes.addLast(now to event.price)
+        if (baseline == null || now - baseline.first < 8_000L) return
+        val movePct = (event.price / baseline.second - 1.0) * 100.0
+        val threshold = if (event.symbol in setOf("NIFTY", "BANKNIFTY", "SENSEX")) 0.15 else 0.30
+        earlyMoveWatch = if (kotlin.math.abs(movePct) >= threshold)
+            "EARLY MOVE WATCH: " + (if (movePct > 0) "UP " else "DOWN ") +
+                "%.2f".format(java.util.Locale.US, kotlin.math.abs(movePct)) +
+                "% in " + ((now - baseline.first) / 1000) +
+                "s. Quote movement only, not a confirmed entry."
+        else null
+    }
+
     private fun startLivePriceStream() {
         val session = sessionId ?: return
         stopLivePriceStream()
@@ -2029,24 +2059,38 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val symbol = selectedSymbol
+        observedMoveSymbol = symbol
+        recentLiveQuotes.clear()
+        earlyMoveWatch = null
         liveStreamMessage = null
         liveStreamStatus = "CONNECTING"
         nativeMonitor.uiPriceStreamActive = true
         nativeMonitor.recordSelectedQuote(symbol, "CONNECTING", null)
         liveStreamJob = viewModelScope.launch {
+            val feed = LivePriceStream(backendUrl)
             var retryMs = 1500L
             while (isActive && sessionId == session && selectedSymbol == symbol && !stocksVisible) {
                 try {
-                    LivePriceStream(backendUrl).collect(session, symbol) { event ->
+                    feed.collect(session, symbol) { event ->
                         withContext(Dispatchers.Main) {
                             if (sessionId == session && selectedSymbol == symbol && !stocksVisible) {
-                                liveStreamStatus = event.status
+                                val tickAt = runCatching {
+                                    Instant.parse(event.exchangeTime ?: "").toEpochMilli()
+                                }.getOrNull()
+                                val verifiedFresh = tickAt != null &&
+                                    System.currentTimeMillis() - tickAt in 0L..15_000L
+                                val validLive = event.status == "LIVE" && verifiedFresh &&
+                                    event.price != null && event.price > 0.0
+                                liveStreamStatus = if (event.status == "LIVE" && !verifiedFresh)
+                                    "DELAYED" else event.status
                                 if (event.message != null) liveStreamMessage = event.message.take(160)
-                                nativeMonitor.recordSelectedQuote(symbol, event.status, event.price)
+                                nativeMonitor.recordSelectedQuote(symbol, liveStreamStatus,
+                                    if (validLive) event.price else null)
                                 refreshSelectedNotification()
-                                if (event.status == "LIVE" && event.price != null && event.price > 0) {
+                                if (validLive) {
                                     livePriceArrivedAt = SystemClock.elapsedRealtime()
                                     livePriceEvent = event
+                                    observeEarlyMove(event)
                                     liveStreamMessage = null
                                     retryMs = 1500L
                                 } else {
@@ -2090,6 +2134,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         liveStreamJob = null
         nativeMonitor.uiPriceStreamActive = false
         livePriceEvent = null
+        earlyMoveWatch = null
+        recentLiveQuotes.clear()
         liveStreamStatus = "STOPPED"
         liveStreamMessage = null
     }

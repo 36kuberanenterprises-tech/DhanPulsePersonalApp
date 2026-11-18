@@ -55,6 +55,10 @@ class MarketMonitoringService : Service() {
     private var lastAlertAt = 0L
     private var lastAlertKey = ""
     private var noHistoryUntil = 0L
+    private var watchedSymbol = ""
+    private val recentQuotes = ArrayDeque<Pair<Long, Double>>()
+    private var lastEarlyWatchAt = 0L
+    private var lastEarlyWatchDirection = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -165,6 +169,40 @@ class MarketMonitoringService : Service() {
         else "Waiting for a verified broker quote"
         lastNoticeAt = now
         manager.notify(STATUS_ID, notification("DhanPulse • " + symbol + " • " + status, detail))
+    }
+
+    // Price movement WATCH from broker-verified live quotes, never a trade signal.
+    private fun watchEarlyPriceMove(event: LivePriceEvent) {
+        if (event.status != "LIVE" || event.price == null || event.price <= 0.0) return
+        val now = System.currentTimeMillis()
+        val exchangeAt = runCatching { Instant.parse(event.exchangeTime ?: "").toEpochMilli() }.getOrNull()
+            ?: return
+        if (now - exchangeAt !in 0L..5_000L) return
+        val symbol = monitorState.selectedSymbol
+        if (event.symbol != symbol) return
+        if (watchedSymbol != symbol) {
+            watchedSymbol = symbol
+            recentQuotes.clear()
+            lastEarlyWatchAt = 0L
+            lastEarlyWatchDirection = ""
+        }
+        while (recentQuotes.isNotEmpty() && now - recentQuotes.first().first > 30_000L) {
+            recentQuotes.removeFirst()
+        }
+        val baseline = recentQuotes.firstOrNull()
+        recentQuotes.addLast(now to event.price)
+        if (baseline == null || now - baseline.first < 8_000L) return
+        val pct = (event.price / baseline.second - 1.0) * 100.0
+        val threshold = if (symbol in setOf("NIFTY","BANKNIFTY","SENSEX")) 0.15 else 0.30
+        if (kotlin.math.abs(pct) < threshold) return
+        val direction = if (pct > 0) "UP" else "DOWN"
+        if (lastEarlyWatchDirection == direction && now - lastEarlyWatchAt < 120_000L) return
+        lastEarlyWatchDirection = direction
+        lastEarlyWatchAt = now
+        alert("early:" + symbol + ":" + direction, "DhanPulse early movement watch: " + symbol,
+            "Verified recent price change " + "%.2f".format(java.util.Locale.US, pct) +
+                "% in " + ((now - baseline.first) / 1000) +
+                "s. Watch only. No entry confirmed; check candles and risk.")
     }
 
     private fun status(label: String, detail: String) {
@@ -366,18 +404,33 @@ class MarketMonitoringService : Service() {
                     if ((monitorState.hasVisibleApp() && monitorState.uiPriceStreamActive) || !monitorState.requested ||
                         monitorState.selectedSymbol != symbol)
                         throw CancellationException("Visible app or symbol change")
-                    monitorState.recordSelectedQuote(symbol, price.status, price.price)
-                    if (price.status == "LIVE" && (price.price ?: 0.0) > 0) {
+                    val tickAt = runCatching { Instant.parse(price.exchangeTime ?: "").toEpochMilli() }.getOrNull()
+                    val tickFresh = tickAt != null && System.currentTimeMillis() - tickAt in 0L..15_000L
+                    val validLive = price.status == "LIVE" && tickFresh && (price.price ?: 0.0) > 0.0
+                    monitorState.recordSelectedQuote(symbol, if (validLive) "LIVE" else "DELAYED",
+                        if (validLive) price.price else null)
+                    if (validLive) {
                         monitorState.lastMarketDataAt = System.currentTimeMillis()
-                        publishSelectedNotification()
+                        watchEarlyPriceMove(price)
                     }
+                    publishSelectedNotification()
                 }
             } catch (_: CancellationException) {
                 // The app resumed or the watched symbol changed.
             } catch (e: Exception) {
-                if (!monitorState.hasVisibleApp())
-                    status("RECONNECTING", symbol + " broker stream interrupted")
-                monitorState.recordSelectedQuote(symbol, "RECONNECTING", null)
+                val condition = when {
+                    e is LiveStreamHttpException && e.httpStatus == 401 -> "SESSION_EXPIRED"
+                    e is LiveStreamHttpException && e.httpStatus == 400 -> "INVALID_INSTRUMENT"
+                    e is LiveStreamHttpException && e.httpStatus == 403 -> "BROKER_RESTRICTED"
+                    e is LiveStreamHttpException && e.httpStatus == 503 -> "BROKER_UNAVAILABLE"
+                    e is java.net.UnknownHostException || e is java.net.ConnectException -> "SERVER_UNREACHABLE"
+                    else -> "RECONNECTING"
+                }
+                monitorState.recordSelectedQuote(symbol, condition, null)
+                status(condition, (e.message ?: "Broker stream interrupted").take(150))
+                publishSelectedNotification(force = true)
+                // Do not retry permanent denial on every short reconnect.
+                if (condition in setOf("SESSION_EXPIRED", "INVALID_INSTRUMENT", "BROKER_RESTRICTED")) break
             }
             delay(5_000L)
         }
