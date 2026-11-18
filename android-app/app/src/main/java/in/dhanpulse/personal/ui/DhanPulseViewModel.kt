@@ -122,6 +122,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var backgroundMonitorStatus by mutableStateOf(nativeMonitor.status)
         private set
+    var backgroundMonitorDetail by mutableStateOf(nativeMonitor.statusDetail)
+        private set
+    var backgroundMonitorUpdatedAt by mutableLongStateOf(nativeMonitor.statusUpdatedAt)
+        private set
     var backgroundMonitorMessage by mutableStateOf<String?>(null)
         private set
 
@@ -129,6 +133,8 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         backgroundMonitorRequested = nativeMonitor.requested
         backgroundMonitorRunning = nativeMonitor.running
         backgroundMonitorStatus = nativeMonitor.status
+        backgroundMonitorDetail = nativeMonitor.statusDetail
+        backgroundMonitorUpdatedAt = nativeMonitor.statusUpdatedAt
     }
 
     fun startBackgroundMonitoring() {
@@ -292,6 +298,10 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                 SystemClock.elapsedRealtime() - livePriceArrivedAt < 10_000
         }?.price
     var account by mutableStateOf<AccountSummary?>(null)
+    var accountError by mutableStateOf<String?>(null)
+        private set
+    var accountUpdatedAt by mutableLongStateOf(0L)
+        private set
     var loading by mutableStateOf(false)
     // Login has its own state: market refreshes also use loading.
     var loginBusy by mutableStateOf(false)
@@ -1219,8 +1229,19 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         val s = sessionId ?: return
         viewModelScope.launch {
             try {
-                account = client().account(s)
-            } catch (_: Exception) { }
+                val result = client().account(s)
+                if (s == sessionId) {
+                    account = result
+                    accountUpdatedAt = System.currentTimeMillis()
+                    accountError = null
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (s == sessionId) {
+                    accountError = friendlyError(e, "Angel One account refresh unavailable")
+                }
+            }
         }
     }
 
