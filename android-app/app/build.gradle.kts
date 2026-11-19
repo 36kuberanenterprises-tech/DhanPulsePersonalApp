@@ -5,6 +5,11 @@ plugins {
 }
 
 val appVersion = "2.9.7"
+// Every GitHub run uses a distinct Android package because debug signing
+// certificates are not retained across runners. Production in-place updates
+// require a separate, securely retained production signing key.
+val previewRunId = System.getenv("GITHUB_RUN_ID")
+    ?.takeIf { it.matches(Regex("[0-9]{6,20}")) } ?: "local"
 
 android {
     namespace = "in.dhanpulse.personal"
@@ -14,7 +19,7 @@ android {
         applicationId = "in.dhanpulse.personal.stable"
         minSdk = 26
         targetSdk = 35
-        versionCode = 89
+        versionCode = 90
         versionName = appVersion
     }
 
@@ -22,8 +27,8 @@ android {
         getByName("debug") {
             // Distinct installable preview until the original Stable signing key is available.
             // It cannot replace an existing Stable installation or read its private data.
-            applicationIdSuffix = ".monitor89"
-            manifestPlaceholders["appLabel"] = "DhanPulse Monitor 89"
+            applicationIdSuffix = ".monitor90.r${previewRunId}"
+            manifestPlaceholders["appLabel"] = "DhanPulse Monitor 90"
         }
         getByName("release") {
             manifestPlaceholders["appLabel"] = "DhanPulse Stable"
