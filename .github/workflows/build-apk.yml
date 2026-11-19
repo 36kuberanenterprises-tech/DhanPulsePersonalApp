@@ -9,7 +9,7 @@ on:
       - 'backend/**'
       - '.github/workflows/build-apk.yml'
   push:
-    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111, fix/build83-video-error-diagnostics-20261113, fix/build83-mobile-stream-stall-recovery-20261118, fix/build85-connectivity-status-audit-20261118, fix/build86-monitor-notifications-history-20261118, fix/build87-integrated-stream-monitor-20261118, fix/build90-installable-state-20261118, fix/build90-installable-stream-recovery-20261118, fix/build90-installable-apk-20261119 ]
+    branches: [ update-stable-build63, fix/session-feed-build64, fix/build66-market-data-quality, feature/keep-eye-finder-build67, fix/keep-eye-build68-stable, fix/build69-keep-eye-watchlist-view, installable/build69-watchlist-preview, installable/live-movers-build70, fix/build71-login-backend-diagnostics, fix/build72-allow-login-while-health-checking, feature/build73-native-background-monitor, fix/build74-login-readiness, fix/build75-login-recovery, fix/build76-market-direction, fix/build77-selected-market-screen-awake, feature/flow-footprint-coverage-build78, feature/flow-candle-chart-build79, feature/build80-azure-tailnet-live-20261111, feature/build81-flow-auto-paper-20261111, fix/build83-video-error-diagnostics-20261113, fix/build83-mobile-stream-stall-recovery-20261118, fix/build85-connectivity-status-audit-20261118, fix/build86-monitor-notifications-history-20261118, fix/build87-integrated-stream-monitor-20261118, fix/build91-login-recovery-state-20261118, fix/build91-login-recovery-stream-recovery-20261118, fix/build91-login-recovery-apk-20261119, fix/build91-azure-login-readiness-20261119 ]
     paths:
       - 'android-app/**'
       - 'backend/**'
@@ -86,13 +86,13 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 90'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android-app/app/build/outputs/apk/debug/app-debug.apk | grep -F "application-label:'DhanPulse Monitor 91'"
 
       - name: Verify APK package, signature and ZIP alignment
         run: |
           apk="android-app/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$apk"
-          expected="in.dhanpulse.personal.stable.monitor90.r${GITHUB_RUN_ID}"
+          expected="in.dhanpulse.personal.stable.monitor91.r${GITHUB_RUN_ID}"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | tee /tmp/dhanpulse-apk-badging.txt
           grep -F "package: name='$expected'" /tmp/dhanpulse-apk-badging.txt
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$apk"
@@ -104,22 +104,22 @@ jobs:
         run: |
           version=$(sed -nE 's/^val appVersion = "([^"]+)"/\1/p' android-app/app/build.gradle.kts)
           test -n "$version"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build90-Installable.apk"
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk "DhanPulse-v${version}-Build91-Login-Recovery.apk"
           echo "APK_VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build90-Test-APK
+          name: DhanPulse-Monitor-Build91-Test-APK
           path: |
-            DhanPulse-v${{ env.APK_VERSION }}-Build90-Installable.apk
+            DhanPulse-v${{ env.APK_VERSION }}-Build91-Login-Recovery.apk
           if-no-files-found: error
           retention-days: 30
 
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build90-installable-apk-20261119'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/build91-azure-login-readiness-20261119'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -128,16 +128,16 @@ jobs:
       - name: Download tested APK
         uses: actions/download-artifact@v4
         with:
-          name: DhanPulse-Monitor-Build90-Test-APK
+          name: DhanPulse-Monitor-Build91-Test-APK
 
       - name: Publish direct Build 83 APK link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="DhanPulse-v2.9.7-Build90-Installable.apk"
+          apk="DhanPulse-v2.9.7-Build91-Login-Recovery.apk"
           test -s "$apk"
-          tag="build90-installable-${GITHUB_SHA:0:7}"
+          tag="build91-login-recovery-${GITHUB_SHA:0:7}"
           gh release create "$tag" "$apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DhanPulse Build 90 Installable Preview" \
-            --notes "Build 90 uses a separate unique debug preview package for every CI run to prevent mismatched signing certificate installation errors, and tests APK signing, package metadata and ZIP alignment. Broker connectivity and Azure deployment are not verified. Broker 403 remains an Azure-side restriction until verified. Azure backend deployment and physical device tests remain pending; broker HTTP 403 is not bypassed." \
+            --title "DhanPulse Build 91 Azure Login Recovery Preview" \
+            --notes "Build 91 shortens and bounds Azure readiness checks and distinguishes VPN/TLS/VM errors, retaining unique preview package and APK integrity checks. Never auto retries PIN or TOTP; actual Azure access and Angel One data remain unverified. Broker connectivity and Azure deployment are not verified. Broker 403 remains an Azure-side restriction until verified. Azure backend deployment and physical device tests remain pending; broker HTTP 403 is not bypassed." \
             --prerelease
