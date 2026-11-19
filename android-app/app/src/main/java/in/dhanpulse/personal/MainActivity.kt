@@ -247,7 +247,11 @@ fun LoginScreen(vm: DhanPulseViewModel) {
                     }
                     Text(vm.backendCheckMessage, color = if (vm.backendCheckState == "READY") Green else Muted,
                         style = MaterialTheme.typography.bodySmall)
-                    if (vm.backendCheckState in setOf("UNAVAILABLE", "CONFIGURATION")) {
+                    if (vm.backendCheckState == "STARTING") {
+                        Text("Checking the saved HTTPS server. If the private Tailscale route is unavailable, login remains disabled to protect your PIN and TOTP.",
+                            color = Amber, style = MaterialTheme.typography.labelSmall)
+                    }
+                    if (vm.backendUrl.isNotBlank() && vm.backendCheckState != "READY") {
                         TextButton(onClick = {
                             vm.backendStatusUrl()?.let { uriHandler.openUri(it) }
                         }) {
