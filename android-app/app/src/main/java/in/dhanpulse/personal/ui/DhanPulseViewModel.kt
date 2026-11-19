@@ -562,17 +562,17 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
         backendCheckState = "STARTING"
         backendCheckMessage = "Connecting to DhanPulse backend. Login will open after the server is ready."
         backendCheckJob = viewModelScope.launch {
-            val deadline = SystemClock.elapsedRealtime() + 120_000L
+            val deadline = SystemClock.elapsedRealtime() + 30_000L
             var attempts = 0
             var lastProblem = "Server has not responded."
             try {
                 while (isActive && SystemClock.elapsedRealtime() < deadline) {
                     attempts++
-                    backendCheckMessage = "Checking server connection (attempt $attempts). Do not enter a TOTP yet."
+                    backendCheckMessage = "Checking Azure HTTPS and Tailscale (attempt $attempts of 2). If the server cannot be reached, a specific error will appear. Do not enter a TOTP yet."
                     try {
-                        val health = withTimeout(25_000L) { client().health() }
+                        val health = withTimeout(10_000L) { client().health() }
                         if (!health.ok) throw IllegalStateException("Server health is not ready.")
-                        val readiness = withTimeout(15_000L) { client().loginReadiness() }
+                        val readiness = withTimeout(8_000L) { client().loginReadiness() }
                         if (!readiness.ok) throw IllegalStateException("Server login status is unavailable.")
                         if (readiness.loginReady != true) {
                             backendCheckState = "CONFIGURATION"
@@ -586,7 +586,7 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         error = null
                         break
                     } catch (e: TimeoutCancellationException) {
-                        lastProblem = "Backend request exceeded the response timeout."
+                        lastProblem = "Azure HTTPS did not respond within 10 seconds. Confirm Tailscale VPN on this phone and the VM, then check the exact server address."
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -603,6 +603,18 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                                 backendCheckMessage = "Backend is reachable but login readiness is missing. Update the Azure backend before trying a TOTP."
                                 break
                             }
+                            e is java.net.ConnectException -> {
+                                backendCheckState = "UNAVAILABLE"
+                                backendCheckedAt = 0L
+                                backendCheckMessage = "Azure server refused the connection. Check that Tailscale Serve and the DhanPulse backend service are running on the VM. Do not change your Azure IP."
+                                break
+                            }
+                            e is javax.net.ssl.SSLException -> {
+                                backendCheckState = "UNAVAILABLE"
+                                backendCheckedAt = 0L
+                                backendCheckMessage = "Secure HTTPS connection failed. Check Tailscale Serve HTTPS certificate and VM service route. Do not submit your PIN or TOTP."
+                                break
+                            }
                             e is java.net.SocketTimeoutException ||
                                 e is java.io.InterruptedIOException -> {
                                 lastProblem = "The server connection timed out."
@@ -616,14 +628,14 @@ class DhanPulseViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     val remaining = deadline - SystemClock.elapsedRealtime()
-                    if (remaining < 5_000L) break
+                    if (attempts >= 2 || remaining < 3_000L) break
                     backendCheckMessage = "Server is not ready yet (attempt $attempts). $lastProblem Retrying automatically without sending login details."
-                    delay(5_000L)
+                    delay(2_000L)
                 }
                 if (backendCheckState == "STARTING") {
                     backendCheckState = "UNAVAILABLE"
                     backendCheckedAt = 0L
-                    backendCheckMessage = "Backend did not become ready after $attempts checks. $lastProblem Use Retry connection or open Server status in your browser."
+                    backendCheckMessage = "Azure backend could not be verified after $attempts checks. $lastProblem Open server status to distinguish a VPN route failure from backend downtime, then tap Retry connection."
                 }
             } finally {
                 backendCheckLoading = false
