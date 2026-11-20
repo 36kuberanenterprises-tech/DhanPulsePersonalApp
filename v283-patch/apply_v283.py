@@ -9,6 +9,35 @@ s=s.replace('Version 2.8.2 Startup Recovery','Version 2.8.3 Stable Data Pipeline
 s=s.replace('DhanPulse Version 2.8.2 Startup Recovery.','DhanPulse Version 2.8.3 Stable Data Pipeline.')
 s=s.replace('DhanPulse Version 2.8.2 Startup Recovery','DhanPulse Version 2.8.3 Stable Data Pipeline')
 
+# Make the final static HTML correct even before JavaScript starts.
+direct_block='''  <div class="controls" style="margin-top:12px">
+    <label>Delta API Key
+      <input id="deltaApiKey" type="password" autocomplete="off" placeholder="Enter production API key">
+    </label>
+    <label>Delta API Secret
+      <input id="deltaApiSecret" type="password" autocomplete="off" placeholder="Enter matching API secret">
+    </label>
+    <button id="deltaSaveVerify">Save and Verify</button>
+    <button id="deltaRefreshAccount" class="secondary">Refresh Account</button>
+    <button id="deltaClearCredentials" class="secondary">Clear Credentials</button>
+  </div>
+'''
+s=s.replace(direct_block,'')
+s=s.replace('<b id="deltaAuthState" class="neutral">NOT CONNECTED</b>',
+            '<b id="deltaAuthState" class="neutral">CHECKING BACKEND</b>')
+s=s.replace('<div><span>Credential</span><b id="deltaKeyMask">NOT SAVED</b></div>',
+            '<div><span>Server Credential</span><b id="deltaKeyMask">CHECKING</b></div>')
+s=s.replace('<div><span>Private Feed</span><b id="deltaPrivateState">OFFLINE</b></div>',
+            '<div><span>Account Mode</span><b id="deltaPrivateState">BACKEND</b></div>')
+s=s.replace('<b id="oppState" class="neutral">STARTING</b>',
+            '<b id="oppState" class="neutral">LOADING DATA</b>')
+s=s.replace('<div><span>Engine Scope</span><b id="scopeState">REPAIRING</b></div>',
+            '<div><span>Engine Scope</span><b id="scopeState">BUILDING DATA</b></div>')
+s=s.replace('<div><span>Current Gate</span><b id="oppGate">WAIT</b></div>',
+            '<div><span>Current Gate</span><b id="oppGate">WAIT: loading history</b></div>')
+s=s.replace('<button id="clear" class="danger">Clear Records</button>',
+            '<button id="clear" class="danger" disabled>History Protected</button>')
+
 # Remove stale generation labels and messages visible in the current app.
 for a,b in [
     ('News engine starting','Delta market context active'),
@@ -204,7 +233,8 @@ function v283InstallAccount(){
   var h=panel.querySelector('h2');if(h)h.textContent='Delta Account';
   var sub=panel.querySelector('.row .muted.small');
   if(sub)sub.textContent='Your Delta API Key and Secret stay securely on the DeltaPulse Render backend. DhanPulse only requests the verified account summary.';
-  var controls=panel.querySelector('.controls');if(controls)controls.style.display='none';
+  var oldCard=v283q('deltaBackendCard');if(oldCard)oldCard.remove();
+  var controls=panel.querySelector('.controls');if(controls)controls.remove();
   var part=v283q('deltaCredentialPartState');if(part)part.style.display='none';
   var toggle=v283q('deltaDirectToggle');if(toggle)toggle.style.display='none';
 
