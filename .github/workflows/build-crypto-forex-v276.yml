@@ -394,3 +394,5 @@ jobs:
           path: DhanPulse_v2.7.6_DeltaPulse_Connected.apk
           if-no-files-found: error
           retention-days: 30
+
+# rebuild 2026-11-20 delta integration
