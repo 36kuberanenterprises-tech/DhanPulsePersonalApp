@@ -9,6 +9,16 @@ s=s.replace('Version 2.8.4 Full Data Recovery','Version 2.8.5 Unified Runtime Ga
 s=s.replace('DhanPulse Version 2.8.4 Full Data Recovery.','DhanPulse Version 2.8.5 Unified Runtime Gate.')
 s=s.replace('DhanPulse Version 2.8.4 Full Data Recovery','DhanPulse Version 2.8.5 Unified Runtime Gate')
 
+# Missing Delta fields must remain unavailable, never silently become numeric zero.
+s=s.replace(
+    "function v283num(v){var n=Number(v);return Number.isFinite(n)?n:null}",
+    "function v283num(v){if(v===null||v===undefined||v==='')return null;var n=Number(v);return Number.isFinite(n)?n:null}"
+)
+s=s.replace(
+    "var prev=v283num(S.lastCtxOI),oi=v283num(d.openInterest),delta=(prev&&oi!=null)?(oi-prev)/prev*100:0;",
+    "var prev=v283num(S.lastCtxOI),oi=v283num(d.openInterest),delta=(prev!=null&&prev>0&&oi!=null)?(oi-prev)/prev*100:null;"
+)
+
 # Final visible wording must not expose retired engine generations.
 for a,b in [
     ('V2.3 Research Auto','Unified Signal Engine'),
@@ -48,7 +58,7 @@ if(typeof V284!=='undefined')V284.version='2.8.5';
 if(typeof V283!=='undefined')V283.version='2.8.5';
 
 function v285el(id){return document.getElementById(id)}
-function v285n(v){var x=Number(v);return Number.isFinite(x)?x:null}
+function v285n(v){if(v===null||v===undefined||v==='')return null;var x=Number(v);return Number.isFinite(x)?x:null}
 function v285age(ts){
   var x=v285n(ts);if(x==null||x<=0)return Infinity;
   if(x<100000000000)x*=1000;
@@ -143,14 +153,21 @@ function v285AccurateLatency(){
 }
 function v285ContextLabels(){
   try{
-    var v=S&&S.ctx&&v285n(S.ctx.quoteVolume24h);
+    var ctx=S&&S.ctx||{},v=v285n(ctx.quoteVolume24h),chg=v285n(ctx.priceChangePercent24h),obi=v285n(ctx.orderBookImbalance),oiChg=v285n(ctx.oiDeltaPct);
+    var buyPct=obi==null?null:Math.max(0,Math.min(100,(1+obi)*50)),sellPct=buyPct==null?null:100-buyPct;
     document.querySelectorAll('.context>div').forEach(function(row){
       var sp=row.querySelector('span'),b=row.querySelector('b');if(!sp||!b)return;
       var label=(sp.textContent||'').trim().toUpperCase();
-      if(label==='24 HOUR VOLUME'&&v!=null){
+      if(label==='24 HOUR VOLUME'||label==='24 HOUR TURNOVER'){
         sp.textContent='24 HOUR TURNOVER';
-        b.textContent=v>=1000000000?(v/1000000000).toFixed(2)+'B USD':v>=1000000?(v/1000000).toFixed(2)+'M USD':Math.round(v).toLocaleString()+' USD';
+        b.textContent=v==null?'NA':(v>=1000000000?(v/1000000000).toFixed(2)+'B USD':v>=1000000?(v/1000000).toFixed(2)+'M USD':Math.round(v).toLocaleString()+' USD');
       }
+      if(label==='ORDER BOOK'){
+        b.textContent=buyPct==null?'NA':('Buy '+buyPct.toFixed(1)+'% · Sell '+sellPct.toFixed(1)+'%');
+        b.className=obi==null?'neutral':obi>.05?'bull':obi<-.05?'bear':'neutral';
+      }
+      if(label==='OPEN INTEREST CHANGE'&&oiChg==null){b.textContent='NA';b.className='neutral'}
+      if(label==='24 HOUR'&&chg==null){b.textContent='NA';b.className='neutral'}
     });
   }catch(e){}
 }
@@ -177,8 +194,19 @@ function v285GateLegacy(){
     wrapped2.__v285=true;v263select=wrapped2;
   }
 }
+function v285AlignChart(){
+  try{
+    if(!S||!S.candles||!S.candles.length)return;
+    var last=S.candles[S.candles.length-1],lp=v285n(S.livePrice),lc=last?v285n(last.c):null,atr=S.analysis?v285n(S.analysis.atr):null;
+    if(lp!=null&&lc!=null&&atr!=null&&atr>0&&Math.abs(lp-lc)>Math.max(atr*3,lp*.015)){
+      v285Wait('WAIT: live price and selected candle history are not aligned');
+      V285.lastReady=false;V285.lastReason='live price and selected candle history are not aligned';
+    }
+    if(S.chartView){S.chartView.rightOffset=0;if(!S.chartView.visible||S.chartView.visible<40)S.chartView.visible=Math.min(80,S.candles.length)}
+  }catch(e){}
+}
 function v285Cycle(){
-  v285GateLegacy();v285CleanText();v285AccurateLatency();v285ContextLabels();v285RenderReadiness();
+  v285GateLegacy();v285CleanText();v285AccurateLatency();v285ContextLabels();v285AlignChart();v285RenderReadiness();
 }
 setTimeout(function(){V285.installed=true;v285Cycle()},700);
 setInterval(v285Cycle,1000);
@@ -187,6 +215,16 @@ if 'V2.8.5 Unified Runtime Gate.' not in s:
     s=s.replace('\n})();\n</script>',js+'\n})();\n</script>',1)
 
 idx.write_text(s)
+
+# Correct the generated Delta repair client after V2.8.4.
+repair=root/'app/src/main/java/com/dhanpulse/cryptofxv11/DeltaDataRepair.java'
+if repair.exists():
+    jt=repair.read_text()
+    jt=jt.replace(
+        'putNumber(out, "ltpChange24h", t.opt("ltp_change_24h"));',
+        'putNumber(out, "ltpChange24h", t.opt("ltp_change_24h"));\\n            putNumber(out, "tickerTimestamp", t.opt("timestamp"));'
+    )
+    repair.write_text(jt)
 
 # Update native identifiers.
 for p in [
