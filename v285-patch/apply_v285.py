@@ -222,7 +222,7 @@ if repair.exists():
     jt=repair.read_text()
     jt=jt.replace(
         'putNumber(out, "ltpChange24h", t.opt("ltp_change_24h"));',
-        'putNumber(out, "ltpChange24h", t.opt("ltp_change_24h"));\\n            putNumber(out, "tickerTimestamp", t.opt("timestamp"));'
+        'putNumber(out, "ltpChange24h", t.opt("ltp_change_24h"));\n            putNumber(out, "tickerTimestamp", t.opt("timestamp"));'
     )
     repair.write_text(jt)
 
