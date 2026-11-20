@@ -35,7 +35,9 @@ on:
       - 'v281-patch/**'
       - 'v282-patch/**'
       - 'v283-patch/**'
-      - 'v284-patch/**'\n      - 'v285-patch/**'\n      - '.github/workflows/build-crypto-forex-v285.yml'
+      - 'v284-patch/**'
+      - 'v285-patch/**'
+      - '.github/workflows/build-crypto-forex-v285.yml'
       - '.github/workflows/build-crypto-forex-v284.yml'
 
 permissions:
