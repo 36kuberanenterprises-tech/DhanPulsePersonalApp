@@ -240,6 +240,7 @@ for p in [
 
 b=root/'app/build.gradle.kts'
 bs=b.read_text()
-bs=re.sub(r'versionCode\s*=\s*\d+','versionCode = 53',bs,count=1)
+bs=re.sub(r'applicationId\s*=\s*"[^"]+"','applicationId = "com.dhanpulse.crypto.v285.installable"',bs,count=1)
+bs=re.sub(r'versionCode\s*=\s*\d+','versionCode = 28501',bs,count=1)
 bs=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "2.8.5"',bs,count=1)
 b.write_text(bs)
