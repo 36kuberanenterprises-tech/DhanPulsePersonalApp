@@ -344,9 +344,16 @@ for p in [
         t=re.sub(r'DhanPulse-Android/2\.[0-9.]+','DhanPulse-Android/2.8.5',t)
         p.write_text(t)
 
+# Give this Delta-only APK a unique install identity and visible label.
+strings=root/'app/src/main/res/values/strings.xml'
+if strings.exists():
+    st=strings.read_text()
+    st=re.sub(r'<string name="app_name">.*?</string>','<string name="app_name">DhanPulse Delta Only</string>',st,count=1)
+    strings.write_text(st)
+
 b=root/'app/build.gradle.kts'
 bs=b.read_text()
-bs=re.sub(r'applicationId\s*=\s*"[^"]+"','applicationId = "com.dhanpulse.crypto.v285.installable"',bs,count=1)
-bs=re.sub(r'versionCode\s*=\s*\d+','versionCode = 28501',bs,count=1)
+bs=re.sub(r'applicationId\s*=\s*"[^"]+"','applicationId = "in.dhanpulse.crypto.deltaonly.v285"',bs,count=1)
+bs=re.sub(r'versionCode\s*=\s*\d+','versionCode = 28502',bs,count=1)
 bs=re.sub(r'versionName\s*=\s*"[^"]+"','versionName = "2.8.5"',bs,count=1)
 b.write_text(bs)
