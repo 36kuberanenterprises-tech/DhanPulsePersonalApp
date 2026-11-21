@@ -257,28 +257,65 @@ idx.write_text(s)
 ma=root/'app/src/main/java/com/dhanpulse/cryptofxv11/MainActivity.java'
 if ma.exists():
     a=ma.read_text()
-    a=re.sub(
-        r'\s*@JavascriptInterface\s+public void flattradeStatus\(\) \{.*?\n\s*\}\s*'
-        r'@JavascriptInterface\s+public void refreshFlattradeAccount\(\) \{.*?\n\s*\}\s*'
-        r'@JavascriptInterface\s+public void startFlattradeAuthorization\(\) \{.*?\n\s*\}\s*',
-        '\n',
-        a,
-        flags=re.S
-    )
-    a=re.sub(
-        r'\s*private void deliverFlattradeStatus\(String json\) \{.*?\n\s*\}\s*'
-        r'private void deliverFlattradeAccount\(String json\) \{.*?\n\s*\}\s*'
-        r'private void deliverFlattradeAuthError\(String message\) \{.*?\n\s*\}\s*',
-        '\n',
-        a,
-        flags=re.S
-    )
-    a=re.sub(
-        r'\s*webView\.postDelayed\(\(\) -> \{\s*try \{ webView\.evaluateJavascript\("window\.__flattradeResume&&window\.__flattradeResume\(\);", null\); \}\s*catch \(Exception ignored\) \{\}\s*\}, 450\);',
-        '',
-        a,
-        flags=re.S
-    )
+    methods=r'''        @JavascriptInterface
+        public void flattradeStatus() {
+            FlattradeBackend.statusAsync(MainActivity.this, MainActivity.this::deliverFlattradeStatus);
+        }
+
+        @JavascriptInterface
+        public void refreshFlattradeAccount() {
+            FlattradeBackend.accountAsync(MainActivity.this, MainActivity.this::deliverFlattradeAccount);
+        }
+
+        @JavascriptInterface
+        public void startFlattradeAuthorization() {
+            FlattradeBackend.authUrlAsync(MainActivity.this, json -> {
+                try {
+                    JSONObject j = new JSONObject(json);
+                    String url = j.optString("url", "");
+                    if (!url.startsWith("https://auth.flattrade.in/")) {
+                        deliverFlattradeAuthError(j.optString("error", j.optString("detail", "Flattrade authorization URL unavailable")));
+                        return;
+                    }
+                    runOnUiThread(() -> {
+                        try {
+                            android.content.Intent intent = new android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
+                            startActivity(intent);
+                        } catch (Exception e) {
+                            deliverFlattradeAuthError("Unable to open Flattrade authorization browser.");
+                        }
+                    });
+                } catch (Exception e) {
+                    deliverFlattradeAuthError("Invalid Flattrade authorization response.");
+                }
+            });
+        }
+
+'''
+    a=a.replace(methods,'',1)
+
+    helpers=r'''    private void deliverFlattradeStatus(String json) {
+        deliverJavascriptCallback("__flattradeStatus", json);
+    }
+
+    private void deliverFlattradeAccount(String json) {
+        deliverJavascriptCallback("__flattradeAccount", json);
+    }
+
+    private void deliverFlattradeAuthError(String message) {
+        deliverJavascriptCallback("__flattradeAuthError", message == null ? "" : message);
+    }
+
+'''
+    a=a.replace(helpers,'',1)
+
+    resume=r'''            webView.postDelayed(() -> {
+                try { webView.evaluateJavascript("window.__flattradeResume&&window.__flattradeResume();", null); }
+                catch (Exception ignored) {}
+            }, 450);
+'''
+    a=a.replace(resume,'',1)
     ma.write_text(a)
 
 ft=root/'app/src/main/java/com/dhanpulse/cryptofxv11/FlattradeBackend.java'
