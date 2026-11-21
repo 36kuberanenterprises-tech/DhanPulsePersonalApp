@@ -514,15 +514,26 @@ jobs:
         working-directory: crypto-forex-app/buildsrc
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Verify final APK install identity
+        run: |
+          apk="crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | tee /tmp/dhanpulse-v285-badging.txt
+          grep -F "package: name='in.dhanpulse.crypto.deltaonly.v285'" /tmp/dhanpulse-v285-badging.txt
+          grep -F "application-label:'DhanPulse Delta Only'" /tmp/dhanpulse-v285-badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --min-sdk-version 26 --verbose --print-certs "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$apk"
+          sha256sum "$apk"
+
       - name: Prepare APK artifact
         run: |
-          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_v2.8.5_Unified_Runtime_Gate.apk
-          sha256sum DhanPulse_v2.8.5_Unified_Runtime_Gate.apk
+          cp crypto-forex-app/buildsrc/app/build/outputs/apk/debug/app-debug.apk DhanPulse_v2.8.5_Delta_Only_Unique.apk
+          sha256sum DhanPulse_v2.8.5_Delta_Only_Unique.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: DhanPulse-v2.8.5-Unified-Runtime-Gate
-          path: DhanPulse_v2.8.5_Unified_Runtime_Gate.apk
+          name: DhanPulse-v2.8.5-Delta-Only-Unique
+          path: DhanPulse_v2.8.5_Delta_Only_Unique.apk
           if-no-files-found: error
           retention-days: 30
