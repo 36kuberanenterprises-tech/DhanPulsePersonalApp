@@ -346,7 +346,7 @@ t=t.replace('String result = t.optString("result", "UPDATE");',
             else if ("T2 PROTECTED".equals(upperResult)) result = "TARGET 2 HIT · PROFIT PROTECTED";
             else if ("T1 PROTECTED".equals(upperResult) || "PROTECTED".equals(upperResult)) result = "PROFIT PROTECTED";''',1)
 t=t.replace('if ("OPEN".equals(result) && "OPEN".equals(status)) return;',
-            'if ("OPEN".equalsIgnoreCase(rawResult) && "OPEN".equalsIgnoreCase(status)) return;',1)
+            'if ("OPEN".equalsIgnoreCase(t.optString("result", "")) && "OPEN".equalsIgnoreCase(status)) return;',1)
 t=t.replace('String upper = result.toUpperCase(Locale.US);',
             'String upper = result.toUpperCase(Locale.US);',1)
 t=t.replace('"Trade performance: " + result,',
