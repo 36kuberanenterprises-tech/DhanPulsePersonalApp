@@ -533,7 +533,26 @@ jobs:
           PY
           node --check /tmp/app.js
 
-      - name: Apply V2.8.9 punch integrity\n        run: |\n          python v289-patch/apply_v289.py\n          cd crypto-forex-app/buildsrc\n          grep -nE 'versionCode|versionName|applicationId' app/build.gradle.kts\n          grep -nE 'Version 2.8.9 Punch Integrity|V2.8.9 Punch Integrity|__dpPunchIntegrity|late chase blocked|instrument already has an open trade' app/src/main/assets/index.html\n          python - <<'PY'\n          from pathlib import Path\n          s=Path('app/src/main/assets/index.html').read_text()\n          js=s[s.index('<script>')+8:s.rindex('</script>')]\n          Path('/tmp/app.js').write_text(js)\n          b=Path('app/build.gradle.kts').read_text()\n          assert 'versionName = \"2.8.9\"' in b\n          assert 'V2.8.9 Punch Integrity.' in s\n          assert 'v289FinalGate' in s and 'v289LiveOpenForInstrument' in s\n          assert 'v24activeTrade=function(){return v289LiveOpenForInstrument()}' in s\n          PY\n          node --check /tmp/app.js\n\n      - name: Set up Java 17
+      - name: Apply V2.8.9 punch integrity
+        run: |
+          python v289-patch/apply_v289.py
+          cd crypto-forex-app/buildsrc
+          grep -nE 'versionCode|versionName|applicationId' app/build.gradle.kts
+          grep -nE 'Version 2.8.9 Punch Integrity|V2.8.9 Punch Integrity|__dpPunchIntegrity|late chase blocked|instrument already has an open trade' app/src/main/assets/index.html
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('app/src/main/assets/index.html').read_text()
+          js=s[s.index('<script>')+8:s.rindex('</script>')]
+          Path('/tmp/app.js').write_text(js)
+          b=Path('app/build.gradle.kts').read_text()
+          assert 'versionName = "2.8.9"' in b
+          assert 'V2.8.9 Punch Integrity.' in s
+          assert 'v289FinalGate' in s and 'v289LiveOpenForInstrument' in s
+          assert 'v24activeTrade=function(){return v289LiveOpenForInstrument()}' in s
+          PY
+          node --check /tmp/app.js
+
+      - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
