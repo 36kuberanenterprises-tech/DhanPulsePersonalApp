@@ -14,7 +14,7 @@ js=r'''
    Final live revalidation before signal publication.
    One open trade per instrument across timeframes.
    Prevents stale armed candidates and late chase entries from being recorded. */
-var V289={version:'2.8.9',lastReject:'',lastRejectAt:0};
+var V289={version:'2.8.9',lastReject:'',lastRejectAt:0}; // punch integrity build
 
 function v289LiveOpenForInstrument(){
   var list=trades();
